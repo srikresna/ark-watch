@@ -1,0 +1,191 @@
+# =====================================================================
+# COT CONTRACTS — CFTC Socrata — 13 contracts
+# =====================================================================
+# Release: Friday 15:30 ET = Saturday 02:30 WIB (EDT) / 03:30 WIB (EST);
+# fetch Saturday 03:00 WIB. release_ts is stored explicitly (3-day
+# look-ahead guard).
+# Secondary (direction only, not levels): EODHD "CFTC ... net positions"
+# events, Friday 19:30 WIB.
+#
+# CFTC Socrata datasets:
+#   legacy  = 6dca-aqww   (legacy futures-only)
+#   tff     = gpe5-46if   (Traders in Financial Futures)
+#   disagg  = 72hh-3qpy   (Disaggregated futures-only; 194 columns incl.
+#                          pct_of_oi, change_in_*, conc_gross_le_4_tdr_*)
+#   combined fut+opt = kh3c-gbw2 / yw9f-hn96 (GC/SI — optional, not in v1)
+#
+# Z parameters (uniform; written explicitly on every row):
+#   z_window_minggu = 156  # 3-year window
+#   min_obs         = 150  # minimum weeks of history before z is valid
+#   crowded_z       = 1.5  # |z| > 1.5 = crowded state
+#
+# CONC_TOP4 (squeeze tell — HG/GC): threshold on conc_gross_le_4_tdr_long
+# (Disagg; unit = % of gross OI). Only set for Disagg contracts; TFF
+# availability of the conc column is unverified → null until checked.
+# =====================================================================
+
+contracts:
+
+- code: "088691"
+  name: "GOLD - COMMODITY EXCHANGE INC."
+  instrument: XAUUSD
+  report_type: disagg
+  focus: mm_net
+  dataset: 72hh-3qpy
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid (population σ)
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: 40.0   # top-4 long >= 40% of gross OI = COMEX squeeze territory
+                              # (GC historical distribution ~25-45%); initial heuristic
+  notes: "Disagg MM net z → 'z+1.8 crowded long — do not chase' (§7). Combined fut+opt kh3c-gbw2 optional."
+
+- code: "084691"
+  name: "SILVER - COMMODITY EXCHANGE INC."
+  instrument: XAGUSD
+  report_type: disagg
+  focus: mm_net
+  dataset: 72hh-3qpy
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: 40.0   # same as GC — similar historical distribution
+  notes: "Combined fut+opt yw9f-hn96 optional."
+
+- code: "085692"
+  name: "COPPER - COMMODITY EXCHANGE INC."
+  instrument: XCUUSD
+  report_type: disagg
+  focus: mm_net
+  dataset: 72hh-3qpy
+  legacy_code: "085691"       # 085691 returns 0 rows in Disagg; it only works on the
+                              # legacy dataset 6dca-aqww
+  legacy_dataset: 6dca-aqww
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: 40.0   # HG is the primary squeeze-detection use case
+  notes: "Primary = Disagg 085692; legacy 085691 stored as supplementary historical depth (legacy dataset)."
+
+- code: "076651"
+  name: "PLATINUM - COMMODITY EXCHANGE INC."
+  instrument: XPTUSD
+  report_type: disagg
+  focus: mm_net
+  dataset: 72hh-3qpy
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: 40.0   # same as the other COMEX metals
+  notes: "Bugfix v1.3: platinum IS present in Disagg (the old spec wrongly wrote legacy-only); TFF still has NO platinum."
+
+- code: "146021"
+  name: "ETHER CASH SETTLED - CHICAGO MERCANTILE EXCHANGE"
+  instrument: ETH
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  micro_code: "146022"        # micro ETH cash-settled
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — presence of conc_gross_le_4 in gpe5-46if
+                              # unverified
+  notes: "Official name 'ETHER CASH SETTLED' (DATA-SPEC §7)."
+
+- code: "099741"
+  name: "EURO FX - CHICAGO MERCANTILE EXCHANGE"
+  instrument: EURUSD
+  report_type: tff
+  focus: lev_vs_am
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — same as ETH
+  notes: "Fast-money (Lev) vs real money (Asset Mgr) divergence = the primary signal (§7)."
+
+- code: "097741"
+  name: "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE"
+  instrument: USDJPY
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "For USDJPY & FX majors."
+
+- code: "096742"
+  name: "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE"
+  instrument: GBPUSD
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "GBPUSD + the GBP-crosses leg."
+
+- code: "232741"
+  name: "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE"
+  instrument: AUDUSD
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "Asia risk proxy."
+
+- code: "098662"
+  name: "USD INDEX - ICE FUTURES U.S."
+  instrument: DXY
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "Dollar positioning itself (ICE, not CME — the contract still lives in CFTC Socrata)."
+
+- code: "133741"
+  name: "BITCOIN - CHICAGO MERCANTILE EXCHANGE"
+  instrument: BTC
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "Positioning counterpart for BTC flows (flows)."
+
+- code: "13874+"
+  name: "S&P 500 CONSOLIDATED - CHICAGO MERCANTILE EXCHANGE"
+  instrument: US500
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "Code contains '+' → URL-ENCODE in Socrata queries (same for '20974+')."
+
+- code: "209742"
+  name: "NASDAQ MINI - CHICAGO MERCANTILE EXCHANGE"
+  instrument: US100
+  report_type: tff
+  focus: net
+  dataset: gpe5-46if
+  micro_code: "209747"            # micro E-mini NQ
+  consolidated_code: "20974+"     # consolidated version; '+' must be URL-encoded as %2B
+  z_window_minggu: 156        # 3-year window
+  min_obs: 150                # minimum weeks of history before z is valid
+  crowded_z: 1.5              # |z| > 1.5 = crowded state
+  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  notes: "DATA-SPEC §7 — official name 'NASDAQ MINI'; full-size 209741 DEAD since 2015 — do NOT use; micro 209747 optional."

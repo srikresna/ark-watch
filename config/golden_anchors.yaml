@@ -1,0 +1,313 @@
+# ============================================================================
+# ark-watch — config/golden_anchors.yaml
+# Golden anchors: point-in-time verification snapshots used as the source
+# verification gate. PK = (series_id, anchor_date).
+#
+# Conventions:
+#   - Values are point-in-time snapshots; quarterly recalibration replaces
+#     rows with fresh anchors rather than editing them.
+#   - `provenance` records where each value was verified.
+#   - For series with publication lag (H.10/H.15/H.4.1/ACM/NFCI/fiscal DTS),
+#     anchor_date = the latest observation date available at fetch time, so the
+#     verification date can be later than anchor_date.
+#
+# Tolerance is ABSOLUTE, in the same unit as `expected` (not a percentage).
+# One-line rationale on each row. Principle: tolerance absorbs source rounding
+# + mild vintage drift — it is not a substitute for sanity ranges.
+# CVOL rows are live prints (no history exists) — GCVL is locked the
+# tightest (0.01).
+# ============================================================================
+
+golden_anchors:
+
+  # --- Policy, Rates & Dollar --------------------------------------
+
+  - series_id: DGS10
+    anchor_date: "2026-08-27"
+    expected: 4.67
+    tolerance: 0.02      # H.15 yield, 2dp; 2bp vintage-rounding buffer
+    provenance: "live-test verified 2026-08-27, FRED DGS10"
+
+  - series_id: DGS2
+    anchor_date: "2026-08-27"
+    expected: 4.20
+    tolerance: 0.02      # H.15 yield, 2dp; 2bp vintage-rounding buffer
+    provenance: "live-test verified 2026-08-27, FRED DGS2"
+
+  - series_id: DGS30
+    anchor_date: "2026-08-27"
+    expected: 5.19
+    tolerance: 0.02      # H.15 yield, 2dp; 2bp vintage-rounding buffer
+    provenance: "live-test verified 2026-08-27, FRED DGS30"
+
+  - series_id: T10Y2Y
+    anchor_date: "2026-08-28"
+    expected: 0.39
+    tolerance: 0.02      # slope = difference of two 2dp series (2x0.01 combined error)
+    provenance: "live-test verified 2026-08-28, FRED T10Y2Y"
+
+  - series_id: T10Y3M
+    anchor_date: "2026-08-28"
+    expected: 0.83
+    tolerance: 0.02      # slope = difference of two 2dp series (2x0.01 combined error)
+    provenance: "live-test verified 2026-08-28, FRED T10Y3M"
+
+  - series_id: THREEFYTP10
+    anchor_date: "2026-08-21"
+    expected: 0.8682
+    tolerance: 0.005     # ACM series, 4dp; ~1 week publication lag
+    provenance: "live-test verified 2026-08-28, FRED THREEFYTP10"
+
+  - series_id: DTWEXBGS
+    anchor_date: "2026-08-21"
+    expected: 118.0628
+    tolerance: 0.05      # index, 4dp; small inter-vintage retail revisions
+    provenance: "live-test verified 2026-08-28, FRED DTWEXBGS"
+
+  - series_id: SOFR
+    anchor_date: "2026-08-27"
+    expected: 3.64
+    tolerance: 0.005     # official 2dp fixing; half-ulp
+    provenance: "live-test verified 2026-08-27, FRED SOFR"
+
+  - series_id: IORB
+    anchor_date: "2026-08-31"
+    expected: 3.65
+    tolerance: 0.005     # exact administrative rate (step function)
+    provenance: "live-test verified 2026-08-31, FRED IORB"
+
+  - series_id: DFF
+    anchor_date: "2026-08-27"
+    expected: 3.63
+    tolerance: 0.005     # daily effective rate, 2dp
+    provenance: "live-test verified 2026-08-27, FRED DFF"
+
+  - series_id: ECBDFR
+    anchor_date: "2026-08-28"
+    expected: 2.25
+    tolerance: 0.01      # exact ECB administrative rate (step function)
+    provenance: "live-test verified 2026-08-28, FRED ECBDFR"
+
+  # --- Real Yield ---------------------------------------------------
+
+  - series_id: DFII10
+    anchor_date: "2026-08-27"
+    expected: 2.34
+    tolerance: 0.02      # TIPS real yield, 2dp
+    provenance: "live-test verified 2026-08-27, FRED DFII10"
+
+  - series_id: DFII5
+    anchor_date: "2026-08-27"
+    expected: 2.07
+    tolerance: 0.02      # TIPS real yield, 2dp
+    provenance: "live-test verified 2026-08-27, FRED DFII5"
+
+  - series_id: T10YIE
+    anchor_date: "2026-08-28"
+    expected: 2.31
+    tolerance: 0.02      # 10Y breakeven, 2dp
+    provenance: "live-test verified 2026-08-28, FRED T10YIE"
+
+  - series_id: T5YIFR
+    anchor_date: "2026-08-28"
+    expected: 2.32
+    tolerance: 0.02      # 5y5y forward breakeven, 2dp
+    provenance: "live-test verified 2026-08-28, FRED T5YIFR"
+
+  # --- Inflation ------------------------------------------------------
+
+  - series_id: CPIAUCSL
+    anchor_date: "2026-07-01"
+    expected: 332.813
+    tolerance: 0.01      # NSA index, 3dp; base-year revisions are rare
+    provenance: "live-test verified 2026-08-28, FRED CPIAUCSL"
+
+  - series_id: PCEPILFE
+    anchor_date: "2026-07-01"
+    expected: 130.658
+    tolerance: 0.01      # core PCE index, 3dp
+    provenance: "live-test verified 2026-08-28, FRED PCEPILFE"
+
+  - series_id: MICH
+    anchor_date: "2026-07-01"
+    expected: 4.2
+    tolerance: 0.05      # survey, 1dp; half-ulp
+    provenance: "live-test verified 2026-08-28, FRED MICH"
+
+  - series_id: DCOILWTICO
+    anchor_date: "2026-08-25"
+    expected: 83.9
+    tolerance: 0.05      # WTI spot, 2dp; ~2 day publication lag
+    provenance: "live-test verified 2026-08-27, FRED DCOILWTICO"
+
+  # --- Growth ---------------------------------------------------------
+
+  - series_id: ICSA
+    anchor_date: "2026-08-22"
+    expected: 203000
+    tolerance: 1000      # weekly SA claims; ±1k administrative revisions typical
+    provenance: "live-test verified 2026-08-27, FRED ICSA"
+
+  - series_id: UNRATE
+    anchor_date: "2026-07-01"
+    expected: 4.1
+    tolerance: 0.05      # unemployment rate, 1dp; half-ulp
+    provenance: "live-test verified 2026-08-28, FRED UNRATE"
+
+  - series_id: PAYEMS
+    anchor_date: "2026-08-01"
+    expected: 159075
+    tolerance: 50        # thousands of jobs; minor monthly revisions within a vintage
+    provenance: "recalibrated 2026-09-08 (Aug report revised Jul 158858→158913,
+      busting the 09-05 anchor by 5 — routine benchmark revision, the exact
+      case the tolerance comment documents); FRED live"
+
+  - series_id: SAHMREALTIME
+    anchor_date: "2026-07-01"
+    expected: -0.03
+    tolerance: 0.005     # 2dp indicator; half-ulp
+    provenance: "live-test verified 2026-08-28, FRED SAHMREALTIME"
+
+  - series_id: INDPRO
+    anchor_date: "2026-07-01"
+    expected: 102.9939
+    tolerance: 0.005     # IP index, 4dp
+    provenance: "live-test verified 2026-08-28, FRED INDPRO"
+
+  - series_id: RSAFS
+    anchor_date: "2026-07-01"
+    expected: 763602
+    tolerance: 50        # $ millions; minor monthly revisions
+    provenance: "live-test verified 2026-08-28, FRED RSAFS"
+
+  - series_id: GDPNOW
+    anchor_date: "2026-04-01"
+    expected: 1.54
+    tolerance: 0.005     # anchored to the COMPLETED quarter (final, no longer revised);
+                         # GDPNow revises in-place ~8x per quarter, so anchoring the
+                         # current quarter would false-positive
+    provenance: "live-test verified 2026-08-28, FRED GDPNOW; re-anchored 2026-09-02"
+
+  - series_id: DRTSCILM
+    anchor_date: "2026-07-01"
+    expected: 0.0
+    tolerance: 0.05      # net % tightening standards, 1dp; quarterly
+    provenance: "live-test verified 2026-08-28, FRED DRTSCILM"
+
+  - series_id: DEXCHUS
+    anchor_date: "2026-08-21"
+    expected: 6.721
+    tolerance: 0.002     # H.10 noon buying rate, 3dp; Monday release carries Friday value
+    provenance: "live-test verified 2026-08-28, FRED DEXCHUS"
+
+  # --- Liquidity & Fiscal ---------------------------------------------
+
+  - series_id: WALCL
+    anchor_date: "2026-08-26"
+    expected: 6730912
+    tolerance: 1000      # H.4.1 $ millions (Wednesday snapshot); minor revisions
+    provenance: "live-test verified 2026-08-28, FRED WALCL"
+
+  - series_id: WRESBAL
+    anchor_date: "2026-08-26"
+    expected: 2924936
+    tolerance: 1000      # H.4.1 $ millions; minor revisions
+    provenance: "live-test verified 2026-08-28, FRED WRESBAL"
+
+  - series_id: WTREGEN
+    anchor_date: "2026-08-26"
+    expected: 950736
+    tolerance: 1000      # H.4.1 $ millions; minor revisions
+    provenance: "live-test verified 2026-08-28, FRED WTREGEN"
+
+  - series_id: RRPONTSYD
+    anchor_date: "2026-08-28"
+    expected: 0.175
+    tolerance: 0.01      # ON RRP take-up, $ billions, 3dp
+    provenance: "live-test verified 2026-08-28, FRED RRPONTSYD"
+
+  - series_id: M2SL
+    anchor_date: "2026-07-01"
+    expected: 23218
+    tolerance: 1        # SA $ billions; monthly level
+    provenance: "live-test verified 2026-08-28, FRED M2SL"
+
+  - series_id: FISCAL:TGA_DAILY
+    anchor_date: "2026-08-27"
+    expected: 950804
+    tolerance: 100       # exact DTS $ millions (COALESCE close/open); small buffer
+    provenance: "live-test verified 2026-08-27, fiscaldata DTS operating_cash_balance 'TGA Closing Balance'"
+
+  # --- Stress, Vol & Sentiment -----------------------------------------
+
+  - series_id: NFCI
+    anchor_date: "2026-08-28"
+    expected: -0.558
+    tolerance: 0.005     # weekly 3dp index (Saturday obs, Monday release; routine
+                        # backward revisions of ~0.01 do land)
+    provenance: "recalibrated 2026-09-08 (week 08-21 revised −0.566→−0.556,
+      the index's normal revision cycle); FRED live"
+
+  - series_id: VIXCLS
+    anchor_date: "2026-08-27"
+    expected: 14.51
+    tolerance: 0.05      # CBOE close, 2dp
+    provenance: "live-test verified 2026-08-27, FRED VIXCLS"
+
+  - series_id: VXVCLS
+    anchor_date: "2026-08-27"
+    expected: 17.56
+    tolerance: 0.05      # CBOE close, 2dp
+    provenance: "live-test verified 2026-08-27, FRED VXVCLS"
+
+  - series_id: VXNCLS
+    anchor_date: "2026-08-27"
+    expected: 20.24
+    tolerance: 0.05      # CBOE close, 2dp
+    provenance: "live-test verified 2026-08-27, FRED VXNCLS"
+
+  - series_id: GVZCLS
+    anchor_date: "2026-08-27"
+    expected: 26.8
+    tolerance: 0.05      # CBOE close, 2dp
+    provenance: "live-test verified 2026-08-27, FRED GVZCLS"
+
+  - series_id: OVXCLS
+    anchor_date: "2026-08-27"
+    expected: 46.22
+    tolerance: 0.05      # CBOE close, 2dp
+    provenance: "live-test verified 2026-08-27, FRED OVXCLS"
+
+  # --- CVOL (stress-vol, CME gray-zone backdoor source) -----------------------------
+  # No history exists (DataMine is paid) — these are the last live prints at
+  # harvester start. GCVL is locked the tightest (0.01).
+
+  - series_id: CVOL:GCVL
+    anchor_date: "2026-08-28"
+    expected: 23.9999
+    tolerance: 0.01      # tightest lock
+    provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=GCVL"
+
+  - series_id: CVOL:SIVL
+    anchor_date: "2026-08-28"
+    expected: 45.9298
+    tolerance: 0.05      # live 4dp print; looser than GCVL
+    provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=SIVL"
+
+  - series_id: CVOL:HGVL
+    anchor_date: "2026-08-28"
+    expected: 26.8351
+    tolerance: 0.05      # live 4dp print; looser than GCVL
+    provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=HGVL"
+
+  - series_id: CVOL:POVL
+    anchor_date: "2026-08-28"
+    expected: 38.929
+    tolerance: 0.05      # live 4dp print; looser than GCVL
+    provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=POVL"
+
+  - series_id: CVOL:MVL
+    anchor_date: "2026-08-28"
+    expected: 25.6635
+    tolerance: 0.05      # live 4dp print; looser than GCVL
+    provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=MVL"

@@ -1,0 +1,164 @@
+# =====================================================================================
+# ark-watch — config/params_signals.yaml — signal-engine parameters
+# All trading/signal thresholds in one place; they are never hard-coded elsewhere.
+# Consumer: signals/cot_signals.py, signals/pillars.py (+brief.py, qa/f4.py via
+# imports), qa/surprise.py, qa/watcher.py.
+#
+# Values here were MOVED verbatim from the code on 2026-09-03 (refactor only,
+# zero behavior change). Each carries its research/decision provenance below.
+# =====================================================================================
+
+# --- COT positioning (signals/cot_signals.py) ---------------------------------------
+# [RISET: DATA-SPEC blok-G + docs/explained/07-block-g-positioning-cot.md §4 —
+#  window khusus blok G = 3 tahun, ±150-156 minggu data COT (2026-08)]
+
+cot_crowded_z: 1.5              # |z| above this = crowded positioning flag
+  # [RISET: docs/explained/00-overview.md §228 "blok G: |z|>1.5 = crowded — ambang
+  #  tercatat, bukan selera". Dipakai di: brief ⚠CROWDED, watcher cot_crowded_*,
+  #  label CROWDED_LONG/SHORT di computed_signals, dan ambang NEUTRAL regime-conditioned.]
+
+cot_z_window_weeks: 156         # 3 years of weekly COT reports (z-score lookback)
+  # Window z-score net positioning; juga tersimpan sebagai metadata window_wk
+  # di computed_signals (audit trail).
+
+cot_z_min_weeks: 60             # minimum history before z is valid (~1+ year)
+  # Di bawah ini z = None (jangan menyatakan positioning dari <1 tahun data).
+
+# --- Surprise engine (qa/surprise.py) -----------------------------------------------
+# [RISET: FR-38 (docs/FEATURES.md) + BUILD-PLAN §3-I + UX-SPEC S-2b (2026-08)]
+
+surprise_window_years: 5        # rolling σ window
+  # σ = stdev surprise historis rolling 5y, di-update per rilis.
+
+surprise_min_obs: 30            # below this = low_conf
+  # n<30 → low_conf permanen di indicator_stats (indikator kuartalan dll.);
+  # low_conf tidak boleh menyumbang ESI.
+
+surprise_winsor_sigma: 4.0      # winsorization bound (MAD-based)
+  # Batas winsor ±4σ dari MAD (bukan σ-sampel — anti masking); juga dipakai
+  # sebagai clip z ±4 masuk ESI.
+
+surprise_esi_tau_days: 90       # ESI decay constant
+  # Bobot e^(−Δt/90d); half-life ≈ 62 hari (docs/explained/09 §3.4).
+
+# --- Regime score (signals/pillars.py → brief.py, cot_signals.py, qa/f4.py) ---------
+# [KEPUTUSAN: build F4 2026-08 — skor = rata-rata z 6 pilar terbobot, rentang ±2;
+#  ±0.3 = label NEUTRAL tengah ±15% dari rentang. Kalibrasi ulang = kandidat
+#  backtest (lihat f4 hit-rate per regime).]
+
+regime_risk_on: 0.3             # score above = RISK-ON
+regime_risk_off: -0.3           # score below = RISK-OFF
+
+# --- Watcher triggers (qa/watcher.py) -----------------------------------------------
+# [RISET: DATA-SPEC §11.5 daftar anomali + UX-SPEC §alert (2026-08)]
+
+vix_backwardation_ratio: 1.0    # VIX/VXV > this = backwardation
+  # Term-structure vol terbalik = stress akut jangka pendek (alert urgent).
+
+hy_extreme_pct_low: 10          # HY percentile below = extreme tight
+  # Spread sangat ketat = complacency; risiko repricing.
+
+hy_extreme_pct_high: 90         # HY percentile above = extreme wide
+  # Stress kredit tinggi; zona kontrarian historis.
+
+funding_extreme_bps: 5          # |funding| above = extreme
+  # |rate| > 0.05%/8h = sentimen leverage ekstrem (row harus fresh ≤2 hari).
+
+copper_drain_20d_pct: -0.15     # 20d change below = drain
+  # [RISET: UX-SPEC §copper-fisik + commit 7a2698d — spec pemicu 8/8; live
+  #  first-day Δ20d −23% (Sep-2026).]
+
+copper_drain_streak_weeks: 5    # weeks of consecutive decline
+  # Alternatif pemicu: 5 minggu turun berturut-turut + konteks kurva HG.
+
+soma_roll_off_7d_alert_b: 65    # SOMA par maturing ≤7d above this ($B) = alert
+  # [KEPUTUSAN: kalibrasi distribusi 108 minggu backfill 2024-08..2026-08
+  #  (2026-09-03) — $20B spec-asli fire di 46% minggu = noise; median 2y $17B,
+  #  p95 $62B, max $70.9B. $65B ≈ p98 full-history (2/108) dan 1/26 di era-2026
+  #  (median era naik ke $33B karena kepemilikan bills Fed $195B→$534B).
+  #  Revisit bila bills SOMA berubah struktural lagi.]
+
+soma_specials_new_par_b: 10    # NEW 70%-capped issues: total par above this ($B) = alert
+  # [KEPUTUSAN: backfill 108 minggu 2026-09-03 — jumlah isu yang Fed pegang
+  #  >30% selalu 66-93/minggu (struktural, bukan sinyal); yang bermakna hanya
+  #  isu BARU mencapai cap 70% (free float nyaris habis = kandidat repo
+  #  special). Hanya 1 event nyata dalam 104 minggu (2025-09-17: 2 isu $57B).
+  #  $10B menyaring entrant kecil; 19 event lain di 2024-08-07 = artefak tepi
+  #  backfill, sudah di-guard EXISTS-window di kode.]
+
+soma_walcl_gap_alert_b: 80     # |ΔWALCL − ΔSOMA| above this ($B) = integrity tripwire
+  # [KEPUTUSAN: distribusi gap 108 minggu (2026-09-03) — median −0.7B,
+  #  p05 −22.8B, p95 +4.3B, min −75.2B, max +59.4B (MBS runoff + op riil).
+  #  $80B > seluruh rentang historis = kemungkinan besar harvest rusak, bukan
+  #  pasar; 0 fire dalam 2 tahun. Ini alarm integritas data (BUILD-PLAN §6.3),
+  #  bukan sinyal trading.]
+
+# --- CME options positioning (signals/options.py + qa/watcher.py) --------------------
+# [RISET: PLAN-CME-OPTIONS.md §2.4 — settlements opsi per-strike CME (migrasi
+#  v8, panen harian); sinyal dihitung sendiri dari tabel mentah = bebas lisensi.]
+
+options_pcr_min_obs: 20          # prior days of gold-PCR history before the trigger arms
+  # [KEPUTUSAN: placeholder hari-1 (2026-09-03) — trigger harus diam by
+  #  construction sampai 20 hari data opsi terkumpul; revisi setelah
+  #  distribusi 2 minggu pertama terlihat.]
+
+options_wall_min_oi_pct: 3.0     # strike OI ≥ this % of front total OI = wall
+  # [KEPUTUSAN: day-1 placeholder — kalibrasi setelah 2 minggu data panen
+  #  harian (PLAN-CME-OPTIONS §3 langkah 6).]
+
+options_pcr_extreme_ratio: 0.30  # fire only outside [min − r·range, max + r·range]
+  # [KEPUTUSAN: placeholder — buffer 30% dari rentang trailing mencegah fire
+  #  pada tiap rekor baru marginal; kalibrasi setelah ≥8 minggu data.]
+
+# --- NY Fed v9: SOMA agency split + ops explainer + dealer positioning ----------------
+# [RISET: PLAN-NYFED-FULL.md §2 (endpoint live-verified 2026-09-03) — migrasi v9:
+#  soma_agency_summary + fed_operations + pd_positions; sinyal dihitung sendiri
+#  dari tabel mentah, degradable per konvensi _soma_tables_ready.]
+
+ops_explain_min_share: 0.5      # Results leg (family+direction) ≥ this share of |gross purchases|
+  # [KEPUTUSAN: placeholder hari-1 (2026-09-03) — kaki operasi outright baru
+  #  dianggap 'menjelaskan' pembelian kotor SOMA mingguan bila ≥50% (mis. 3 op
+  #  bill-P $30B dari buy +$42B). Kalibrasi setelah beberapa minggu data
+  #  fed_operations terkumpul; lihat signals/soma.py soma_ops_explainer.]
+
+dealer_stress_z: 1.5            # |z| at/above this on the DLR brief line = ⚠ flag
+  # [KEPUTUSAN: placeholder — selaras cot_crowded_z 1.5 (konvensi ambang
+  #  'crowded' sistem); revisi setelah distribusi z dealer within-break
+  #  (≥26 obs) terlihat dari histori pd_positions.]
+
+dealer_stress_4w_pct: -3.0      # UST dealer Δ4w (%) at/below = dealer_stress alert
+  # [KEPUTUSAN: placeholder (2026-09-03) — −3.0% ≈ −$13B pada skala inventaris
+  #  $436B. Jangkar kalibrasi: penurunan live 3-minggu 460→436 $B (−5%,
+  #  Agustus 2026, PLAN-NYFED-FULL §1.6) harus FIRE; angka pasti menyusul
+  #  histori penuh masuk.]
+
+fed_ops_resume_quiet_days: 30   # (family,direction) mix absent this many days = 'resume'
+  # [KEPUTUSAN: placeholder (2026-09-03) — 30 hari ≈ satu siklus pengumuman
+  #  bulanan meja outrights; deskripsi riset awal menyebut jendela-mati 60d,
+  #  dipendekkan agar perubahan pace/arah terasa dalam ~1 bulan. Kalibrasi
+  #  ulang dari histori results/last/N saat backfill masuk. CATATAN: trigger
+  #  diam by construction bila histori fed_operations < quiet_days+14d (gerbang
+  #  kedalaman di _fed_ops_resume) dan jendela panennya = 14 OPERASI per family
+  #  (OPS_WINDOW_N), bukan 14 hari — kadens op yang jauh lebih cepat dari 2/5-
+  #  hari bisa memangkas horizon prior; naikkan OPS_WINDOW_N bila meja
+  #  beneran harian.]
+
+# --- Treasury fiscaldata (signals/fiscal.py + qa/watcher.py, migration v10) -----------
+# [RISET: fiscaldata Treasury auction results / debt transactions / interest
+#  expense / avg interest rates (migrasi v10, fd-build) — fd_auctions membawa
+#  histori PENUH 1979→ (~14k lelang) sehingga kalibrasi percentile demand
+#  dihitung sendiri dari tabel mentah, bebas lisensi.]
+
+fd_auction_weak_pct: 10           # headline 10Y (5Y fallback) auction b/c percentile at/below = weak-demand alert
+  # [KEPUTUSAN: placeholder — full-history percentile distribution visible at
+  #  integration; revisit after first month. Label bucket WEAK di brief/store
+  #  memakai batas konsep yang sama (p10).]
+
+# --- Cooldown (qa/watcher.py) --------------------------------------------------------
+# [RISET: UX-SPEC §20 "cooldown dinamis (VIX>25 → 1 jam; default 6 jam)" +
+#  Cheng-Kirilenko-Xiong 2015: saat VIX spike semua kategori reposisi cepat →
+#  alert COT butuh kadens lebih cepat juga.]
+
+cooldown_hours_default: 6
+cooldown_hours_stress: 1        # when VIX > vix_stress_level (or z-VIX 60d > 1)
+vix_stress_level: 25

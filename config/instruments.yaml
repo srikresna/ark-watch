@@ -1,0 +1,31 @@
+# ark-watch — config/instruments.yaml — instrument matrix
+# symbol = stable ark-watch ID; yahoo/eodhd/twelve = per-source tickers (null = unavailable).
+# Source assignment: EODHD primary for spot metals + crypto backtests; Yahoo primary
+# for futures, indexes, DXY and FX majors.
+instruments:
+  - {symbol: XAUUSD,  yahoo: null,     eodhd: XAUUSD.FOREX,  twelve: "XAU/USD"}   # spot: EODHD primary (~12.5k bars)
+  - {symbol: XAGUSD,  yahoo: null,     eodhd: XAGUSD.FOREX,  twelve: null}
+  - {symbol: XPTUSD,  yahoo: null,     eodhd: XPTUSD.FOREX,  twelve: null}
+  - {symbol: XAUEUR,  yahoo: null,     eodhd: XAUEUR.FOREX,  twelve: null}
+  - {symbol: XAGEUR,  yahoo: null,     eodhd: XAGEUR.FOREX,  twelve: null}
+  - {symbol: BTCUSD,  yahoo: BTC-USD,  eodhd: BTC-USD.CC,    twelve: "BTC/USD"}   # backtests use EODHD (deepest history, ~2010)
+  - {symbol: ETHUSD,  yahoo: ETH-USD,  eodhd: ETH-USD.CC,    twelve: "ETH/USD"}
+  - {symbol: US100,   yahoo: "^NDX",   eodhd: NDX.INDX,      twelve: null}
+  - {symbol: US500,   yahoo: "^GSPC",  eodhd: GSPC.INDX,     twelve: null}
+  - {symbol: US30,    yahoo: "^DJI",   eodhd: DJI.INDX,      twelve: null}
+  - {symbol: DXY,     yahoo: "DX-Y.NYB", eodhd: DXY.INDX,    twelve: null}        # Yahoo has the deepest history (1971+)
+  - {symbol: VIX,     yahoo: "^VIX",   eodhd: VIX.INDX,      twelve: null}
+  - {symbol: EURUSD,  yahoo: "EURUSD=X", eodhd: EURUSD.FOREX, twelve: "EUR/USD"}
+  - {symbol: GBPUSD,  yahoo: "GBPUSD=X", eodhd: GBPUSD.FOREX, twelve: "GBP/USD"}
+  - {symbol: USDJPY,  yahoo: "USDJPY=X", eodhd: USDJPY.FOREX, twelve: "USD/JPY"}
+  - {symbol: AUDUSD,  yahoo: "AUDUSD=X", eodhd: AUDUSD.FOREX, twelve: null}
+  - {symbol: GC1,     yahoo: "GC=F",   eodhd: null,          twelve: null}        # continuous futures (roll-gap caveat)
+  - {symbol: SI1,     yahoo: "SI=F",   eodhd: null,          twelve: null}
+  - {symbol: PL1,     yahoo: "PL=F",   eodhd: null,          twelve: null}
+  - {symbol: HG1,     yahoo: "HG=F",   eodhd: null,          twelve: null}        # EODHD copper spot is stale — futures are primary
+  - {symbol: ES1,     yahoo: "ES=F",   eodhd: null,          twelve: null}
+  - {symbol: NQ1,     yahoo: "NQ=F",   eodhd: null,          twelve: null}
+  - {symbol: YM1,     yahoo: "YM=F",   eodhd: null,          twelve: null}
+  - {symbol: ZQ1,     yahoo: "ZQ=F",   eodhd: null,          twelve: null}        # feeds the historical FedWatch-DIY backfill
+# Synthetic crosses (XAGGBP etc.) are NOT listed here — they are computed downstream
+# (build via division, never multiplication).

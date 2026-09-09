@@ -1,0 +1,882 @@
+# =====================================================================================
+# ark-watch — config/series_registry.yaml — PART 1: BLOCKS A-C
+# Machine-readable source of truth for the series that live in `raw_observations`
+# (do not rename/reorder fields without a migration).
+#
+# HOUSED ELSEWHERE, EXCLUDED FROM THIS REGISTRY:
+#   * COT (positioning)      → `cot_raw`; contracts in config/cot_contracts.yaml
+#   * Flows (ETF/physical)   → `flows_daily` / `flows_periodic`
+#   * Calendar (events)      → `events`
+#   * price instruments      → `instrument_prices`
+#   * Snapshot & computed paths:
+#       - ZQ(305)/SR1(8463)/SR3(8462)/ESR(10247) settlements → `cme_settlements`
+#       - MPT XLSX + FedWatch-DIY + official FedWatch view    → `fedwatch_snapshots`
+#       - ECB implied path, xccy basis, slope, CPI 3m-ann,
+#         REACCEL overlay, gold↔RY divergence, z/momentum     → `computed_signals`
+#     (living in their own tables is enough — they are NOT listed row-by-row here)
+#
+# FIELD CONVENTIONS:
+#   tier         : 0..4 taxonomy (0=official institution, 1=paid EODHD/FMP,
+#                  2=free market data, 3=gray, 4=computed). Tier = PRIMARY's.
+#   unit / value_format : 'pct' = value already in percent (4.67 = 4.67%) ·
+#                  'fraction' = decimal (0.0467) · 'level' = raw non-percent number
+#                  (index, USD/bbl) — guards against DGS10=46.7 mixups.
+#   freq         : D | W | M | Q | A | E (event-driven, e.g. per MPC meeting).
+#   ts_convention (ts stored UTC, displayed WIB — EDT/EST aware):
+#                  et_close       = observation is that day's close (ET)
+#                  obs_day        = effective rate/value for day-ts, published T+1
+#                  effective_date = ts = date the new rate takes effect (not the
+#                                  announcement date)
+#                  report_month   = ts = reference month; release date → release_ts
+#                  target_month   = ts = predicted month (nowcasts); vintage_ts = the
+#                                  nowcast date
+#   expected_start : historical depth floor (min_ts >= expected_start). Historical
+#                  dates come from FRED metadata / research knowledge, marked ±
+#                  (unconfirmed); the backfill CONFIRMS and may correct them.
+#   sanity_min/max : plausibility gate (ingest + backfill). Ranges are deliberately
+#                  loose (avoid false alarms during full backfill) while still catching
+#                  digit transposition / unit mixups (the PBoC case study).
+#   tolerance    : primary-vs-secondary cross-validation threshold. null =
+#                  no valid LEVEL comparator (different semantics/product) → cross-
+#                  validate direction/derivatives instead, explained per-series.
+#
+# series_id = stable ark-watch handle; the endpoint mnemonic lives in `primary_source`
+# (e.g. FRED:DALLAS_TRIM_1M → fetches FRED:PCETRIM1M158SFRBDAL; CLEVE:NOWCAST → the
+# Cleveland Fed JSON file).
+#
+# Part 1 = blocks A-C (27 entries). Blocks D-F live in
+# series_registry_blocks_d-f.yaml.
+# =====================================================================================
+
+# =====================================================================================
+# --- Policy, Rates & Dollar --------------------------------------------------
+# + 12 serial series below (DFF, IORB, SOFR, DGS2/10/30, T10Y3M, DTWEXBGS, ECBDFR,
+#   POLICY_BOE, THREEFYTP10, CLEVE:NOWCAST) + official Treasury par curve per tenor.
+#   ZQ/SR1/ESR settlements, MPT, implied path, xccy → their own tables.
+#   DXY as an instrument → `instrument_prices`; listed here only as a DTWEXBGS
+#   secondary (DIFFERENT index — not a level comparator).
+#
+# Treasury par curve (XML daily_treasury_yield_curve) is registered PER-TENOR
+# only where it adds value: 1.5 MONTH (no FRED equivalent), plus 7Y & 20Y (Treasury =
+# official curve; FRED DGS7/DGS20 as secondary). 4Y is inactive (Treasury publishes no
+# 4Y tenor). 2/10/30Y are NOT duplicated: they already live as FRED:DGS2/DGS10/DGS30,
+# and the XML cross-checks via the two-path slope identity.
+# =====================================================================================
+
+- series_id: FRED:DFF
+  name: Fed funds effective rate (EFFR)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # effective rate for day-ts, published T+1 morning ET
+  release_schedule: business days; value for day-T published T+1 morning ET (NY Fed ~09:00)
+  expected_start: "1954-07-01"    # FRED metadata ±
+  sanity_min: 0.0                 # policy rates in the data era never go negative; EFFR has never been <0
+  sanity_max: 22.0                # Volcker-era 1981 daily peak ~19-20 (FRED DFF); 22 = anti-false-alarm margin
+  primary_source: FRED:DFF
+  secondary_source: FMP:federalFunds
+  tolerance: 0.01                 # 1bp — both sources quote the same effective rate
+  active: 1
+  # Fed funds effective rate — realized overnight policy rate; Policy pillar input + FedWatch anchor.
+
+- series_id: FRED:IORB
+  name: Interest on reserve balances
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # administrative rate in effect on day-ts
+  release_schedule: business days; changes only when the Fed sets it (new maintenance period)
+  expected_start: "2021-07-01"    # FRED metadata ± — IORB replaced IOER; IOER
+                                  # (2008-10-09 ±) is a separate backfill if longer
+                                  # history is needed
+  sanity_min: 0.0                 # administrative rate cannot sensibly be negative
+  sanity_max: 10.0                # follows the FFR target range; history 2021- 0.15..4.65; wide margin
+  primary_source: FRED:IORB
+  secondary_source: null          # no secondary; internal input to liquidity-fiscal (SOFR−IORB)
+  tolerance: null
+  active: 1
+  # Admin rate paid on reserves — floor-system anchor; SOFR−IORB spread input (liquidity-fiscal).
+
+- series_id: FRED:SOFR
+  name: SOFR (secured overnight financing rate)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # SOFR for day-T is published ~08:00 ET on T+1
+  release_schedule: business days; T+1 morning ET (~08:00)
+  expected_start: "2018-04-02"    # FRED metadata ± — first SOFR publication
+  sanity_min: 0.0                 # collateralized US repo has never gone negative
+  sanity_max: 10.0                # Sep-2019 spike 5.25 & Sep-Oct-2023 ~5.4; 10 = extreme-spike margin
+  primary_source: FRED:SOFR
+  secondary_source: EODHD:/rates/reference-rates
+  tolerance: 0.01                 # 1bp — same fixing
+  active: 1
+  # Repo funding rate (secured) — funding-stress spread legs + liquidity pulse; pairs with the P1–P99 percentiles.
+
+- series_id: FRED:DGS2
+  name: Treasury yield 2Y (constant maturity)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # CMT = OTC market close yield; on FRED the same ET evening
+  release_schedule: business days; curve closes ~15:30 ET
+  expected_start: "1976-06-01"    # FRED metadata ±
+  sanity_min: 0.0                 # modern nominal yields implausibly <0; Japan-style negatives never occurred in US CMT
+  sanity_max: 17.0                # Sep-1981 daily peak ~16.9 (FRED DGS2); 17 so full backfill does not false-alarm
+  primary_source: FRED:DGS2
+  secondary_source: FMP:/stable/treasury-rates
+  tolerance: 0.02                 # 2bp — matches the two-path slope identity threshold
+  active: 1
+  # 2Y yield — front-end policy expectation; short leg of the 2s10s slope check (pillars).
+
+- series_id: FRED:DGS10
+  name: Treasury yield 10Y (constant maturity)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # same as DGS2
+  release_schedule: business days; curve closes ~15:30 ET
+  expected_start: "1962-01-02"    # first FRED observation
+  sanity_min: 0.0                 # nominal yield outside the range is implausible; 1981 peak ~15.8
+  sanity_max: 15.0                # nominal yield outside the range is implausible; 1981 peak ~15.8
+  primary_source: FRED:DGS10
+  secondary_source: FMP:/stable/treasury-rates
+  tolerance: 0.02                 # 2bp, same as DGS2
+  active: 1
+  # 10Y benchmark — DFII10 ≈ DGS10−T10YIE identity gate + brief overnight-watch line.
+
+- series_id: FRED:DGS30
+  name: Treasury yield 30Y (constant maturity)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # same as DGS2
+  release_schedule: business days; curve closes ~15:30 ET
+  expected_start: "1977-02-28"    # FRED metadata ±; KNOWN GAP 2002-02-18..2006-02-08
+                                  # (30Y bond issuance suspended) — a structural gap,
+                                  # not harvester data loss
+  sanity_min: 0.0                 # same as DGS10
+  sanity_max: 16.0                # 1981 peak ~15 (FRED DGS30); 16 margin
+  primary_source: FRED:DGS30
+  secondary_source: FMP:/stable/treasury-rates
+  tolerance: 0.02                 # 2bp, same as DGS2
+  active: 1
+  # 30Y long end — curve-shape anchor; the slowest tenor in the yield-complex context.
+
+- series_id: FRED:T10Y3M
+  name: 3M–10Y curve spread
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # derivative of the close curve
+  release_schedule: business days; follows the CMT release
+  expected_start: "1982-01-04"    # FRED metadata ± — tied to the start of the secondary 3M bill series
+  sanity_min: -3.0                # deepest historical inversion ~-2 to -2.4 (1980s; 2023 ~-1.9); -3 margin
+  sanity_max: 5.0                 # historical peak ~+4 (2009-10 recovery era); 5 margin
+  primary_source: FRED:T10Y3M
+  secondary_source: FMP:/stable/treasury-rates (spread computed as 10y−3m from the response)
+  tolerance: 0.03                 # 3bp — secondary recomputes from two legs, slightly looser
+  active: 1
+  # 3M–10Y curve spread — recession-watch curve; Policy pillar A z-score input.
+
+- series_id: FRED:DTWEXBGS
+  name: Dollar index trade-weighted (broad)
+  block: A
+  tier: 0
+  unit: index
+  value_format: level
+  freq: D
+  ts_convention: obs_day          # index for day-T published ~16:15 ET T+1 (H.10/FRED route)
+  release_schedule: business days; T+1 afternoon ET
+  expected_start: "2006-01-02"    # FRED metadata ±
+  sanity_min: 85.0                # 2006- low ~94.5 (2011); 85 = wide anti-false-alarm margin
+  sanity_max: 150.0               # high ~130 (2022); 150 margin for further dollar gains
+  primary_source: FRED:DTWEXBGS
+  secondary_source: "EODHD:DXY.INDX / Yahoo:DX-Y.NYB (gray-eligible §10)"
+  tolerance: null                 # DXY ≠ DTWEXBGS (different basket & basis) — direction/Δ20d cross-check only, never level
+  active: 1
+  # Trade-weighted dollar — dollar-smile STRONG/WEAK/FLAT (20d momentum) + FX-majors context.
+
+- series_id: FRED:ECBDFR
+  name: ECB deposit facility rate
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: effective_date   # ts = date the rate takes effect; announcement date → release_ts
+  release_schedule: business days; changes only after ECB decisions (~8×/year, Thursday 14:15 CET)
+  expected_start: "1999-01-04"    # FRED metadata ± — start of the euro
+  sanity_min: -1.0                # DFR was NEGATIVE 2014-2022 (low -0.5); lower bound -1
+  sanity_max: 5.0                 # high 4.0 (2023); 5 margin
+  primary_source: FRED:ECBDFR
+  secondary_source: "ECB:B.U2.EUR.4F.KR.DFR.LEV | EODHD:/rates/policy-rates (EUR)"
+  tolerance: 0.01                 # 1bp — the same official policy value
+  active: 1
+  # ECB deposit rate — the ECB policy anchor; Fed−ECB differential + implied-path context.
+
+- series_id: EODHD:POLICY_BOE
+  name: BoE Bank Rate
+  block: A
+  tier: 1
+  unit: pct
+  value_format: pct
+  freq: E
+  ts_convention: effective_date   # ts = date the rate takes effect; announcement → release_ts
+  release_schedule: per MPC meeting (8×/year); decision Thursday 12:00 UK
+  expected_start: "1975-01-01"    # EODHD policy-rates historical depth UNVERIFIED ±
+  sanity_min: 0.0                 # Bank Rate has never been negative
+  sanity_max: 20.0                # history 0.1 (2020-21) to 17 (1979); 20 margin
+  primary_source: EODHD:/rates/policy-rates (GBP)
+  secondary_source: null          # BOERUKM (FRED mirror) dead since 2017;
+                                  # single-source policy: active freshness check
+                                  # replaces cross-val
+  tolerance: null
+  active: 0
+  # The EODHD policy-rates endpoint hosts FED+ECB only (central_bank=BOE is ignored
+  # server-side; reference-rates has no UK either). Alternate routes (BoE website
+  # JSON / IADB HTML scrape / FMP) pending. Inactive until a new source lands.
+
+- series_id: FRED:THREEFYTP10
+  name: Term premium 10Y (model Kim-Wright)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # daily model on the close curve
+  release_schedule: business days; follows the CMT release
+  expected_start: "1990-01-02"    # the Kim-Wright 1990+ series, not ACM 1961+
+  sanity_min: -3.0                # negative through 2011-2021 (low ~-0.9); -3 margin
+  sanity_max: 6.0                 # high-inflation era ~+3..+5; 6 margin
+  primary_source: FRED:THREEFYTP10
+  secondary_source: null          # no secondary; the composite derivation
+                                  # ≈ DGS10−exp 10Y is usable as a direction check,
+                                  # not a level comparator
+  tolerance: null
+  active: 1
+  # 10Y term premium (Kim-Wright) — the "duration for free" gauge; fiscal gold-channel companion.
+
+- series_id: CLEVE:NOWCAST
+  name: CPI inflation nowcast for current month (Cleveland Fed, MoM)
+  block: A
+  tier: 0
+  unit: pct_mom
+  value_format: pct
+  freq: D
+  ts_convention: target_month     # ts = predicted month; many daily vintages per month →
+                                  # distinguished by vintage_ts (append-only); consume as
+                                  # "latest element per month"
+  release_schedule: daily (Cleveland updates after new data lands, ~10:00 ET ±)
+                                  # NO expected_start on purpose: the JSON only carries the
+                                  # current chart year ± (short retention) — a depth floor is
+                                  # unverifiable by construction, and Gate 3 would need a
+                                  # fetch_first_ts the daily file cannot truthfully answer
+  sanity_min: -1.5                # extreme historical CPI MoM ~-0.8 (2020) to +1.3
+                                  # (Jun-2022); range catches wrong-decimal parses
+                                  # (0.23 vs 2.3) without false alarms
+  sanity_max: 2.0
+  primary_source: CLEVELAND:nowcast_month.json (FusionCharts JSON; browser UA, no key; MM/DD labels + year from the subcaption)
+  secondary_source: null          # unique official source — single-source with a
+                                  # freshness check; the YoY/PCE/_quarter/_year
+                                  # variants in the same file can be added as new
+                                  # series_ids later
+  tolerance: null
+  active: 1
+  # Current-month CPI MoM nowcast — intra-month inflation pulse between BLS releases (append-only vintages).
+
+# --- Cleveland Fed inflation-EXPECTATIONS model (audit 2026-09-04, paket B; the
+#     workbook is an XLSX served under a .csv name — verified live: sheets
+#     'Expected Inflation' (1y..30y) + 'Real Interest Rate' (1m/1y/10y), monthly
+#     Model Output Dates, ~537 rows back to the early-1980s) ---------------------
+
+- series_id: CLEVE:EXPINF_1Y
+  name: Expected inflation 1-year (Cleveland Fed model)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start         # ts = Model Output Date (monthly, 1st)
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"       # workbook history ≈537 monthly rows
+  sanity_min: -2.0                   # deflationary era expectations went slightly negative
+  sanity_max: 10.0                   # early-80s peak ~8-9
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Expected Inflation'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # 1y model expectation — the short anchor of the expectation curve.
+
+- series_id: CLEVE:EXPINF_10Y
+  name: Expected inflation 10-year (Cleveland Fed model)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"
+  sanity_min: 0.0
+  sanity_max: 10.0
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Expected Inflation'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # 10y model expectation — the long anchor; T10YIE − this = inflation risk
+  # premium proxy (computed_signals 'irp_10y').
+
+- series_id: CLEVE:REALRATE_1Y
+  name: Expected real interest rate 1-year (Cleveland Fed model)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"
+  sanity_min: -5.0                   # landed min −3.97 (2022-06) — margin
+  sanity_max: 12.0
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Real Interest Rate'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Model 1y real rate — vs FRED:DFII2-style market real rates (model uses
+  # surveys+market+SWU, TIPS uses market only).
+
+- series_id: CLEVE:REALRATE_10Y
+  name: Expected real interest rate 10-year (Cleveland Fed model)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"
+  sanity_min: -2.0
+  sanity_max: 10.0
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Real Interest Rate'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Model 10y real rate — the "true" long real rate read vs DFII10 (TIPS
+  # liquidity/technical distortions absent).
+
+# --- Cleveland yield-curve recession probability (paket C; URL pinned by the
+#     research workflow 2026-09-04). Two legs of chart2_recession_probability
+#     _w_forecast.csv, monthly 1960→. Live 2026-08: model estimate 24.4%,
+#     +12m forecast 12.3%. ------------------------------------------------------
+
+- series_id: CLEVE:RECPROB
+  name: Yield-curve recession probability, current (Cleveland Fed model)
+  block: A
+  tier: 0
+  unit: "percent (0-100)"
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (model refresh with the curve)
+  expected_start: "1960-01-01"
+  sanity_min: 0.0                    # probability bound
+  sanity_max: 100.0
+  primary_source: "CLEVELAND:chart2_recession_probability_w_forecast.csv (est leg)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Model-implied current recession probability from the curve — leg 1 of the
+  # recession triangulation (with PHILLY:ANXIOUS + Sahm).
+
+- series_id: CLEVE:RECPROB_F12
+  name: Yield-curve recession probability, +12m forecast (Cleveland Fed model)
+  block: A
+  tier: 0
+  unit: "percent (0-100)"
+  value_format: pct
+  freq: M
+  ts_convention: month_start         # ts = the MODEL month (the forecast is
+                                    # 12m ahead of it — the horizon lives in
+                                    # the series definition, not the ts)
+  release_schedule: monthly (with the model refresh)
+  expected_start: "2025-07-01"       # ROLLING WINDOW: the CSV's forecast leg
+                                    # only carries ~14 recent vintages (review-1
+                                    # live-decode) — the series is young by
+                                    # construction, NOT truncated harvesting;
+                                    # depth grows one row per model month
+  sanity_min: 0.0
+  sanity_max: 100.0
+  primary_source: "CLEVELAND:chart2_recession_probability_w_forecast.csv (forecast leg)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The model's FORWARD look — 12 months ahead. History note: the CSV's
+  # forecast leg extends past the last model month; we store the latest
+  # forecast row (its ts is the model month, not the target month — pinned
+  # by the harvest storing one row per model vintage).
+
+- series_id: CLEVE:IRP_10Y_MODEL
+  name: Inflation Risk Premium 10Y, official model estimate (Cleveland Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"
+  sanity_min: -2.0                    # history incl. negative-premia regimes
+  sanity_max: 5.0
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Ten-year Expected Chart'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The model's OWN inflation-risk-premium decomposition — NOT comparable
+  # level-for-level with computed irp_10y (T10YIE − EXPINF_10Y ≈ −14bp),
+  # which mixes in TIPS technicals; the two are companion reads of "is the
+  # market paying for inflation insurance" (model +44bp live).
+
+- series_id: CLEVE:RRP_10Y_MODEL
+  name: Real Risk Premium 10Y, official model estimate (Cleveland Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: monthly (early following month)
+  expected_start: "1982-01-01"
+  sanity_min: -2.0
+  sanity_max: 6.0
+  primary_source: "CLEVELAND:inflation-expectations.csv (XLSX) sheet 'Ten-year Expected Chart'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The real-term premium the model strips from the 10Y — the "duration for
+  # free" gauge; complements the Kim-Wright THREEFYTP10 series.
+
+- series_id: TREASURY:PAR_1_5Y
+  name: Treasury 1.5-MONTH par curve (official)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # official par curve ~15:30 ET
+  release_schedule: business days; XML ~15:30 ET
+  expected_start: "1996-01-02"    # treasury.gov XML history starts ~1996 ±
+                                  # (year-loop backfill)
+  sanity_min: 0.0                 # same as DGS*
+  sanity_max: 16.0                # 1981 peak at the short end ~15-17 ±
+  primary_source: TREASURY:xml daily_treasury_yield_curve (field BC_1_5MONTH)
+  secondary_source: null          # NO FRED equivalent (FRED has no 1.5mo) — the very
+                                  # reason this is registered
+  tolerance: null
+  active: 1
+  # NOTE: the Treasury XML publishes 1.5 MONTH (BC_1_5MONTH), not 1.5Y; series_id kept
+  # for stability, meaning = 1.5mo.
+
+- series_id: TREASURY:PAR_4Y
+  name: Treasury 4Y par curve (official)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; XML ~15:30 ET
+  expected_start: "1996-01-02"    # same as PAR_1_5Y ±
+  sanity_min: 0.0
+  sanity_max: 17.0                # same as PAR_1_5Y
+  primary_source: TREASURY:xml daily_treasury_yield_curve (tenor 4 Y)
+  secondary_source: null          # Treasury publishes NO 4Y tenor (curve: 1/1.5/2/3/4/6
+                                  # MO, 1/2/3/5/7/10/20/30 YR)
+  tolerance: null
+  active: 0                       # disabled — tenor absent at the source; re-enable only
+                                  # if another curve source (e.g. fitted GSW) is added
+
+- series_id: TREASURY:PAR_7Y
+  name: Treasury 7Y par curve (official)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; XML ~15:30 ET
+  expected_start: "1996-01-02"    # same as PAR_1_5Y ±
+  sanity_min: 0.0
+  sanity_max: 16.0                # same as PAR_1_5Y
+  primary_source: TREASURY:xml daily_treasury_yield_curve (tenor 7 Y)
+  secondary_source: FRED:DGS7
+  tolerance: 0.02                 # 2bp — CMT vs official curve are both H.15/close-based; inconsistency = alarm
+  active: 1
+  # Official 7Y par point — official-curve coverage where FRED is the cross-check (2bp alarm).
+
+- series_id: TREASURY:PAR_20Y
+  name: Treasury 20Y par curve (official)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; XML ~15:30 ET
+  expected_start: "1996-01-02"    # same as PAR_1_5Y ±; the 20Y tenor has a discontinued
+                                  # issuance era ± — expect a structural gap
+  sanity_min: 0.0
+  sanity_max: 16.0                # same as PAR_1_5Y
+  primary_source: TREASURY:xml daily_treasury_yield_curve (tenor 20 Y)
+  secondary_source: FRED:DGS20
+  tolerance: 0.02                 # 2bp, same as PAR_7Y
+  active: 1
+
+# =====================================================================================
+# --- Real Yield --------------------------------------------------------------
+# The 5 FRED series below.
+#   - gold↔real-yield divergence signal → `computed_signals` (60d corr, -0.3
+#     threshold)
+#   - 5y z-score + 20d momentum (XAUUSD driver #1) → computed
+# Daily identity (brief gate): DFII10 ≈ DGS10 − T10YIE (±25bps).
+# EODHD failover: /ust/real-yield-rates (single call) — wired as secondary
+# for the whole block.
+# =====================================================================================
+
+- series_id: FRED:DFII10
+  name: Real yield 10Y (TIPS)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close         # OTC market close quote
+  release_schedule: business days; TIPS quotes appear on FRED the same ET evening
+  expected_start: "2003-01-02"    # FRED metadata ± — start of 10Y TIPS quotes on FRED
+  sanity_min: -2.5                # low ~-1.2 (2021); -2.5 margin
+  sanity_max: 5.0                 # high ~3.0 (2008 spike); 5 margin
+  primary_source: FRED:DFII10
+  secondary_source: EODHD:/ust/real-yield-rates (10Y)
+  tolerance: 0.02                 # EODHD failover check ±2bps
+  active: 1
+  # Real yield driver #1 for XAUUSD — RealYield pillar B (z + 20d momentum) + gold↔RY divergence trigger.
+
+- series_id: FRED:DFII5
+  name: Real yield 5Y (TIPS)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; TIPS quotes appear on FRED the same ET evening
+  expected_start: "2003-01-02"    # FRED metadata ± — DFII5 may start a few months later
+  sanity_min: -2.5                # 5Y more volatile than 10Y in the 2021 crisis (~-1.5..-1.9); -2.5 margin
+  sanity_max: 5.0                 # same as DFII10 ±
+  primary_source: FRED:DFII5
+  secondary_source: EODHD:/ust/real-yield-rates (5Y)
+  tolerance: 0.02                 # failover check ±2bps
+  active: 1
+  # Short real rate — metals headwind/tailwind gauge alongside DFII10 (the 5y leg is jumpier).
+
+- series_id: FRED:T5YIE
+  name: 5Y inflation breakeven
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; derivative of TIPS vs nominal quotes
+  expected_start: "2003-01-02"    # FRED metadata ±
+  sanity_min: -1.0                # the Nov-2008 TIPS liquidity crisis pushed 5y BEI to ~0/negative; -1
+  sanity_max: 6.0                 # 2022 peak ~3.6; 6 margin
+  primary_source: FRED:T5YIE
+  secondary_source: "EODHD:/ust/yield-rates + /ust/real-yield-rates (BE = nominal − real, 5Y)"
+  tolerance: 0.03                 # 3bp — secondary is a difference of two independent quotes, slightly looser
+  active: 1
+  # 5Y breakeven — market inflation expectations at the policy-relevant horizon (medium term).
+
+- series_id: FRED:T10YIE
+  name: 10Y inflation breakeven
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; derivative of TIPS vs nominal quotes
+  expected_start: "2003-01-02"    # FRED metadata ±
+  sanity_min: -1.0                # 2008 low ~0.5-1.0; -1 loose margin
+  sanity_max: 6.0                 # 2022 peak ~3.2; 6 margin
+  primary_source: FRED:T10YIE
+  secondary_source: "EODHD:/ust/yield-rates + /ust/real-yield-rates (BE = nominal − real, 10Y)"
+  tolerance: 0.03                 # 3bp, same as T5YIE
+  active: 1
+  # 10Y breakeven — leg of the daily identity DFII10 ≈ DGS10 − T10YIE (brief gate ±25bps).
+
+- series_id: FRED:T5YIFR
+  name: 5y5y forward breakeven
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days; derivative of TIPS vs nominal quotes
+  expected_start: "2003-01-02"    # FRED metadata ± — the forward construction needs the
+                                  # 10Y tenor, may start slightly later
+  sanity_min: 0.0                 # the long anchor only breaks <0 in a terminal crisis; 0 is loose enough for 5y5y
+  sanity_max: 5.0                 # historical range ~1.2-2.9 (2015 low, 2022 high); 5 margin
+  primary_source: FRED:T5YIFR
+  secondary_source: "EODHD:/ust/yield-rates + /ust/real-yield-rates (self-constructed forward)"
+  tolerance: 0.05                 # 5bp — a forward from discrete tenors ≠ FRED smoothing; drift detection only
+  active: 1
+
+# =====================================================================================
+# --- Inflation + energy channel ----------------------------------------------
+#   - 3m-annualized CPI ((1+m1)(1+m2)(1+m3))^4 − 1 + COOLING/STABLE/REACCEL state
+#     + the two-tier LEVEL overlay → `computed_signals`; thresholds live in
+#     config/params_block_c.yaml (the companion file to this registry)
+
+# --- Regional-Fed core-trend inflation family (audit 2026-09-04, all live-verified
+#     on FRED the same day: median 3.66 / sticky-core 3.09 / sticky 2.90 /
+#     flexible 14.13 / Dallas-trim 2.84 @ their latest prints) ----------------------
+
+- series_id: FRED:MEDCPIM158SFRBCLE
+  name: Median CPI, percent change at annual rate (Cleveland Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: ~3rd week following month (Cleveland Fed)
+  expected_start: "1983-01-01"       # FRED live-verified (review ronde-1; an
+                                    # earlier 1968 guess was wrong)
+  sanity_min: -2.0                   # landed history −0.29..7.84 — do NOT narrow
+  sanity_max: 10.0
+  primary_source: FRED:MEDCPIM158SFRBCLE
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Cleveland Fed median CPI — the Fed's preferred underlying-trend torch (robust
+  # to sector rotation, better real-time core read than ex-food-energy).
+
+- series_id: FRED:CORESTICKM159SFRBATL
+  name: Sticky-price core CPI, percent change at annual rate (Atlanta Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: ~2 weeks following month (Atlanta Fed sticky basket)
+  expected_start: "1968-01-01"       # FRED metadata ±
+  sanity_min: 0.0
+  sanity_max: 20.0                   # landed max 15.77 (1980-06) — margin, never narrower
+  primary_source: FRED:CORESTICKM159SFRBATL
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Atlanta sticky CORE — prices that re-price ≤once/yr; the slow underlying trend.
+
+- series_id: FRED:STICKCPIM158SFRBATL
+  name: Sticky-price CPI, percent change at annual rate (Atlanta Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: ~2 weeks following month
+  expected_start: "1968-01-01"       # FRED metadata ±
+  sanity_min: -10.0                  # landed history −5.99..18.80 — never narrower
+  sanity_max: 22.0
+  primary_source: FRED:STICKCPIM158SFRBATL
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Atlanta sticky headline — pairs with CORESTICK for the basket-composition read.
+
+- series_id: FRED:FLEXCPIM158SFRBATL
+  name: Flexible-price CPI, percent change at annual rate (Atlanta Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: ~2 weeks following month
+  expected_start: "1968-01-01"       # FRED metadata ±
+  sanity_min: -60.0                  # landed history −50.4..+54.7 (energy-led
+  sanity_max: 65.0                   # swings both directions) — never narrower
+  primary_source: FRED:FLEXCPIM158SFRBATL
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Flexible basket (re-prices >once/yr) — the NOISE side; sticky−flexible spread
+  # separates trend from energy/goods shocks faster than headline±core.
+
+- series_id: FRED:PCETRIM1M158SFRBDAL
+  name: Trimmed-mean PCE inflation YoY (Dallas Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: ~2 weeks following month (Dallas Fed trimming)
+  expected_start: "1977-01-01"       # FRED metadata ±
+  sanity_min: 0.0
+  sanity_max: 12.0                   # landed max 10.16 — margin
+  primary_source: FRED:PCETRIM1M158SFRBDAL
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Dallas trimmed PCE — the PCE-side twin of median CPI; the Fed's other torch.
+#   - MoM/YoY/Δ3-month CPI derivatives → computed from the raw SA index below
+#   - OVX (energy channel complement) → stress-vol registry (part-2 file)
+# Vintages (append-only): annual CPI revisions & prelim-vs-final MICH land as new
+# vintage rows.
+# =====================================================================================
+
+- series_id: FRED:CPIAUCSL
+  name: CPI all items, SA (index 1982-84=100)
+  block: C
+  tier: 0
+  unit: index_1982_84
+  value_format: level
+  freq: M
+  ts_convention: report_month    # ts = reference month; BLS release date → release_ts (anti look-ahead)
+  release_schedule: BLS ±13 business days after the end of the reference month, 08:30 ET
+  expected_start: "1947-01-01"   # FRED metadata ± — SA series starts 1947
+  sanity_min: 20.0               # 1947 starting value ~21.5
+  sanity_max: 600.0              # ~320 in the mid-2020s, ~3%/yr growth → 600 leaves a
+                                 # decade of room; range exists to catch digit
+                                 # transposition / unit mixups, not to gate economics
+  primary_source: FRED:CPIAUCSL  # (must be the SA series — the 3m-ann formula is pinned to SA)
+  secondary_source: "FMP:CPI & FMP:inflationRate"
+  tolerance: null                # FMP carries YoY%, not the index — cross-validate the
+                                 # DERIVED YoY (±0.2pp at the transform layer), never a
+                                 # raw level diff
+  active: 1
+  # Raw SA index — Inflation pillar C: 3m-ann REACCEL overlay + YoY z; all MoM/YoY/Δ3m derivatives computed from it.
+
+- series_id: FRED:PCEPILFE
+  name: Core PCE price index (2012=100)
+  block: C
+  tier: 0
+  unit: index_2012
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: BEA end of the following month, 08:30 ET
+  expected_start: "1959-01-01"   # FRED metadata ±
+  sanity_min: 10.0               # 1959 starting value ~15-16
+  sanity_max: 400.0              # ~147 in the mid-2020s; wide bound — wrong-digit guard
+  primary_source: FRED:PCEPILFE
+  secondary_source: null         # FMP economic-indicators has NO PCE; official
+                                 # single-source with an active freshness check.
+                                 # NOTE: with no failover, if FRED/BEA stalls the
+                                 # core-PCE pillar = INSUFFICIENT (never fill with
+                                 # guesses)
+  tolerance: null
+  active: 1
+  # Core PCE index — the Fed's target inflation measure; trend confirmation vs the CPI headline.
+
+- series_id: FRED:MICH
+  name: Consumer 1Y inflation expectations (UMich, median)
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: prelim ±mid-month; final ±end of month (prelim/final = different vintages of the same month)
+  expected_start: "1978-01-01"   # the modern median series starts 1978 (not 1947)
+  sanity_min: 0.0                # low ~0.6 (2020-21); the survey median is never negative
+  sanity_max: 15.0               # 1980-81 peak ~10-11; 15 margin
+  primary_source: FRED:MICH
+  secondary_source: "FMP:consumerSentiment"
+  tolerance: null                # FMP = consumer SENTIMENT index (not inflation
+                                 # expectations) — different semantics, consumer-
+                                 # direction cross-check only; not a level comparator
+  active: 1
+  # Consumer 1Y inflation expectations — expectations channel of the inflation regime (prelim/final = vintages).
+
+- series_id: FRED:DCOILWTICO
+  name: WTI spot (FOB Cushing)
+  block: C
+  tier: 0
+  unit: usd_per_bbl
+  value_format: level
+  freq: D
+  ts_convention: obs_day         # spot for day-T published T+1 (EIA/FRED)
+  release_schedule: business days; T+1
+  expected_start: "1986-01-02"   # FRED metadata ±
+  sanity_min: -40.0              # 2020-04-20 printed -36.98 on FRED (futures settlement)
+                                 # — negative values are VALID, do not drop/clip; -40
+                                 # margin
+  sanity_max: 150.0              # Jul-2008 peak ~145; 150 margin
+  primary_source: FRED:DCOILWTICO
+  secondary_source: "CME:CL settlement front-month (backdoor, gray)"
+  tolerance: null                # futures ≠ spot (basis/carry can be wide — see Apr-2020)
+                                 # — cross-validate direction & Δ magnitude only; a
+                                 # 2-day direction violation = investigate
+  active: 1
+  # WTI spot — energy pass-through channel into CPI headline; context for the OVX line.
+
+- series_id: FRED:DALLAS_TRIM_1M
+  name: Dallas trimmed-mean PCE 1-month inflation (annualized)
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: follows the BEA PCE release (end of the following month); Dallas publishes the same day ±
+  expected_start: "1977-02-01"   # FRED metadata ±
+  sanity_min: -2.0               # trimming filters both tails; ~-1..0 in deflationary eras; -2 margin
+  sanity_max: 12.0               # 1980s peak ~9-10; 12 margin
+  primary_source: FRED:PCETRIM1M158SFRBDAL   # fetch mnemonic; series_id = stable handle (see header)
+  secondary_source: null         # unique official source (Dallas Fed) — single-source + freshness check
+  tolerance: null
+  active: 1
+  # Trimmed-mean 1m (annualized) — underlying inflation with tails stripped; REACCEL cross-check vs headline.
+
+- series_id: FRED:DALLAS_TRIM_12M
+  name: Dallas trimmed-mean PCE 12-month inflation (trend)
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: follows the BEA PCE release (end of the following month); Dallas publishes the same day ±
+  expected_start: "1978-01-01"   # FRED metadata ± — the 12-month measure needs the
+                                 # 1977 data first
+  sanity_min: -2.0               # same as TRIM_1M; the 12-month average is smoother
+  sanity_max: 12.0               # same as TRIM_1M
+  primary_source: FRED:PCETRIM12M159SFRBDAL  # fetch mnemonic; series_id = stable handle (see header)
+  secondary_source: null         # same as TRIM_1M
+  tolerance: null
+  active: 1
+
+# --- END OF PART 1 (BLOCKS A-C) --------------------------------------------------------
+# Blocks D-F (raw_observations) continue in series_registry_blocks_d-f.yaml;
+# G → cot_contracts.yaml; H/I → their own tables.

@@ -1,0 +1,165 @@
+"""python -m arkwatch — CLI entry."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "data" / "arkwatch.db")
+
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "verify":
+        from .qa.verify_sources import main as verify_main
+
+        return verify_main(sys.argv[2:])
+    if cmd == "coverage":
+        from .qa.coverage import main as coverage_main
+
+        return coverage_main(sys.argv[2:])
+    if cmd == "backfill":
+        from .qa.backfill import main as backfill_main
+
+        return backfill_main(sys.argv[2:])
+    if cmd == "instruments":
+        from .qa.instruments import main as instr_main
+
+        return instr_main(sys.argv[2:])
+    if cmd == "harvest":
+        from .qa.harvest import main as harvest_main
+
+        return harvest_main(sys.argv[2:])
+    if cmd == "calendar":
+        from .qa.calendar import main as cal_main
+
+        return cal_main(sys.argv[2:])
+    if cmd == "surprise":
+        from .qa.surprise import main as surp_main
+
+        return surp_main(sys.argv[2:])
+    if cmd == "alfred":
+        from .qa.alfred import main as alfred_main
+
+        return alfred_main(sys.argv[2:])
+    if cmd == "backup":
+        from .qa.backup import main as backup_main
+
+        return backup_main(sys.argv[2:])
+    if cmd == "daemon":
+        from .daemon import main as daemon_main
+
+        return daemon_main(sys.argv[2:])
+    if cmd == "cme":
+        from .qa.cme_harvest import main as cme_main
+
+        return cme_main(sys.argv[2:])
+    if cmd == "f2":
+        from .qa.f2_harvest import main as f2_main
+
+        return f2_main(sys.argv[2:])
+    if cmd == "soma":
+        from .qa.soma_harvest import main as soma_main
+
+        return soma_main(sys.argv[2:])
+    if cmd == "nyfed":
+        from .qa.nyfed_harvest import main as nyfed_main
+
+        return nyfed_main(sys.argv[2:])
+    if cmd == "fiscalx":
+        from .qa.fiscalx_harvest import main as fiscalx_main
+
+        return fiscalx_main(sys.argv[2:])
+    if cmd == "f4":
+        from .qa.f4 import main as f4_main
+
+        return f4_main(sys.argv[2:])
+    if cmd == "flows":
+        # manual WGC gold input (monthly, from the WGC PDF) → flows_periodic
+        # usage: arkwatch flows add wgc <tonnes> <YYYY-MM>
+        if len(sys.argv) >= 3 and sys.argv[2] == "add" and sys.argv[3:6]:
+            kind, val, period = sys.argv[3], float(sys.argv[4]), sys.argv[5]
+            import sqlite3
+
+            dbp = sys.argv[6] if len(sys.argv) > 6 else _DEFAULT_DB
+            conn = sqlite3.connect(dbp)
+            conn.execute(
+                "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
+                " VALUES (?,?,?,'manual',1,?)"
+                " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value",
+                (period, f"wgc_{kind}", val, val),
+            )
+            conn.commit()
+            conn.close()
+            print(f"=== flows: wgc_{kind} {val} ({period}) saved ===")
+            return 0
+        print("usage: arkwatch flows add wgc <tonnes> <YYYY-MM> [db]")
+        return 2
+    if cmd == "brief":
+        from dotenv import load_dotenv
+
+        from .signals.compute import run as brief_run
+
+        load_dotenv()
+        md = brief_run(_DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2])
+        print(md)
+        print("\n=== brief saved + outbox pending ===")
+        return 0
+    if cmd == "send":
+        from dotenv import load_dotenv
+
+        from .senders.outbox import send_pending
+
+        load_dotenv()
+        result = send_pending(_DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2])
+        print(
+            f"=== Telegram sender: {result['sent']} sent · {result['failed']} failed"
+            f" · alerts {result.get('alerts', {}).get('sent', 0)} ==="
+        )
+        return 0
+    if cmd == "export":
+        import csv
+        import sqlite3
+
+        if len(sys.argv) < 4:
+            print("usage: arkwatch export <BLOCK> <file.csv> [db]")
+            return 2
+        block = sys.argv[2].upper()
+        out_csv = sys.argv[3]
+        dbp = sys.argv[4] if len(sys.argv) > 4 else _DEFAULT_DB
+        conn = sqlite3.connect(dbp)
+        rows = conn.execute(
+            "SELECT r.series_id, r.ts, r.value, r.vintage_ts FROM raw_observations r "
+            "JOIN series_registry g ON g.series_id = r.series_id "
+            "WHERE g.block=? ORDER BY r.series_id, r.ts",
+            (block,),
+        ).fetchall()
+        conn.close()
+        with open(out_csv, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["series_id", "ts", "value", "vintage_ts"])
+            w.writerows(rows)
+        print(f"=== export block {block}: {len(rows)} rows → {out_csv} ===")
+        return 0
+    if cmd == "watch":
+        from .qa.watcher import main as watch_main
+
+        return watch_main(sys.argv[2:])
+    if cmd == "backtest":
+        from .qa.backtest import main as bt_main
+
+        return bt_main(sys.argv[2:])
+    if cmd == "explore":
+        from .qa.explore import main as ex_main
+
+        return ex_main(sys.argv[2:])
+    print(
+        "arkwatch — commands: verify|coverage|backfill|instruments|harvest|calendar|"
+        "f4|flows|surprise|alfred|backup|daemon|cme|f2|soma|nyfed|fiscalx|brief|send|"
+        "watch|backtest|export|explore"
+    )
+    return 2 if cmd else 0  # an unrecognized command must not exit 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

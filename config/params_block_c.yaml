@@ -1,0 +1,61 @@
+# =====================================================================================
+# ark-watch — config/params_block_c.yaml — inflation inflation LEVEL overlay parameters
+# All thresholds for the inflation level overlay live in this file; they are never
+# hard-coded elsewhere.
+#
+# Level basis: 3-month annualized CPI SA = ((1+m1)(1+m2)(1+m3))^4 − 1 on FRED:CPIAUCSL
+# (m = decimal MoM; exponent 4 = 12/3). LEVEL (low/high) is determined by 3m-ann SA —
+# YoY does not set the level; YoY is only the confirmation anchor. The base
+# COOLING/STABLE/REACCEL states follow the Δ3-month direction and are unchanged by this
+# overlay — it only qualifies the label.
+# =====================================================================================
+
+reaccel_low_pct: 3.0
+  # Early-warning tier below the 5% confirmation threshold. Heuristic:
+  # 3% = "materially beyond 2%" (preparation trigger), 5% = "already occurred".
+  # Episode becomes REACCEL(high) at 3m-ann >= this value; below it = REACCEL(low).
+
+cooling_pct: 1.0
+  # Lower bound for COOLING on the 3m-ann basis (below 1% = material disinflation).
+  # Anchors: core CPI 2010-2019 averaged ~1.8%, Fed target 2% → <1% is clearly
+  # below target.
+
+confirm_pct: 5.0
+  # Neville-Draaisma-Funnell-Harvey-Van Hemert 2021, "The Best Strategies for
+  # Inflationary Times": 5% = 8th decile of US YoY inflation 1926-2021 and the paper's
+  # regime threshold. Above it, real damage is significant: equities -7% real (t=-4.8),
+  # 60/40 -6% (t=-6.0), IG/HY -7% (t≈-8), 10Y Treasuries -5%; hedges pay: gold +13%
+  # (t=3.1), all-asset trend +25% (8/8). Paper caveats: 8 US episodes only,
+  # dating-sensitive, driven by the 1972-80 era → directional prior, not a return
+  # forecast.
+
+confirm_on_3m_ann: true
+confirm_on_yoy: true
+  # Confirmation sticks when 3m-ann OR YoY >= confirm_pct. The two
+  # measures are deliberate: 3m-ann = fast/leading path, YoY = comparability anchor to
+  # the paper's definition. Brief rendering must state which measure fired. Confirmation
+  # attaches to the episode (not recomputed monthly) and releases when the episode ends.
+
+min_months: 3
+  # Anti flip-flop: minimum episode duration (3 monthly CPI releases) before REACCEL is
+  # "official" and the quadrant shifts — the paper's 6-month rule scaled to our 3-month
+  # horizon. Trade-off: quadrant lags ~3 months vs. avoiding direction whiplash. The
+  # brief still renders from the first release with a "not yet official" flag.
+
+peak_window_m: 24
+  # Trailing window (months) for the episode-exit rule, in the spirit of the paper's
+  # regime dating (paper episodes ran 7-48 months). Fallback when system history is
+  # shorter than the window: use all available history.
+
+peak_exit_ratio: 0.5
+  # REACCEL(high) ends only when 3m-ann falls below 50% of its trailing peak over the
+  # last peak_window_m months — volatility at high levels / higher-highs must not break
+  # the episode (anti flip-flop). REACCEL(low) ends simply when the state returns to
+  # COOLING: the flip-flop cost asymmetry only matters at high levels.
+
+# --- Calibration notes --------------------------------------------------------
+# reaccel_low_pct is a backtest candidate (try 2.5 / 3.0 / 3.5); if 3% fails to
+# separate the return implications of the two worlds, move it or change the level
+# basis (candidate: deciles of our own historical 3m-ann distribution, not the
+# paper's YoY).
+# Bad days: the overlay dies with its data (INSUFFICIENT) — never filled with guesses.

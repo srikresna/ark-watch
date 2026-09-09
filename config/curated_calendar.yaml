@@ -1,0 +1,143 @@
+# ============================================================================
+# ark-watch — config/curated_calendar.yaml
+# Curated calendar: authoritative for exact RELEASE TIMES. Union calendars
+# (FMP/EODHD/TV) only complete the event list; when times conflict, this
+# file wins. Quarterly refresh.
+#
+# Conventions:
+#   - All times are ET, 24h "HH:MM" format.
+#   - WIB = ET + 11 during EDT (Mar~Nov) / ET + 12 during EST — the conversion
+#     is season-aware in code, never hard-coded. Beware midnight crossings
+#     (FOMC 14:00 ET = 01:00 WIB the NEXT day during EDT).
+#   - "00:00" in union sources = DATE-ONLY (not a midnight release); TV
+#     "Symposium" rows with 00:00 are ignored.
+#   - Rows derived from this file land in `events` with is_curated=1.
+#
+# Release-time precedence (on conflicts): curated (this file) > TV > CME >
+# FMP > EODHD
+# ============================================================================
+
+source_precedence:
+  - curated        # this config — authoritative for times
+  - tv             # tradingview economic-calendar (main source of precise times for speeches)
+  - cme            # CME calendar
+  - fmp            # /stable/economic-calendar
+  - eodhd          # /economic-events (verification only)
+
+# ---------------------------------------------------------------------------
+# (a) STANDARD RELEASE TIMES (ET) — official publisher schedules
+# ---------------------------------------------------------------------------
+release_times:
+  - event: bls_cpi                  # Consumer Price Index
+    time_et: "08:30"
+    provenance: "Official schedule — web-search verified 2026-08-31, bls.gov/schedule/news_release/cpi.htm"
+  - event: bls_nfp                  # Employment Situation (payrolls + unemployment)
+    time_et: "08:30"
+    note: "usually the first Friday of the month"
+    provenance: "Official schedule — web-search verified 2026-08-31, bls.gov/schedule"
+  - event: bls_ppi                  # Producer Price Index
+    time_et: "08:30"
+    provenance: "Official schedule — web-search verified 2026-08-31, bls.gov/schedule/news_release/ppi.htm"
+  - event: ism_mfg                  # ISM Manufacturing PMI
+    time_et: "10:00"
+    provenance: "Official schedule — web-search verified 2026-08-31, ismworld.org supply management survey schedule"
+  - event: ism_services             # ISM Services PMI
+    time_et: "10:00"
+    provenance: "Official schedule — web-search verified 2026-08-31, ismworld.org supply management survey schedule"
+  - event: umich_sentiment          # UMich consumer sentiment (prelim & final)
+    time_et: "10:00"
+    provenance: "Official schedule — web-search verified 2026-08-31, data.sca.isr.umich.edu release schedule"
+  - event: bea_gdp                  # BEA GDP advance/second/third + quarterly PCE
+    time_et: "08:30"
+    provenance: "Official schedule — web-search verified 2026-08-31, bea.gov news release schedule"
+  - event: dol_initial_claims       # Initial jobless claims
+    time_et: "08:30"
+    day: Thursday
+    provenance: "Official schedule — web-search verified 2026-08-31, dol.gov/ui/data.jsp + bls.gov schedule"
+  - event: fomc_statement           # FOMC policy statement (day 2 of the meeting)
+    time_et: "14:00"
+    provenance: "Official schedule — web-search verified 2026-08-31, federalreserve.gov/newsevents/calendar.htm"
+  - event: fomc_presser             # Fed Chair press conference
+    time_et: "14:30"
+    note: "30 minutes after the statement; applies to ALL regular 2-day meetings (practice since 2011)"
+    provenance: "Official schedule — web-search verified 2026-08-31, federalreserve.gov (calendar + confirmation via official Fed channels)"
+  - event: fomc_minutes             # FOMC minutes
+    time_et: "14:00"
+    note: "Wednesday, ~3 weeks after the meeting"
+    provenance: "Official schedule — web-search verified 2026-08-31, federalreserve.gov/newsevents/calendar.htm"
+  - event: jackson_hole_keynote     # Jackson Hole symposium keynote
+    time_et: "10:00"
+    day: Friday
+    provenance: "Official schedule — web-search verified 2026-08-31, kc.frb.org symposium agenda + DATA-SPEC §9"
+
+# ---------------------------------------------------------------------------
+# (b) FOMC 2026 — remaining meetings after August
+#     * = accompanied by a Summary of Economic Projections.
+#     (Past 2026 meetings: Jan 27-28, Mar 17-18*, Apr 28-29, Jun 16-17*,
+#      Jul 28-29 — kept for re-audit only.)
+# ---------------------------------------------------------------------------
+fomc_2026:
+  - dates: ["2026-09-15", "2026-09-16"]
+    sep: true
+    decision_day: "2026-09-16"      # statement 14:00 ET + presser 14:30 ET
+    provenance: "Accessed 2026-08-31, federalreserve.gov/monetarypolicy/fomccalendars.htm"
+  - dates: ["2026-10-27", "2026-10-28"]
+    sep: false
+    decision_day: "2026-10-28"
+    provenance: "Accessed 2026-08-31, federalreserve.gov/monetarypolicy/fomccalendars.htm"
+  - dates: ["2026-12-08", "2026-12-09"]
+    sep: true
+    decision_day: "2026-12-09"
+    provenance: "Accessed 2026-08-31, federalreserve.gov/monetarypolicy/fomccalendars.htm"
+
+# ---------------------------------------------------------------------------
+# (c) FOMC 2027 — TENTATIVE (not yet confirmed by the Fed)
+#     Official wording: "Each meeting date is tentative until confirmed at
+#     the meeting immediately preceding it."
+#     Never use for fixed alarms without re-verification.
+# ---------------------------------------------------------------------------
+fomc_2027:
+  tentative: true
+  provenance: "Accessed 2026-08-31, federalreserve.gov/monetarypolicy/fomccalendars.htm — Future Years section"
+  meetings:
+    - dates: ["2027-01-26", "2027-01-27"]
+      sep: false
+    - dates: ["2027-03-16", "2027-03-17"]
+      sep: true
+    - dates: ["2027-04-27", "2027-04-28"]
+      sep: false
+    - dates: ["2027-06-08", "2027-06-09"]
+      sep: true
+    - dates: ["2027-07-27", "2027-07-28"]
+      sep: false
+    - dates: ["2027-09-14", "2027-09-15"]
+      sep: true
+    - dates: ["2027-10-26", "2027-10-27"]
+      sep: false
+    - dates: ["2027-12-07", "2027-12-08"]
+      sep: true
+  note: "The Fed also lists Jan 25-26 2028 (tentative). Re-verify each time the Fed announces the final calendar."
+
+# ---------------------------------------------------------------------------
+# (d) ANNUAL RECURRING EVENTS
+# ---------------------------------------------------------------------------
+recurring:
+  jackson_hole:
+    organizer: "Federal Reserve Bank of Kansas City"
+    pattern: "late August, Thursday-Saturday"
+    keynote: "Friday 10:00 ET"
+    next_exact_dates: null          # TBA on kc.frb.org — check every July
+    provenance: "Official pattern — web-search verified 2026-08-31, kc.frb.org symposium; exact per-year dates MUST be re-verified"
+
+  treasury_quarterly_refunding:
+    pattern: "QRA: Wednesday (early/mid) Feb / May / Aug / Nov"
+    announcement_time_et: "08:30"   # financing details released the same day at 08:30 ET
+    marketable_borrowing_estimates: "Wednesday of the prior week (radar bonus)"
+    dates_2026:
+      - "2026-02-04"                # past — archive
+      - "2026-05-06"                # past — archive
+      - "2026-08-05"                # past — archive
+      - "2026-11-04"                # NEXT
+    dates_2027: null                # not yet published by Treasury — do not extrapolate
+                              # the quarterly-Wednesday pattern unlabeled
+    provenance: "Web-search verified 2026-08-31, home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding + press release 'next quarterly refunding announcement'"

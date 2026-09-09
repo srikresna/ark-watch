@@ -1,0 +1,1532 @@
+# =====================================================================
+# SERIES REGISTRY — PART 2: BLOCKS D, E, F (+ flows physical series)
+# =====================================================================
+# Blocks A-C live in `series_registry.yaml`; cot (COT) in
+# `cot_contracts.yaml`; flows (flows) in the flows_* tables; calendar
+# (calendar) in the events table.
+#
+# Columns = exactly the `series_registry` schema:
+#   series_id, name, block, tier, unit, value_format, freq,
+#   ts_convention, release_schedule, expected_start, sanity_min,
+#   sanity_max, primary_source, secondary_source, tolerance, active
+#
+# Tier taxonomy: 0 = official institution (FRED/Treasury/NY Fed/CBOE/
+#   Philly/Atlanta/ECB/CFTC...) · 1 = subscription (EODHD/FMP) ·
+#   2 = free market data (Yahoo/TD) · 3 = gray · 4 = synthetic/computed.
+#
+# ts_convention vocabulary (this file):
+#   daily_et          = 1 obs/trading day, ET date stamp
+#   week_ending_sat   = weekly, week ends Saturday (ICSA)
+#   week_ending_wed   = weekly, week ends Wednesday (H.4.1/H.8)
+#   week_ending_fri   = weekly, week ends Friday (H.10/NFCI/CMDI)
+#   month_start       = monthly, ts = reference month (day 1)
+#   quarter_start     = quarterly, ts = reference quarter
+#   year_start        = annual, ts = reference year
+# Release times are written ET with season-aware WIB equivalents.
+#
+# ---------------------------------------------------------------------
+# Source caveats:
+#   1. EODHD sovereign CDS = ANNUAL Damodaran data (not daily) —
+#      see EODHD:CDS_US.
+#   2. EODHD funding-stress: the default response window is only ~19
+#      trading days (114 rows / 6 codes) — long history must be
+#      recomputed from the FRED legs.
+#   3. FRED:GDPNOW stores only 1 obs/quarter (61 obs / 61 quarters) —
+#      intra-quarter deltas need ALFRED vintages / the Atlanta XLSX.
+#   4. FMP secondaries: the premium key returned 401 during verification
+#      — all FMP secondary sources are unverified until the key works.
+# ---------------------------------------------------------------------
+# SCOPE NOTES:
+#   - growth non-US: EA HICP/PMI, UK PMI/CPI, China PMI (Caixin/NBS)
+#     arrive via the CALENDAR → `events` table.
+#   - NY Fed per-snapshot families live in dedicated tables (not series here):
+#     SOMA Treasury/agency per-CUSIP → soma_holdings/soma_agency_holdings;
+#     desk outright ops → fed_operations; dealer survey → pd_positions;
+#     WAM → soma_wam. The daily-fixing subset that fits the series model IS
+#     registered here (SOFR percentiles, OBFR, EFFR percentiles+volume,
+#     TGCR/BGCR, SRF/ON-RRP take-up) — harvested via ROUTES at 06:00.
+#     RRPONTSYD is used as the NYFED:ONRRP_TOTAL secondary below (and the
+#     NYFED RRP propositions endpoint backs FRED:RRPONTSYD itself).
+#   - EUR/USD xccy basis = COMPUTED from 3 CME settlements (SR3+ESR+6E)
+#     → computed_signals; not a registry series.
+#   - Net liquidity (WALCL−RRP−TGA), MOVE proxy, VXN/VIX ratio →
+#     computed_signals.
+#   - stress-vol: CVOL (18 symbols) → `cvol_snapshots`, append-only from
+#     build day (NO history). CNN Fear & Greed = stealth harvester
+#     (degrade mode).
+# =====================================================================
+
+series:
+
+# =====================================================================
+# GROWTH (+ non-US sub-block)
+# =====================================================================
+
+- series_id: FRED:ICSA
+  name: "Initial Jobless Claims (SA)"
+  block: D
+  tier: 0
+  unit: "persons (claim count, SA)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_sat
+  release_schedule: "Thursday 08:30 ET (19:30 WIB during EDT / 20:30 WIB during EST)"
+  expected_start: "1967-01-07"      # FRED API: first observation 1967-01-07
+  sanity_min: 100000                 # historical min = 162,000 (1967); sub-100k never seen
+                                    # in the modern era — treat as a parse error
+  sanity_max: 7000000                # historical max = 6,137,000 (COVID-2020 spike); +margin
+  primary_source: "FRED:ICSA"
+  secondary_source: "FMP:initialClaims"
+  tolerance: 1000                    # both sources carry the BLS initial print; small
+                                    # differences come from weekly-revision timing
+  active: 1
+  # Transform: 4wk-MA + slope; part of the weekly ALFRED-revision watch.
+
+- series_id: FRED:UNRATE
+  name: "Unemployment Rate U-3 (SA)"
+  block: D
+  tier: 0
+  unit: "percent"
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: "first Friday 08:30 ET (Employment Situation; 19:30/20:30 WIB)"
+  expected_start: "1948-01-01"       # FRED API live-verified
+  sanity_min: 2.0                    # historical min = 2.5 (1953); lower margin
+  sanity_max: 16.0                   # historical max = 14.8 (Apr-2020); +margin
+  primary_source: "FRED:UNRATE"
+  secondary_source: "FMP:unemploymentRate"
+  tolerance: 0.1                     # identical BLS initial print; 0.1pp for revision timing
+  active: 1
+  # Sahm-rule input; labor state in the brief.
+
+- series_id: FRED:PAYEMS
+  name: "Total Nonfarm Payrolls (SA)"
+  block: D
+  tier: 0
+  unit: "thousands of persons (SA)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "first Friday 08:30 ET (Employment Situation)"
+  expected_start: "1939-01-01"       # FRED API live-verified
+  sanity_min: 25000                  # historical min = 29,923 (1939); margin
+  sanity_max: 170000                 # historical max = 158,881; +growth margin
+  primary_source: "FRED:PAYEMS"
+  secondary_source: "FMP:totalNonfarmPayroll"
+  tolerance: 5                       # cumulative level with large benchmark revisions —
+                                    # compare initial print vs initial print; ALFRED
+                                    # vintages for revisions
+  active: 1
+  # Transform: Δ3m momentum.
+
+- series_id: FRED:SAHMREALTIME
+  name: "Sahm Rule Recession Indicator (real-time vintage)"
+  block: D
+  tier: 0
+  unit: "percentage points"
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: "first Friday 08:30 ET (follows UNRATE)"
+  expected_start: "1959-12-01"       # FRED API live-verified
+  sanity_min: -1.0                   # historical min = -0.37; margin
+  sanity_max: 11.0                   # historical max = 9.5 (COVID-2020 spike); +margin
+  primary_source: "FRED:SAHMREALTIME"
+  secondary_source: "SYN:SAHM_RECHECK (recomputed from FRED:UNRATE, T4)"
+  tolerance: 0.05                    # vintage revisions can legitimately differ by ±0.05
+  active: 1
+  # RECESSION TRIGGER >= 0.50 (Sahm rule) — record the trigger date in the brief.
+  # Real-time series: revisions = new vintage rows via ALFRED.
+
+- series_id: FRED:INDPRO
+  name: "Industrial Production Index (2017=100, SA)"
+  block: D
+  tier: 0
+  unit: "index (2017=100)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "mid following month ±09:15 ET (Fed G.17)"
+  expected_start: "1919-01-01"       # FRED API live-verified
+  sanity_min: 3.0                    # historical min = 3.69 (1919, spliced basis); margin
+  sanity_max: 110.0                  # historical max = 104.10; +margin
+  primary_source: "FRED:INDPRO"
+  secondary_source: "FMP:industrialProductionTotalIndex"
+  tolerance: 0.5                     # index — small FMP methodology differences; verify
+                                    # once the FMP key works
+  active: 1
+  # Hard-activity growth input — factory-sector pulse alongside CFNAI/ADS (cyclical confirmation).
+
+- series_id: FRED:RSAFS
+  name: "Retail Sales: Retail Trade & Food Services (SA, millions USD)"
+  block: D
+  tier: 0
+  unit: "millions USD (SA)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±15th of the following month 08:30 ET (Advance MIT, Census)"
+  expected_start: "1992-01-01"       # FRED API live-verified
+  sanity_min: 150000                 # historical min = 158,647 (1992); margin
+  sanity_max: 850000                 # historical max = 768,072; +margin
+  primary_source: "FRED:RSAFS"
+  secondary_source: "FMP:retailSales"
+  tolerance: 500                     # after converting FMP units → $M in the unit
+                                    # registry; 0.1% of level
+  active: 1
+  # Consumer-spend hard data (advance retail) — household-demand pulse for the growth block.
+
+- series_id: FRED:GDPNOW
+  name: "GDPNow — real GDP QoQ annualized nowcast"
+  block: D
+  tier: 0
+  unit: "percent (QoQ annualized)"
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "per release — several updates per quarter (irregular, business days, morning ET; event-driven refetch §13)"
+  expected_start: "2011-07-01"       # FRED API: first observation 2011-Q3 (61 obs / 61 quarters)
+  sanity_min: -40.0                  # historical min = -32.08 (COVID Q2-2020); +margin
+  sanity_max: 45.0                   # historical max = +36.97 (Q3-2020 rebound); +margin
+  primary_source: "FRED:GDPNOW"
+  secondary_source: "ATL:GDPNOW_XLSX (Atlanta Fed)"
+  tolerance: 0.05                    # two copies of the same model; a difference = a
+                                    # vintage mismatch — 0.05pp
+  active: 1
+  # FRED keeps only 1 obs/quarter (61 obs for 61 quarters) — intra-quarter update
+  # deltas MUST come from ALFRED vintages or the Atlanta Fed XLSX; do not expect
+  # them from the FRED series.
+
+- series_id: FMP:RECESSION_PROB
+  name: "US recession probability (smoothed recession probabilities)"
+  block: D
+  tier: 1
+  unit: "percent (0-100)"
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: "monthly, lags reference month (live 2026-09-04: latest 2026-07-01)"
+  expected_start: "2000-01-01"       # conservative placeholder — FMP documents no start
+                                    # metadata; MUST be corrected from the first
+                                    # fetch's min-ts
+  sanity_min: 0.0                    # mathematical probability bound, not a heuristic
+  sanity_max: 100.0                  # mathematical probability bound, not a heuristic
+  primary_source: "FMP:smoothedUSRecessionProbabilities (/stable/economic-indicators)"
+  secondary_source: "SYN:RECPROBIT (internal 3M10Y curve probit, T4)"
+  tolerance: 15.0                    # differently-specified models — use as a DIRECTION
+                                    # cross-check, not a level
+  active: 1
+  # ROUTED 2026-09-04 (audit sumber): was registered-active with NO fetcher route
+  # (0 obs). Fetcher = misc.fetch_recession_prob; key live-verified (HTTP 200,
+  # {2026-07-01, 0.76}). Old '401 during verification' note obsolete — key works.
+
+- series_id: FRED:DRTSCILM
+  name: "SLOOS — Net % of banks tightening C&I credit standards"
+  block: D
+  tier: 0
+  unit: "net percent"
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "SLOOS release ±4-8 weeks after quarter-end (Feb/May/Aug/Nov)"
+  expected_start: "1990-04-01"       # FRED API: Q2-1990
+  sanity_min: -40.0                  # historical min = -32.4 (2021 easing); +margin
+  sanity_max: 90.0                   # historical max = 83.6 (GFC); +margin
+  primary_source: "FRED:DRTSCILM"
+  secondary_source: null             # FRED only — official single-source + active
+                                    # freshness check
+  tolerance: null
+  active: 1
+  # Credit channel → leading growth; surrogate backtest >=10y.
+
+- series_id: PHILLY:ADS
+  name: "Aruoba-Diebold-Scotti Business Conditions Index"
+  block: D
+  tier: 0
+  unit: "standard deviations of GDP growth"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "periodic (~weekly) when new inputs land — Philadelphia Fed; check the actual pattern at F1"
+  expected_start: "1960-01-01"       # daily 1960→present, 24,282 rows; the exact first
+                                    # row date is read from the XLSX
+  sanity_min: -35.0                  # unit = σ — GFC ~-7, COVID-2020 ~-30; loose for spikes
+  sanity_max: 3.0                    # the historical positive side is short; +margin
+  primary_source: "PHILLY:ADS_Index_Most_Current_Vintage.xlsx"
+  secondary_source: null             # unique to the Philly Fed — official single-source + freshness
+  tolerance: null
+  active: 1
+  # Fetch via curl_cffi chrome impersonation. Longest surrogate backtest in
+  # growth (1960→).
+
+# --- SPF forecasts (paket C 2026-09-08; URLs pinned by the 29-agent research
+#     workflow 2026-09-04). Quarterly; ts = SURVEY-quarter start. Column
+#     semantics live-verified: d<VAR>2 = horizon 0 (nowcast), RGDP2 @2026Q3
+#     = 2.4624. CPI/UNEMP are NOT in medianGrowth (13 sheets) — PGDP is the
+#     inflation-forecast read; CPI nowcast = CLEVE:NOWCAST. ---------------------
+
+- series_id: PHILLY:SPF_RGDP_NOW
+  name: "SPF real GDP growth nowcast, current quarter (median)"
+  block: D
+  tier: 0
+  unit: pct (QoQ annualized)
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: quarterly (~mid-Feb/May/Aug/Nov with the survey)
+  expected_start: "1968-10-01"       # 1968Q4 first row of the growth workbook
+  sanity_min: -35.0                  # landed min −32.22 (2020-04) — 2.8pp margin
+  sanity_max: 20.0
+  primary_source: "PHILLY:medianGrowth.xlsx sheet RGDP column drgdp2"
+  secondary_source: null             # cross-check vs ATL:GDPNOW happens in the
+  tolerance: null                    # recession/growth signal layer, not here
+  active: 1
+  # Professional-forecaster consensus growth nowcast — the survey complement
+  # to GDPNow's model nowcast; the spread = forecast disagreement signal.
+
+- series_id: PHILLY:SPF_PGDP_NOW
+  name: "SPF GDP deflator inflation nowcast, current quarter (median)"
+  block: D
+  tier: 0
+  unit: pct (QoQ annualized)
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: quarterly (with the survey)
+  expected_start: "1968-10-01"
+  sanity_min: -10.0                  # deflationary quarters exist (2008Q4)
+  sanity_max: 20.0
+  primary_source: "PHILLY:medianGrowth.xlsx sheet PGDP column dpgdp2"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Survey-based inflation expectation for the CURRENT quarter — complements
+  # market breakevens (T10YIE) and the Cleveland model (CLEVE:EXPINF_*).
+
+- series_id: PHILLY:ANXIOUS
+  name: "SPF Anxious Index — recession probability next quarter (panel mean)"
+  block: D
+  tier: 0
+  unit: "percent (0-100)"
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start       # ts = the OBSERVED quarter being forecast
+                                    # (a FUTURE date relative to the survey —
+                                    # consumers must age-check against target−1Q;
+                                    # the signal layer does, see
+                                    # signals/recession.py ANXIOUS_FORECAST_LEAD)
+  release_schedule: quarterly (with the survey; the file's grid pre-fills
+                                    future quarters — empty cells skipped)
+  expected_start: "1969-01-01"       # first VALUED row (17.69): the 1968Q4
+                                    # survey targets 1969Q1; the grid's 1968
+                                    # rows are empty (live-verified review-1)
+  sanity_min: 0.0                    # mathematical probability bound
+  sanity_max: 100.0                  # same
+  primary_source: "PHILLY:anxious_index_chart.xlsx sheet Data"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Mean probability panelists assign to NEGATIVE QoQ real GDP growth one
+  # quarter ahead — the survey-side recession gauge of the triangulation
+  # (Cleveland model / SPF anxious / Sahm rule). Live 2026Q4: 20.0%.
+
+- series_id: FRED:CFNAI
+  name: "Chicago Fed National Activity Index"
+  block: D
+  tier: 0
+  unit: "index (0 = trend)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±end of the following month 08:30 ET (Chicago Fed)"
+  expected_start: "1967-03-01"       # FRED API live-verified
+  sanity_min: -25.0                  # historical min = -18.34 (COVID Apr-2020); +margin
+  sanity_max: 10.0                   # historical max = 6.33; +margin
+  primary_source: "FRED:CFNAI"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # 85-indicator national activity index — monthly growth pulse; recession signal via the MA3 companion row.
+
+- series_id: FRED:CFNAIMA3
+  name: "CFNAI 3-Month Moving Average (MA3)"
+  block: D
+  tier: 0
+  unit: "index (0 = trend)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±end of the following month 08:30 ET (Chicago Fed)"
+  expected_start: "1967-05-01"       # FRED API live-verified
+  sanity_min: -10.0                  # historical min = -7.55; +margin
+  sanity_max: 7.0                    # historical max = 4.58; +margin
+  primary_source: "FRED:CFNAIMA3"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Recession signal: MA3 < -0.70 (CFNAI documentation) — a transform
+  # threshold, not a sanity bound.
+
+- series_id: FRED:TOTBKCR
+  name: "H.8 — Total Bank Credit (SA, billions USD)"
+  block: D
+  tier: 0
+  unit: "billions USD (SA)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_wed
+  release_schedule: "Thursday ±16:15 ET (weekly H.8 release, ~1-week lag — check actual at F1)"
+  expected_start: "1973-01-03"       # FRED API live-verified
+  sanity_min: 500.0                  # historical min = 565.2 (1973); margin
+  sanity_max: 22000.0                # historical max = 19,828; +margin
+  primary_source: "FRED:TOTBKCR"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Bank-credit impulse YoY — companion to SLOOS.
+
+- series_id: FRED:TOTLL
+  name: "H.8 — Total Loans & Leases (SA, billions USD)"
+  block: D
+  tier: 0
+  unit: "billions USD (SA)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_wed
+  release_schedule: "Thursday ±16:15 ET (weekly H.8 release)"
+  expected_start: "1973-01-03"       # FRED API live-verified
+  sanity_min: 350.0                  # historical min = 403.9 (1973); margin
+  sanity_max: 16000.0                # historical max = 14,016; +margin
+  primary_source: "FRED:TOTLL"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # H.8 loans & leases — bank-credit impulse line alongside TOTBKCR/SLOOS (credit channel).
+
+- series_id: ATL:WGT
+  name: "Atlanta Fed Wage Growth Tracker (median unweighted)"
+  block: D
+  tier: 0
+  unit: "percent (YoY)"
+  value_format: pct
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±mid-month (Atlanta Fed WGT)"
+  expected_start: "1997-01-01"       # monthly XLSX 1997→present, 19 sheets
+  sanity_min: 0.0                    # modern nominal wage growth is never negative; parse guard
+  sanity_max: 12.0                   # 2022 peak ~6-7%; margin for a wage spiral
+  primary_source: "ATL:WGT XLSX (wage-growth-tracker)"
+  secondary_source: null             # unique to the Atlanta Fed — official single-source + freshness
+  tolerance: null
+  active: 1
+  # Headline sheet = median unweighted; the weighted/job-switcher/quartile sheets are
+  # stored alongside in raw.
+
+- series_id: FRED:DEXCHUS
+  name: "USDCNY — noon buying rate (H.10/G.5A)"
+  block: D
+  tier: 0
+  unit: "CNY per USD"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: "Monday ±16:15 ET (weekly H.10/G.5A release)"
+  expected_start: "1981-01-02"       # FRED API live-verified
+  sanity_min: 1.2                    # historical min = 1.5264 (1981); margin
+  sanity_max: 9.5                    # historical max = 8.7409 (1994, pre-unification); +margin
+  primary_source: "FRED:DEXCHUS"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Weekly Friday-ending convention — first & last observations both fall on Fridays.
+  # Non-US channel: PBoC/China → copper.
+
+# =====================================================================
+# LIQUIDITY & FISCAL
+# =====================================================================
+
+- series_id: FRED:ANFCI
+  name: Chicago Fed Adjusted NFCI
+  block: E
+  tier: 0
+  unit: index (z-like)
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: weekly (with NFCI, Wednesday ~08:30 ET)
+  expected_start: "1971-03-05"       # FRED metadata ±
+  sanity_min: -2.0                   # landed history −1.34..+5.20 — match the
+  sanity_max: 6.0                    # NFCI twin's do-not-narrow convention
+  primary_source: FRED:ANFCI
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Macro-conditions-ADJUSTED twin of FRED:NFCI (block F below): ANFCI − NFCI
+  # isolates pure financial stress from the state of the business cycle.
+
+- series_id: NYFED:SOFR_P1
+  name: "SOFR 1st percentile (NY Fed, repo-tail stress)"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # SOFR fixing ~08:00 ET the next morning
+  release_schedule: "daily ~06:00 ET (previous business day's fixing)"
+  expected_start: "2018-04-03"   # SOFR first published 2018-04 — check depth during the
+                                # sofrai backfill
+  sanity_min: 0.0                # modern policy-rate range 0-15
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/sofr/last/{n}.json (percentPercentile1)"
+  secondary_source: null         # TRAP — SOFR lives under the SECURED path; unsecured = 400
+  tolerance: null
+  active: 1
+  # Repo-distribution floor — the P1 tail spikes first in funding stress (Sep-2019 analog).
+
+- series_id: NYFED:SOFR_P25
+  name: "SOFR 25th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2018-04-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/sofr/last/{n}.json (percentPercentile25)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Repo-distribution lower body — dispersion vs SOFR median = funding microstructure gauge.
+
+- series_id: NYFED:SOFR_P75
+  name: "SOFR 75th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2018-04-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/sofr/last/{n}.json (percentPercentile75)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Repo-distribution upper body — a rising P75 = stress broadening beyond the tail.
+
+- series_id: NYFED:SOFR_P99
+  name: "SOFR 99th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2018-04-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/sofr/last/{n}.json (percentPercentile99)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Repo top tail — P99 vs SOFR median is the classic repo-squeeze tell (funding-stress context).
+
+- series_id: NYFED:SRF_TOTAL
+  name: "Standing Repo Facility — daily take-up (sum of windows)"
+  block: E
+  tier: 0
+  unit: usd
+  value_format: pct   # note: value = raw USD (the '$Billions' CSV label is misleading)
+  freq: D
+  ts_convention: et_close
+  release_schedule: "2x/day (08:15 & 13:30 windows)"
+  expected_start: "2021-07-28"   # SRF started July 2021
+  sanity_min: 0.0                # take-up is non-negative
+  sanity_max: 200000000000.0     # 200 billion USD = 10x the record; magnitude guard
+  primary_source: "NYFED:/api/rp/results/search.json?operationTypes=Repo (Full Allotment)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Standing Repo Facility take-up — Fed backstop usage = reserves-scarcity gauge (liquidity context).
+
+- series_id: NYFED:ONRRP_TOTAL
+  name: "Overnight Reverse Repo — daily take-up"
+  block: E
+  tier: 0
+  unit: usd
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: "±13:30 ET"
+  expected_start: "2013-01-04"   # ON RRP facility began 2013
+  sanity_min: 0.0
+  sanity_max: 3000000000000.0    # 2022 peak ~2.55T USD — small margin
+  primary_source: "NYFED:/api/rp/reverserepo/propositions/search.json"
+  secondary_source: FRED:RRPONTSYD  # direction cross-check against FRED ($ millions)
+  tolerance: 100000.0            # 100k USD = FRED's millions-unit rounding
+  active: 1
+  # ON RRP take-up — excess-cash drain; the RRP leg of the net-liquidity computation.
+
+- series_id: NYFED:OBFR
+  name: "Overnight Bank Funding Rate (unsecured, NY Fed)"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # fixing published ~09:00 ET the next morning
+  release_schedule: "daily ~06:00 ET (previous business day's fixing)"
+  expected_start: "2016-03-03"   # OBFR first published Mar-2016 (FRED depth);
+                                # NY Fed feed = latest-only (last/N exists only for sofr)
+  sanity_min: 0.0                # modern policy-rate range 0-15
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=OBFR, percentRate)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Unsecured federal-funds+eurodollar composite — OBFR−EFFR spread = bank vs nonbank
+  # funding mix pressure (complements the secured SOFR complex).
+
+- series_id: NYFED:OBFR_P1
+  name: "OBFR 1st percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=OBFR, percentPercentile1)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Unsecured distribution floor — tail widening = bank funding stress broadening.
+
+- series_id: NYFED:OBFR_P99
+  name: "OBFR 99th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=OBFR, percentPercentile99)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Unsecured top tail — the bank-funding analog of the SOFR P99 squeeze tell.
+
+- series_id: NYFED:OBFR_P25
+  name: "OBFR 25th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=OBFR, percentPercentile25)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Unsecured lower body — dispersion vs OBFR median.
+
+- series_id: NYFED:OBFR_P75
+  name: "OBFR 75th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=OBFR, percentPercentile75)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Unsecured upper body — stress broadening beyond the OBFR tail.
+
+- series_id: NYFED:EFFR_P1
+  name: "EFFR 1st percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"   # percentile fields verified on the live feed only;
+                                # depth unverified (feed = latest-only)
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=EFFR, percentPercentile1)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # EFFR distribution floor — not on FRED (EFFR level stays FRED:EFFR per one-source rule).
+
+- series_id: NYFED:EFFR_P99
+  name: "EFFR 99th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=EFFR, percentPercentile99)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # EFFR top tail — unsecured stress tell; pairs with SOFR_P99 for secured-vs-unsecured
+  # tail comparison.
+
+- series_id: NYFED:EFFR_P25
+  name: "EFFR 25th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=EFFR, percentPercentile25)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # EFFR lower body — fed-funds dispersion gauge (not on FRED).
+
+- series_id: NYFED:EFFR_P75
+  name: "EFFR 75th percentile"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=EFFR, percentPercentile75)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # EFFR upper body — broadening pressure across the funds distribution.
+
+- series_id: NYFED:EFFR_VOL
+  name: "EFFR daily volume (effective fed funds $B)"
+  block: E
+  tier: 0
+  unit: "billions USD"           # native volumeInBillions — NOT converted to raw USD
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2016-03-03"
+  sanity_min: 0.0
+  sanity_max: 2000.0             # typical 50-150 $B; order-of-magnitude guard only
+  primary_source: "NYFED:/rates/unsecured/all/latest.json (type=EFFR, volumeInBillions)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Money-market activity level — EFFR volume is NOT on FRED; shrinking volume =
+  # reserves satiated (end-of-cycle tell).
+
+- series_id: NYFED:TGCR
+  name: "Tri-Party General Collateral Rate (secured)"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2018-04-02"   # launched with SOFR Apr-2018; depth unverified (latest-only feed)
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/all/latest.json (type=TGCR, percentRate)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Cleanest secured reference — TGCR−SOFR basis = GCF/bilateral microstructure pressure.
+
+- series_id: NYFED:BGCR
+  name: "Broad General Collateral Rate (secured)"
+  block: E
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "daily ~06:00 ET"
+  expected_start: "2018-04-02"   # launched with SOFR Apr-2018; depth unverified (latest-only feed)
+  sanity_min: 0.0
+  sanity_max: 15.0
+  primary_source: "NYFED:/rates/secured/all/latest.json (type=BGCR, percentRate)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Broadest secured measure — BGCR−TGCR spread isolates the non-tri-party collateral
+  # segment.
+
+- series_id: FRED:WALCL
+  name: "Fed Balance Sheet — Total Assets (H.4.1, Wednesday level)"
+  block: E
+  tier: 0
+  unit: "millions USD"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_wed
+  release_schedule: "Thursday 16:30 ET (H.4.1; event-driven refetch when H.4.1 publishes §13)"
+  expected_start: "2002-12-18"       # FRED API live-verified
+  sanity_min: 700000.0               # historical min = 712,809 (2002); margin
+  sanity_max: 9500000.0              # historical max = 8,965,487 (2022); +margin
+  primary_source: "FRED:WALCL"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Net-liquidity component (computed: WALCL−RRP−TGA, Wednesday snapshot).
+
+- series_id: FRED:RRPONTSYD
+  name: "Overnight Reverse Repo — operational (NY Fed)"
+  block: E
+  tier: 0
+  unit: "billions USD"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "same-day operation results ±14:00 ET; FRED updates the following morning"
+  expected_start: "2003-02-07"       # actual first observation 2003-02-07 (not 2013/2015)
+  sanity_min: 0.0                    # natural floor at 0 — take-up is never negative;
+                                    # the floor was reached in 2024-2026 (last obs 0.175)
+  sanity_max: 3000.0                 # historical max = 2,553.7 (2022); +margin
+  primary_source: "FRED:RRPONTSYD"
+  secondary_source: "NYFED:RRP_PROPOSITIONS (/api/rp/reverserepo/propositions/search.json)"
+  tolerance: 1.0                     # after converting raw USD → $M → $B
+  active: 1
+  # NY Fed totals are RAW USD — the '($Billions)' CSV label is misleading; convert in
+  # the unit registry.
+  # NY Fed endpoints require the explicit .json suffix or they return 400.
+
+- series_id: FISCAL:TGA_DAILY
+  name: "Treasury General Account — DTS operating cash balance"
+  block: E
+  tier: 0
+  unit: "millions USD"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "DTS published D+1 morning ET (fiscaldata.treasury.gov)"
+  expected_start: "2005-10-03"       # DTS era-1 — the 3-era recipe is in the primary_source
+  sanity_min: 0.0                    # cash is never negative
+  sanity_max: 2000000.0              # historical peak ~1.78 million-million (Jul-2020,
+                                    # pre-pandemic-drawdown); +margin
+  primary_source: "FISCAL:operating_cash_balance (3-era recipe: 'Federal Reserve Account' 2005-2021 → 'TGA' 2021-22 → 'TGA Closing Balance' 2022-present; value = COALESCE(close_today_bal, open_today_bal))"
+  secondary_source: "FRED:WTREGEN"
+  tolerance: 10000.0                 # compare Wednesday snapshots ONLY (definitions
+                                    # differ: closing level vs weekly average)
+  active: 1
+  # Continuity check: 3 eras with no gap > 5 business days.
+
+# --- fiscaldata expansion 2026-09-04: debt-to-the-penny scalar series -------
+# (fiscal STOCK series; block/tier assignment per the 2026-09-04 owner audit).
+# Per-CUSIP auctions + DTS transactions + interest tables live in fd_* tables
+# (migration v10), harvested by the 06:10 `fiscalx` job — not series.
+
+- series_id: FISCAL:DEBT_PUBLIC
+  name: "Debt Held by the Public (Debt to the Penny)"
+  block: D
+  tier: 0
+  unit: "USD (raw)"
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "D+1 afternoon ET (fiscaldata Debt to the Penny)"
+  expected_start: "1997-09-30"       # live-verified 2026-09-04: first NON-null
+                                    # split row; 1993-era rows carry 'null'
+                                    # (stored only when non-null)
+  sanity_min: 0.0                    # debt stock is never negative
+  sanity_max: 60000000000000.0       # 60T raw USD — current 32.4T + margin
+  primary_source: "FISCAL:/v2/accounting/od/debt_to_penny (debt_held_public_amt, raw USD)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Publicly-held debt stock — the true supply anchor behind the deficit/TGA flow story.
+
+- series_id: FISCAL:DEBT_INTRAGOV
+  name: "Intragovernmental Holdings (Debt to the Penny)"
+  block: D
+  tier: 0
+  unit: "USD (raw)"
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "D+1 afternoon ET (fiscaldata Debt to the Penny)"
+  expected_start: "1997-09-30"       # same first non-null split date as DEBT_PUBLIC
+  sanity_min: 0.0
+  sanity_max: 60000000000000.0       # current 7.7T; generous for GAS growth
+  primary_source: "FISCAL:/v2/accounting/od/debt_to_penny (intragov_hold_amt, raw USD)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Intragovernmental leg — DEBT_TOTAL − DEBT_PUBLIC must reconcile to the dollar.
+
+- series_id: FISCAL:DEBT_TOTAL
+  name: "Total Public Debt Outstanding (Debt to the Penny)"
+  block: D
+  tier: 0
+  unit: "USD (raw)"
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "D+1 afternoon ET (fiscaldata Debt to the Penny)"
+  expected_start: "1993-04-01"       # live-verified 2026-09-04: table starts here
+                                    # (total is non-null from row 1; the split is not)
+  sanity_min: 0.0
+  sanity_max: 60000000000000.0       # 60T raw USD — current 40.1T + COVID-style doubling margin
+  primary_source: "FISCAL:/v2/accounting/od/debt_to_penny (tot_pub_debt_out_amt, raw USD)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Headline debt-ceiling gauge — the level the X-date countdown runs against.
+
+- series_id: FRED:WRESBAL
+  name: "Reserve Balances with Federal Reserve Banks (H.4.1)"
+  block: E
+  tier: 0
+  unit: "millions USD"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_wed
+  release_schedule: "Thursday 16:30 ET (H.4.1)"
+  expected_start: "2002-12-18"       # FRED API: first non-null observation (the 1984 rows
+                                    # exist but carry '.')
+  sanity_min: 2000.0                 # historical min = 2,795 (early 2002); margin
+  sanity_max: 4500000.0              # historical max = 4,275,806 (2021); +margin
+  primary_source: "FRED:WRESBAL"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The true QT constraint (not net-liq); identity: net-liq ≈ WRESBAL(+).
+
+- series_id: FRED:M2SL
+  name: "M2 Money Supply (SA)"
+  block: E
+  tier: 0
+  unit: "billions USD (SA)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "monthly H.6 release ±end of the following month 16:30 ET (check actual at F1)"
+  expected_start: "1959-01-01"       # FRED API live-verified
+  sanity_min: 250.0                  # historical min = 286.6 (1959); margin
+  sanity_max: 26000.0                # historical max = 23,218; +margin
+  primary_source: "FRED:M2SL"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # YoY in the brief; on the ALFRED-revision watchlist.
+
+- series_id: FRED:DCPN3M
+  name: "Commercial Paper 3M — AA financial (FRBP)"
+  block: E
+  tier: 0
+  unit: "percent"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 morning ET (FRBP ±09:30)"
+  expected_start: "1997-01-02"       # FRED API live-verified
+  sanity_min: 0.0                    # historical min = 0.03; nominal rates are never
+                                    # negative in the modern era
+  sanity_max: 8.0                    # historical max = 6.65 (GFC); +margin
+  primary_source: "FRED:DCPN3M"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Spread DCPN3M−DTB3 = nonbank funding (DTB3 = policy-rates, registry part-1).
+
+- series_id: FRED:COMPOUT
+  name: "Commercial Paper Outstanding (NSA)"
+  block: E
+  tier: 0
+  unit: "billions USD (NSA)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_wed
+  release_schedule: "±Thursday (FRBP; check actual at F1)"
+  expected_start: "2001-01-03"       # FRED API live-verified
+  sanity_min: 800.0                  # historical min = 902.6 (2010); margin
+  sanity_max: 2400.0                 # historical max = 2,222.8 (2007); +margin
+  primary_source: "FRED:COMPOUT"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # CP outstanding contraction = the classic pre-crisis drain.
+
+- series_id: FRED:CPFF
+  name: "Commercial Paper 3M — AA nonfinancial"
+  block: E
+  tier: 0
+  unit: "percent"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 morning ET (FRBP)"
+  expected_start: "1997-01-02"       # FRED API live-verified
+  sanity_min: -2.0                   # historical min = -1.55 (negative values exist at the
+                                    # 1997 series start) — do NOT use a 0 sanity floor
+  sanity_max: 4.0                    # historical max = 2.91; +margin
+  primary_source: "FRED:CPFF"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Rare-flag pair together with FRED:DPCREDIT during nonbank funding stress.
+
+- series_id: FRED:DPCREDIT
+  name: "Discount Window — Primary Credit Rate"
+  block: E
+  tier: 0
+  unit: "percent"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "when the rate changes (FRED updates daily; Fed administrative change)"
+  expected_start: "2003-01-09"       # FRED API live-verified
+  sanity_min: 0.0                    # historical min = 0.25 — a floor near zero but never
+                                    # negative
+  sanity_max: 8.0                    # historical max = 6.25; +margin
+  primary_source: "FRED:DPCREDIT"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Discount-window primary credit rate — rare-flag pair with CPFF during bank funding stress.
+
+- series_id: FRED:SOFRINDEX
+  name: "SOFR Index (compounded, basis 2018-04-02 = 1.0)"
+  block: E
+  tier: 0
+  unit: "index (2018-04-02 = 1.0)"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 ±08:00 ET (NY Fed)"
+  expected_start: "2018-04-02"       # FRED API: first value = exactly 1.0
+  sanity_min: 0.95                   # monotonically rising from basis 1.0; 0.95 = parse
+                                    # margin below the basis
+  sanity_max: 1.35                   # current max ≈ 1.2566; +margin for ~4%/yr compounding
+  primary_source: "FRED:SOFRINDEX"
+  secondary_source: "NYFED:SOFR_INDEX (markets.newyorkfed.gov, suffix .json)"
+  tolerance: 0.0001                  # identical source — tight tolerance as a parse detector
+  active: 1
+  # Compounded SOFR — collateralized cash-return benchmark; twin-source parse detector.
+
+- series_id: EODHD:FS_EFFR_SOFR
+  name: "Funding-stress spread: EFFR − SOFR (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD /spreads/funding-stress)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+                                    # (114 rows / 6 codes); long history is recomputed
+                                    # from the FRED legs
+  sanity_min: -25.0                  # live observations -3..+1bp; loose for repo dislocations
+  sanity_max: 25.0                   # same
+  primary_source: "EODHD:/spreads/funding-stress (code=EFFR_SOFR)"
+  secondary_source: "SYN:FS_EFFR_SOFR (EFFR−SOFR from FRED legs, T4)"
+  tolerance: 2.0                     # both rate legs rounded to 2dp = ±1bp per leg
+  active: 1
+  # The response carries the formula + both legs (leg_a_rate/leg_b_rate) — store the raw
+  # alongside the value.
+  # One registry entry per spread code — per-spread alert granularity & quarantine.
+
+- series_id: EODHD:FS_OBFR_EFFR
+  name: "Funding-stress spread: OBFR − EFFR (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+  sanity_min: -10.0                  # live observations stable at 0; narrow — both legs
+                                    # are administrative rates
+  sanity_max: 10.0                   # same
+  primary_source: "EODHD:/spreads/funding-stress (code=OBFR_EFFR)"
+  secondary_source: "SYN:FS_OBFR_EFFR (FRED legs / NY Fed OBFR, T4)"
+  tolerance: 2.0                     # leg rounding ±1bp
+  active: 1
+  # OBFR−EFFR spread — unsecured overnight dislocation (funding-stress family member).
+
+- series_id: EODHD:FS_TGCR_BGCR
+  name: "Funding-stress spread: TGCR − BGCR (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+  sanity_min: -10.0                  # live observations stable at 0
+  sanity_max: 10.0                   # same
+  primary_source: "EODHD:/spreads/funding-stress (code=TGCR_BGCR)"
+  secondary_source: "SYN:FS_TGCR_BGCR (NY Fed rates API legs, T4)"
+  tolerance: 2.0                     # leg rounding ±1bp
+  active: 1
+  # TGCR−BGCR spread — collateral-rate microstructure; earliest repo-market friction gauge.
+
+- series_id: EODHD:FS_SOFR_TARGET_LOWER
+  name: "Funding-stress spread: SOFR − Target Lower bound (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+  sanity_min: 0.0                    # SOFR structurally presses on or above the lower
+                                    # bound (live observations 9-16bp); negative = wrong leg
+  sanity_max: 150.0                  # live observations 9-16bp; the Sep-2019 crisis repo
+                                    # spike sat ~+300 above target-mid — deliberately loose
+  primary_source: "EODHD:/spreads/funding-stress (code=SOFR_TARGET_LOWER)"
+  secondary_source: "SYN:FS_SOFR_TARGET_LOWER (SOFR−DFEDTARL FRED, T4)"
+  tolerance: 2.0                     # leg rounding ±1bp
+  active: 1
+  # Early scarcity signal: SOFR pressing against the top of the range.
+
+- series_id: EODHD:FS_EFFR_TARGET_MID
+  name: "Funding-stress spread: EFFR − Target Mid (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+  sanity_min: -25.0                  # live observations stable at +0.5 (EFFR at mid)
+  sanity_max: 25.0                   # beyond ±25bp means EFFR has left the target range =
+                                    # major anomaly
+  primary_source: "EODHD:/spreads/funding-stress (code=EFFR_TARGET_MID)"
+  secondary_source: "SYN:FS_EFFR_TARGET_MID (EFFR−(DFEDTARL+DFEDTARU)/2 from FRED, T4)"
+  tolerance: 2.0                     # leg rounding ±1bp
+  active: 1
+  # EFFR vs target mid — policy-control check: EFFR leaving the corridor = major anomaly.
+
+- series_id: EODHD:FS_TARGET_UPPER_SOFR
+  name: "Funding-stress spread: Target Upper − SOFR (bps)"
+  block: E
+  tier: 1
+  unit: "bps"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "D+1 (EODHD)"
+  expected_start: "2026-08-03"       # EODHD default window = last ~19 trading days
+  sanity_min: -50.0                  # NEGATIVE = SOFR piercing the upper bound (heavy
+                                    # scarcity — the 2019 repo spike); live +9..+13
+  sanity_max: 25.0                   # upward it cannot exceed the 25bp range width + margin
+  primary_source: "EODHD:/spreads/funding-stress (code=TARGET_UPPER_SOFR)"
+  secondary_source: "SYN:FS_TARGET_UPPER_SOFR (DFEDTARU−SOFR FRED, T4)"
+  tolerance: 2.0                     # leg rounding ±1bp
+  active: 1
+  # The docs example 'SOFR_OIS' = 422 is INVALID — only the 6 codes above exist.
+
+- series_id: FRED:FYFSGDA188S
+  name: "Federal Surplus/Deficit (% of GDP, annual)"
+  block: E
+  tier: 0
+  unit: "percent of GDP (deficit = negative)"
+  value_format: pct
+  freq: A
+  ts_convention: year_start
+  release_schedule: "annual BEA-NIPA release/revision (±September-October)"
+  expected_start: "1929-01-01"       # FRED API live-verified
+  sanity_min: -30.0                  # historical min = -26.86 (WWII); +margin
+  sanity_max: 6.0                    # historical max = +4.30 (1948); +margin
+  primary_source: "FRED:FYFSGDA188S"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Fiscal gold channel — companion to the term premium (policy-rates).
+
+- series_id: FRED:A091RC1Q027SBEA
+  name: "Federal government interest payments (NIPA, SAAR)"
+  block: E
+  tier: 0
+  unit: "billions USD (SAAR)"
+  value_format: fraction
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "NIPA release ±3-4 weeks after quarter-end"
+  expected_start: "1947-01-01"       # FRED API live-verified
+  sanity_min: 0.0                    # interest burden is never negative
+  sanity_max: 1500.0                 # historical max = 1,247 (consistent with the brief's
+                                    # 'interest $1.25T/yr'); +margin
+  primary_source: "FRED:A091RC1Q027SBEA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+# =====================================================================
+# STRESS, VOL & SENTIMENT
+# =====================================================================
+
+- series_id: FRED:BAMLH0A0HYM2
+  name: "ICE BofA US High Yield OAS"
+  block: F
+  tier: 0
+  unit: "percent (yield spread)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "±20:30 ET same day (FRED evening update)"
+  expected_start: "2023-08-29"       # ICE license truncates FRED to 3 years (first
+                                    # 2023-08-29, 787 non-null obs); ALFRED old vintages
+                                    # also fail
+  sanity_min: 1.0                    # live window = 2.59-4.61; deliberately LOOSE (GFC
+                                    # pre-truncation 21.8; COVID 10.9 must pass if the
+                                    # license ever changes) — the goal is catching
+                                    # decimal parse errors, not economic alarms
+  sanity_max: 30.0                   # same
+  primary_source: "FRED:BAMLH0A0HYM2"
+  secondary_source: null             # official FRED/ICE single-source + freshness;
+                                    # no secondary exists
+  tolerance: null
+  active: 1
+  # HY credit spread — Stress pillar F (3y z + percentile) + watcher extreme-tight/wide triggers.
+  # Z/PERCENTILE WINDOW = 3 YEARS (not 5y) — official exception, ICE license truncation.
+  # Min-obs 80% × 756 ≈ 630 — satisfied by the ~787 live obs.
+  # Long credit-cycle perspective → EODHD:CMDI (1,129 weeks).
+
+- series_id: FRED:BAMLC0A0CM
+  name: "ICE BofA US Corporate (IG) OAS"
+  block: F
+  tier: 0
+  unit: "percent (yield spread)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "±20:30 ET same day"
+  expected_start: "2023-08-29"       # truncated to 3 years, same as HY
+  sanity_min: 0.5                    # live window = 0.73-1.33; loose for stress (GFC IG
+                                    # pre-truncation ~6)
+  sanity_max: 20.0                   # same
+  primary_source: "FRED:BAMLC0A0CM"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Z-window 3y — same exception as BAMLH0A0HYM2.
+
+- series_id: FRED:NFCI
+  name: "Chicago Fed National Financial Conditions Index"
+  block: F
+  tier: 0
+  unit: "index (0 = historical normal conditions)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: "Wednesday ±08:30 ET (week ending the prior Friday; check actual at F1)"
+  expected_start: "1971-01-08"       # FRED API live-verified
+  sanity_min: -2.0                   # historical min = -1.097; margin
+  sanity_max: 6.0                    # historical max = 5.217 — do NOT narrow to ±1; +margin
+  primary_source: "FRED:NFCI"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Broad financial-conditions gauge (1971→) — long-history stress context vs the 3y BAML window.
+
+- series_id: FRED:VIXCLS
+  name: "CBOE Volatility Index (VIX)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "close ±16:15 ET; FRED updates ±same-day evening"
+  expected_start: "1990-01-02"       # FRED API live-verified
+  sanity_min: 8.0                    # historical min = 9.14 (2017); lower margin
+  sanity_max: 100.0                  # historical max = 82.69 (2020-03-16); +margin
+  primary_source: "FRED:VIXCLS"
+  secondary_source: "TV:VIX (gray, degradable)"
+  tolerance: 0.5                     # daily closes are identical across vendors; 0.5 for
+                                    # timing differences
+  active: 1
+  # Equity fear gauge — VIX/VXV backwardation trigger + stress cooldown (VIX>25) + brief watch line.
+
+- series_id: FRED:VXVCLS
+  name: "CBOE 3-Month Volatility Index (VXV = VIX3M)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "close ±16:15 ET"
+  expected_start: "2007-12-04"       # FRED API live-verified
+  sanity_min: 10.0                   # historical min = 11.85; margin
+  sanity_max: 90.0                   # historical max = 72.98; +margin
+  primary_source: "FRED:VXVCLS"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # SAME series as VIX3M — do not double-register.
+  # Term structure: VIX/VXV ratio → contango/backwardation anomaly.
+
+- series_id: CBOE:VIX9D
+  name: "CBOE 9-Day Volatility Index (VIX9D)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "±same-day evening (daily CDN CSV)"
+  expected_start: "2011-01-04"       # CDN live-verified 2026-09-08 (3,941 rows)
+  sanity_min: 6.0                    # landed history min 7.10 (2018-01-11, 24 days <8) —
+                                    # in calm contango the 9d tenor sits BELOW spot VIX
+                                    # by design (that's the <0.75 ratio state)
+  sanity_max: 120.0                  # landed max 106.66 — margin
+  primary_source: "CBOE:cdn.cboe.com/api/global/us_indices/daily_prices/VIX9D_History.csv (CLOSE col)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # REVIVED 2026-09-08 (audit sumber): D-011 declared this dead because the
+  # LEGACY /data/volatility path 403s — the us_indices daily_prices path is
+  # alive and current (verified through 2026-09-04). Acute-stress gauge:
+  # VIX9D/VIX ratio up = stress concentrated in the FRONT of the curve.
+
+- series_id: CBOE:VIX6M
+  name: "CBOE 6-Month Volatility Index (VIX6M)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "±same-day evening (daily CDN CSV)"
+  expected_start: "2008-01-02"       # CDN live-verified 2026-09-08
+  sanity_min: 10.0                   # the long tenor is flatter than VIX
+  sanity_max: 100.0                  # margin equivalent to VIX
+  primary_source: "CBOE:cdn.cboe.com/api/global/us_indices/daily_prices/VIX6M_History.csv (CLOSE col)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # REVIVED 2026-09-08 with VIX9D (D-011 closed). Completes the
+  # 9D-VIX-3M(VXV)-6M vol curve.
+
+- series_id: FRED:VXNCLS
+  name: "CBOE NASDAQ-100 Volatility Index (VXN)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "close ±16:15 ET"
+  expected_start: "2001-02-02"       # FRED API live-verified
+  sanity_min: 9.0                    # historical min = 10.31; margin
+  sanity_max: 100.0                  # historical max = 80.64; +margin
+  primary_source: "FRED:VXNCLS"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Used as the VXN/VIX ratio against its own history — raw levels mislead (VXN is
+  # structurally > VIX). US500 > US100 signal.
+
+- series_id: FRED:GVZCLS
+  name: "CBOE Gold ETF Volatility Index (GVZ)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "close ±16:15 ET"
+  expected_start: "2008-06-03"       # FRED API live-verified
+  sanity_min: 8.0                    # historical min = 8.88; margin
+  sanity_max: 80.0                   # historical max = 64.53; +margin
+  primary_source: "FRED:GVZCLS"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Gold vol regime → XAUUSD sizing; long gold history (CVOL differs in construction —
+  # separate z). GCVL → cvol_snapshots.
+
+- series_id: FRED:OVXCLS
+  name: "CBOE Crude Oil ETF Volatility Index (OVX)"
+  block: F
+  tier: 0
+  unit: "percent (annualized vol)"
+  value_format: pct
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "close ±16:15 ET"
+  expected_start: "2007-05-10"       # FRED API live-verified
+  sanity_min: 10.0                   # historical min = 14.5; margin
+  sanity_max: 400.0                  # historical max = 325.15 (Apr-2020, when WTI went
+                                    # negative) — MUST stay loose; do not use a VIX-style
+                                    # ~100 cap
+  primary_source: "FRED:OVXCLS"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Energy event risk → CPI headline channel; 'OVX extreme percentile' anomaly.
+
+- series_id: CBOE:PUTCALL_TOTAL
+  name: "CBOE Total Market Put/Call Ratio"
+  block: F
+  tier: 0
+  unit: "ratio (put volume / call volume)"
+  value_format: fraction
+  freq: D
+  # RETIRED 2026-09-04 (audit sumber): CDN CSV frozen at 2019-10-04; new
+  # cdn.cboe.com/data paths 403 (same shelf as VIX9D/6M, ISSUE D-017).
+  # Equity-options P/C sentiment = CME options PCR (per-product ES/NQ).
+  ts_convention: daily_et
+  release_schedule: "CBOE CSV ±D+1 morning"
+  expected_start: "2006-01-03"       # estimate — confirm the file's first date when the
+                                    # fetcher lands
+  sanity_min: 0.4                    # total-market historical distribution ~0.5-1.3;
+                                    # two-sided margin against noise
+  sanity_max: 1.6                    # same
+  primary_source: "CBOE:totalpc.csv (CDN)"
+  secondary_source: null
+  tolerance: null
+  active: 0                          # frozen source — retired 2026-09-04
+  # 1 stale row @2019-10-04 left as-is (raw append-only); not harvested anymore.
+
+- series_id: CBOE:PUTCALL_SPX
+  name: "CBOE S&P 500 (index-only) Put/Call Ratio"
+  block: F
+  tier: 0
+  unit: "ratio (put volume / call volume)"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "CBOE CSV ±D+1 morning"
+  expected_start: "2006-01-03"       # estimate — same as PUTCALL_TOTAL
+  sanity_min: 0.5                    # SPX-only is structurally HIGHER than total
+                                    # (institutional hedging) — distribution ~0.7-2.5
+  sanity_max: 3.0                    # same — panic spikes 2008/2011/2020 at the top end
+  primary_source: "CBOE:spxpc.csv (CDN)"
+  secondary_source: null
+  tolerance: null
+  active: 0                          # frozen source — retired 2026-09-04 (D-017)
+  # Index-only put/call — institutional hedging sentiment for US500 (structurally > total-market).
+  # Superseded by CME options PCR (NQ/ES per-strike OI).
+
+- series_id: EODHD:CDS_US
+  name: "US Sovereign CDS 10Y (Damodaran via EODHD)"
+  block: F
+  tier: 1
+  unit: "fraction (0.0044 = 44 bps; ×10^4 → bps in the view/unit-registry)"
+  value_format: fraction
+  freq: A
+  ts_convention: year_start
+  release_schedule: "annual update ±January (Damodaran snapshot)"
+  expected_start: "2026-01-01"       # EODHD metadata: frequency=annual, source=damodaran,
+                                    # 1 obs per country (as_of 2026-01-01); USA
+                                    # cds_spread=0.0044, rating Aa1
+  sanity_min: 0.0                    # spreads are never negative
+  sanity_max: 0.15                   # currently 0.0044; a sovereign crisis can exceed
+                                    # 0.10 — deliberately loose
+  primary_source: "EODHD:/credit-risk/sovereign/cds-spreads (filter[country]=USA)"
+  secondary_source: null             # unique EODHD/Damodaran source — single-source +
+                                    # annual freshness check
+  tolerance: null
+  active: 1
+  # This endpoint is ANNUAL Damodaran data, not daily: fiscal tail-risk LEVEL only,
+  # no daily Δ — do not promise a daily change in the brief. Row stays active as an
+  # annual level.
+
+- series_id: EODHD:CMDI
+  name: "NY Fed Corporate Market Distress Index — headline market"
+  block: F
+  tier: 1
+  unit: "distress index (0-1 scale)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: "weekly (Friday as_of; NY Fed releases the following week via EODHD; OBSERVED LAG ~2wk — e.g. latest 2026-08-21 still current @ 2026-09-04. NOT stalled: the fetch works, the source is simply behind)"
+  expected_start: "2004-12-03"       # derived backward from metadata total = 1,129 weekly
+                                    # obs (last obs 2026-08-21) ≈ 2004-12; exact date via
+                                    # page[offset]
+  sanity_min: 0.0                    # index scale 0-1 (live obs: market 0.21 / IG 0.27 /
+                                    # HY 0.08)
+  sanity_max: 1.0                    # same
+  primary_source: "EODHD:/credit-risk/corporate/cmdi (market_cmdi column; ig_cmdi & hy_cmdi stored alongside)"
+  secondary_source: null             # NY Fed CMDI is not on FRED — EODHD is the only
+                                    # automated route
+  tolerance: null
+  active: 1
+  # Credit distress is LEADING — companion to the lagging BAML spreads; 21+ years of
+  # history (1,129 weeks); the IG-vs-HY divergence is informative.
+  # Pagination via page[offset]/page[limit] (default 20 rows/page).
+
+# =====================================================================
+# PHYSICAL: daily physical-stock series.
+# Registry exception: flows mostly lives in flows_daily/flows_periodic,
+# but daily series with z-score plumbing are stored in raw_observations →
+# they must be registered (FK series_registry).
+# =====================================================================
+
+- series_id: LME:CA_STOCKS
+  name: "LME Copper Warehouse Closing Stocks"
+  block: H
+  tier: 0
+  unit: "tonne"
+  value_format: fraction
+  freq: D
+  ts_convention: daily_et
+  release_schedule: "monthly LME stocks-summary XLSX (±2 business day delay; archive starts 2021-01)"
+  expected_start: "2021-01-04"       # stocks-january-2021.xlsx = first file under this
+                                    # naming scheme
+  sanity_min: 10000                   # 2021-2026 live range ≈ 90K-380K tonnes; the floor
+                                    # sits far below the historical minimum
+  sanity_max: 600000                  # historical peak ~380K (2021) + 60% buffer for an
+                                    # extreme regime
+  primary_source: "LME:XLSX (cdn lme.com /-/media/files/data/reports-and-data/warehouse-and-stock-reports/stocks-summary/)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Two format eras: <=2024 sheet 'ClosingStock' with 'Stock Date' header and
+  # every-other-column layout; 2026 sheet 'Closing Stock' with 'BusinessDate' and packed
+  # columns → dynamic-scan parser. Cloudflare passes via curl_cffi chrome + a SHARED
+  # SESSION across months (session-per-file = blocked). A not-yet-published month
+  # returns a soft-404 HTML page (HTTP 200) → return []. Feeds the copper_stocks_drain
+  # trigger + XCUUSD squeeze context.

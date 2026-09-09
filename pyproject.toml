@@ -1,0 +1,58 @@
+[project]
+name = "arkwatch"
+version = "0.1.0"
+description = "US macro monitoring engine untuk trading pribadi (metals/BTC/index/FX)"
+requires-python = ">=3.12"          # [RISET: ADR-001 — pin Python 3.12; terpasang 3.12.8 di mesin]
+dependencies = [
+    "curl_cffi>=0.7",                # [RISET: ADR-001/§17 DATA-SPEC — satu-satunya jalur terverifikasi utk cmegroup/QuikStrike; v0.16.x aktif]
+    "requests>=2.31",                # [KEPUTUSAN: Farside & sumber terang; F0 — kalibrasi ulang saat kebutuhan muncul]
+    "pandas>=2.2",                   # [RISET: ADR-001 — engine calamine & ekosistem transform; versi min utk read_excel calamine]
+    "openpyxl>=3.1",                 # [KEPUTUSAN: XLSX WGC/ADS/WGT dkk — cukup utk volume kita; calamine = jalur cepat kalau perlu]
+    "python-dotenv>=1.0",            # [KEPUTUSAN: muat .env (kredensial via env — CLAUDE.md hard rule)]
+    "pyyaml>=6",                     # [KEPUTUSAN: parse config/ seed registry+anchors+calendar (T-04 loader); 2026-08-31]
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",                     # [RISET: ADR-009 — framework test]
+    "litecli",                       # [KEPUTUSAN: ADR-002 #11 — REPL inspeksi DB]
+    "sqlite-utils",                  # [KEPUTUSAN: ADR-002 #11 — CLI inspeksi one-off]
+]
+analytics = [
+    "duckdb>=1.0",                   # [RISET: ADR-002 — attach READ-ONLY, khusus F4; ditunda sampai F4]
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: butuh koneksi (dikecualikan dari run default — ADR-009)"]
+
+# [KEPUTUSAN: REFACTOR-PLAN P0 — ruff sebagai ratchet kualitas; rule disengaja
+#  ringan (jangan nitpick proyek solo): koreksi nyata saja, tanpa gaya-agresif]
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["fixtures", "docs", "data", "backups", "logs"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused import/var, undefined name — kelas bug nyata)
+    "I",    # isort (urutan import konsisten)
+    "B",    # bugbear (mutable default, shadow stdlib — kelas bug nyata)
+    "UP",   # pyupgrade (sintaks modern 3.12)
+    "SIM",  # flake8-simplify (useless-else dsb — ringan)
+    "RET",  # return bersih
+]
+ignore = [
+    "E501",  # line >100 ditangani formatter; exception panjang (URL/SQL) dibiarkan
+    "SIM108",# ternary memaksa kadang-kurang-jelas
+    "SIM102",# nested-if trigger watcher LEBIH terbaca daripada digabung (kondisi ber-narasi)
+    "B008",  # default arg pd — pola umum
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# Catatan: dependency sengaja minimal di F0; harvester/transform menambah saat tiketnya minta.
+# Setiap penambahan versi WAJIB ber-comment provenansi (aturan user 2026-08-31, BUILD-PLAN §0.9).
