@@ -814,6 +814,35 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as ex:
         print(f"  ⚠ LME off-warrant: {str(ex)[:80]}")
 
+    # Daily off-warrant reports (T+3, free with LME_COOKIE login — D-022).
+    # Listing retention is ~7 days, so the daily harvest accumulates history;
+    # cookie death must surface as a named fetch_log ERROR, never silence.
+    n_owsr = 0
+    owsr_err: str | None = None
+    try:
+        for m in flows_extra.fetch_lme_owsr_daily(session=_lme_sess):
+            conn.execute(
+                "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
+                " VALUES (?,'lme_owsr_cu',?, 'tonne',1,?,?)"
+                " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value,"
+                " meta_json=excluded.meta_json",
+                (m["ts"], m["cu_tonnes"], m["cu_tonnes"], json.dumps(m["regions"])),
+            )
+            n_owsr += 1
+        conn.commit()
+        if n_owsr:
+            latest_owsr = conn.execute(
+                "SELECT MAX(period) FROM flows_periodic WHERE kind='lme_owsr_cu'"
+            ).fetchone()[0]
+            print(f"  off-warrant daily CU: {n_owsr} files (latest {latest_owsr})")
+            # T+3 publication + weekend tolerance → alert only past 6 bd
+            cutoff = _stale_trade_days(datetime.now(UTC).date().isoformat(), days=6)
+            if latest_owsr < cutoff:
+                owsr_err = f"stale latest {latest_owsr} (cutoff {cutoff})"
+    except Exception as ex:
+        owsr_err = str(ex)[:140]
+        print(f"  ⚠ LME off-warrant daily: {str(ex)[:90]}")
+
     # fetch_log for the f2 collections. The target is the series_id (so
     # health checks can join on it); the LME counter reports new rows;
     # flows-extra is idempotent by design and reports OK-0.
@@ -821,6 +850,7 @@ def main(argv: list[str] | None = None) -> int:
 
     log_collection(conn, "f2", "LME:CA_STOCKS", None, total_new, err=lme_err)
     log_collection(conn, "f2", "LME:OFFWARRANT", None, n_ow)
+    log_collection(conn, "f2", "LME:OWSR", None, n_owsr, err=owsr_err)
 
     conn.close()
     return 0

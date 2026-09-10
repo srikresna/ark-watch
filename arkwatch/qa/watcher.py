@@ -761,11 +761,22 @@ def check_all(conn) -> list[str]:
             win = cu[-750:] if len(cu) >= 750 else cu
             pct = 100 * sum(1 for v in win if v < lvl) / len(win)
             d20_txt = f"Δ20d {d20:+.0%}" if d20 is not None else ""
+            # off-warrant shadow supply (daily OWSR, T+3): thick shadow supply
+            # can cap a squeeze (hidden metal can be warranted anytime); thin
+            # supply makes the same drain far more serious
+            ow = conn.execute(
+                "SELECT period, value FROM flows_periodic WHERE kind='lme_owsr_cu'"
+                " AND period=(SELECT MAX(period) FROM flows_periodic"
+                "             WHERE kind='lme_owsr_cu')"
+            ).fetchone()
+            ow_txt = ""
+            if ow and ow[1] and lvl:
+                ow_txt = f"; off-warrant {ow[1]:,.0f}t = {ow[1] / lvl * 100:.0f}% of LME"
             if _fire(
                 conn,
                 "copper_stocks_drain",
                 f"LME Cu stocks {lvl:,.0f}t ({d20_txt} streak {streak}w)",
-                f"Physical tightness: {curve_txt}; percentile {pct:.0f} of 3y",
+                f"Physical tightness: {curve_txt}; percentile {pct:.0f} of 3y{ow_txt}",
                 "XCUUSD squeeze-watch: avoid fresh shorts; check COT top-4 HG",
             ):
                 fired.append("copper_stocks_drain")

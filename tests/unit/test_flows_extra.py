@@ -746,3 +746,145 @@ def test_lme_offwarrant_parse(monkeypatch):
     assert r["ts"] == "2025-02"
     assert r["cu_tonnes"] == 7089 + 22996  # region totals only, grand row skipped
     assert r["regions"] == {"Asia": 7089.0, "Europe": 22996.0}
+
+
+# --------------------------------------------------------------------------
+# LME daily OWSR (T+3, cookie-gated)
+# --------------------------------------------------------------------------
+
+
+def _owsr_xlsx() -> bytes:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "OWSR Reconciled Inventory"
+    ws.append(["REGION", "COUNTRY/REGION", "DELIVERY POINT", "AA", "AL", "CU", "NA", "NI"])
+    ws.append(["ASIA", "MALAYSIA", "PORT KLANG", 0.0, 38211.0, 767.0, 0.0, 3735.0])
+    ws.append(["ASIA", "SINGAPORE", "SINGAPORE", 0.0, 2083.0, 277.0, 0.0, 41300.0])
+    ws.append(["EUROPE", "BELGIUM", "ANTWERP", 0.0, 1000.0, 5000.0, 0.0, 0.0])
+    ws.append(["GLOBAL TOTAL", "", "", 0.0, 94512.0, 125354.0, 0.0, 101154.0])
+    ws.append(["© disclaimer text", "", "", "", "", "", "", ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _mock_owsr(monkeypatch, set_cookie=True, listing=None, download_ok=True):
+    class RJson:
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self):
+            self._d = listing if listing is not None else {
+                "Results": [
+                    {"ItemId": "id-1", "Name": "Daily_OWSR 04 Sep 2026",
+                     "FileExtension": "xlsx", "FileSize": "0MB"},
+                    {"ItemId": "id-2", "Name": "Daily_OWSR 03 Sep 2026",
+                     "FileExtension": "xlsx", "FileSize": "0MB"},
+                ]
+            }
+
+        def json(self):
+            return self._d
+
+    class RHtml:
+        status_code = 200
+        text = "<html>login page</html>"
+        content = b"<html>login page</html>"
+
+        def json(self):
+            raise ValueError("no json on an html page")
+
+    class RXlsx:
+        status_code = 200
+        content = _owsr_xlsx()
+
+    class S:
+        def get(self, url, *a, **k):
+            if "/Get" in url:
+                return RHtml() if listing == "expired" else RJson()
+            if "/Download" in url:
+                return RXlsx() if download_ok else RHtml()
+            raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(flows_extra.creq, "Session", lambda **k: S())
+    monkeypatch.setenv("LME_COOKIE", "ASP.NET_SessionId=x; .AspNet.Cookies=y"
+                       if set_cookie else "")
+    if not set_cookie:
+        monkeypatch.delenv("LME_COOKIE", raising=False)
+
+
+def test_owsr_daily_parse(monkeypatch):
+    _mock_owsr(monkeypatch)
+    rows = flows_extra.fetch_lme_owsr_daily()
+    assert [r["ts"] for r in rows] == ["2026-09-04", "2026-09-03"]
+    r = rows[0]
+    assert r["cu_tonnes"] == 125354.0  # GLOBAL TOTAL row, not the sum
+    assert r["regions"]["Asia"] == 767.0 + 277.0
+    assert r["regions"]["Europe"] == 5000.0
+
+
+def test_owsr_missing_cookie_named_error(monkeypatch):
+    _mock_owsr(monkeypatch, set_cookie=False)
+    with pytest.raises(flows_extra.LmeOwsrError, match="LME_COOKIE not set"):
+        flows_extra.fetch_lme_owsr_daily()
+
+
+def test_owsr_expired_cookie_named_error(monkeypatch):
+    """A dead cookie answers the API with an HTML login page — the error
+    must name the refresh fix, not a cryptic JSON decode failure."""
+    _mock_owsr(monkeypatch, listing="expired")
+    with pytest.raises(flows_extra.LmeOwsrError, match="cookie expired"):
+        flows_extra.fetch_lme_owsr_daily()
+
+
+def test_owsr_soft404_download_skipped(monkeypatch):
+    _mock_owsr(monkeypatch, download_ok=False)
+    assert flows_extra.fetch_lme_owsr_daily() == []
+
+
+def _seed_cu(conn, today, drift_up=True):
+    conn.execute(
+        "INSERT OR IGNORE INTO series_registry(series_id, name, block, tier, unit,"
+        " value_format, freq, primary_source) VALUES ('LME:CA_STOCKS','Cu','H',0,"
+        "'tonne','{:,.0f}','D','LME')"
+    )
+    for i in range(25):
+        v = 200000.0 + (i * 100 if drift_up else -i * 100)
+        conn.execute(
+            "INSERT INTO raw_observations(series_id, ts, value, vintage_ts, source, fetched_at)"
+            " VALUES ('LME:CA_STOCKS', ?, ?, 'realtime', 't', ?)",
+            ((today - timedelta(days=i)).isoformat(), v, today.isoformat()),
+        )
+
+
+def test_brief_cu_offwarrant_line(conn, tmp_path):
+    today = datetime.now(UTC).date()
+    _seed_cu(conn, today)
+    conn.execute(
+        "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
+        " VALUES (?,'lme_owsr_cu', 125354.0, 'tonne',1, 125354.0)",
+        ((today - timedelta(days=3)).isoformat(),),
+    )
+    conn.commit()
+    text = _brief(conn, tmp_path)
+    line = next(ln for ln in text.splitlines() if "Cu physical" in ln)
+    assert "off-warrant 125,354t" in line
+    assert "% of LME)" in line
+
+
+def test_brief_cu_offwarrant_hidden_when_stale(conn, tmp_path):
+    """OWSR older than 7 days (cookie dead / retention gap) must not print a
+    stale shadow-supply % next to a live stocks number."""
+    today = datetime.now(UTC).date()
+    _seed_cu(conn, today)
+    conn.execute(
+        "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
+        " VALUES (?,'lme_owsr_cu', 125354.0, 'tonne',1, 125354.0)",
+        ((today - timedelta(days=20)).isoformat(),),
+    )
+    conn.commit()
+    text = _brief(conn, tmp_path)
+    line = next(ln for ln in text.splitlines() if "Cu physical" in ln)
+    assert "off-warrant" not in line

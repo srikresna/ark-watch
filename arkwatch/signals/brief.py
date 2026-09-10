@@ -868,7 +868,18 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         lvl = cu[0][0]
         d20 = lvl / cu[20][0] - 1  # cu is DESC → cu[20] = 20 business days ago
         flag = " ⚠DRAIN" if d20 <= COPPER_DRAIN_20D_PCT else ""
-        lines.append(f"Cu physical: LME {lvl:,.0f}t (Δ20d {d20:+.0%}){flag}")
+        # off-warrant shadow supply (daily OWSR, T+3): a DRAIN with thick
+        # shadow supply is far less scary than a genuine physical scarcity
+        ow = conn.execute(
+            "SELECT period, value FROM flows_periodic WHERE kind='lme_owsr_cu'"
+            " AND period=(SELECT MAX(period) FROM flows_periodic WHERE kind='lme_owsr_cu')"
+        ).fetchone()
+        ow_txt = ""
+        if ow and ow[1] and (datetime.now(UTC).date() - datetime.fromisoformat(ow[0]).date()).days <= 7:
+            share = ow[1] / lvl * 100 if lvl else None
+            pct_txt = f" ({share:.0f}% of LME)" if share is not None else ""
+            ow_txt = f" · off-warrant {ow[1]:,.0f}t{pct_txt}"
+        lines.append(f"Cu physical: LME {lvl:,.0f}t (Δ20d {d20:+.0%}){flag}{ow_txt}")
 
     # events (7 days — dedup by normalized name + date)
     events = conn.execute(

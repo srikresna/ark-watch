@@ -14,6 +14,7 @@ fetch exited 0. Always pick max() over the parsed date values.
 from __future__ import annotations
 
 import io
+import os
 import re
 from datetime import UTC, datetime
 
@@ -449,6 +450,97 @@ def _num_or(v) -> float:
         return float(str(v).replace(",", ""))
     except (TypeError, ValueError):
         return 0.0
+
+
+_OWSR_CFG = "0626424c-ad1d-4f52-b24c-05b6f136226f"
+_OWSR_API = "https://www.lme.com/Lme-api/ReportsListingSearchApi"
+
+
+class LmeOwsrError(RuntimeError):
+    """Raised for cookie/auth problems (refreshable by the owner) so f2 can
+    surface a fetch_log ERROR that names the fix, not a cryptic parse bug."""
+
+
+def fetch_lme_owsr_daily(session=None) -> list[dict]:
+    """Daily off-warrant stock reports (T+3, free WITH LME.com login).
+
+    Verified path (2026-09-10): the page loads files via
+    /Lme-api/ReportsListingSearchApi/Get?searchConfigId=... then downloads
+    each with /Download?id={ItemId}. LME_COOKIE (env) carries the session;
+    listing shows only the last ~7 days, so the daily harvest accumulates
+    history itself (CME-settlements retention class).
+
+    Series note: this 'OWSR Reconciled Inventory' is kept as its own kind
+    (lme_owsr_cu) — it is NOT stitched onto the pre-2025-02 monthly
+    'off-warrant' archive (lme_offwarrant_cu): the reporting scope changed
+    with Notice 23/090 (all LME-brand metal in registered sheds), and
+    silently joining the two would fabricate a trend.
+
+    Returns [{'ts': 'YYYY-MM-DD', 'cu_tonnes': global CU total,
+    'regions': {..}}] newest-first; [] when the listing is empty.
+    """
+    from openpyxl import load_workbook
+
+    cookie = os.environ.get("LME_COOKIE", "").strip()
+    if not cookie:
+        raise LmeOwsrError("LME_COOKIE not set (see .env.example)")
+    s = session if session is not None else creq.Session(impersonate="chrome")
+    hdrs = {"Cookie": cookie, "Accept": "application/json"}
+    r = s.get(f"{_OWSR_API}/Get?searchConfigId={_OWSR_CFG}", headers=hdrs, timeout=(10, 30))
+    if r.status_code != 200:
+        raise LmeOwsrError(f"OWSR listing: HTTP {r.status_code}")
+    try:
+        results = r.json().get("Results") or []
+    except ValueError as exc:
+        # JSON body -> HTML means the auth cookie died and the server
+        # answered with a login page: name the fix, don't bury it
+        raise LmeOwsrError("LME cookie expired — re-export from the browser") from exc
+    out = []
+    for item in results:
+        m = re.search(r"(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})", item.get("Name", ""))
+        if not m:
+            continue
+        try:
+            ts = datetime.strptime(m.group(0), "%d %b %Y").date().isoformat()
+        except ValueError:
+            continue
+        r2 = s.get(
+            f"{_OWSR_API}/Download?id={item['ItemId']}",
+            headers={"Cookie": cookie},
+            timeout=(10, 60),
+        )
+        if r2.status_code != 200 or r2.content[:2] != b"PK":
+            continue
+        wb = load_workbook(io.BytesIO(r2.content), read_only=True, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        rows = list(ws.iter_rows(values_only=True))
+        # header: REGION|COUNTRY/REGION|DELIVERY POINT|AA|AL|CU|...
+        hdr_i = cu_col = None
+        for i, row in enumerate(rows[:5]):
+            cells = [str(c).strip().upper() if c is not None else "" for c in row]
+            if "CU" in cells and "REGION" in cells:
+                hdr_i, cu_col = i, cells.index("CU")
+                break
+        if hdr_i is None:
+            continue
+        regions: dict[str, float] = {}
+        total = None
+        for row in rows[hdr_i + 1 :]:
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            if len(cells) <= cu_col or not cells[0]:
+                continue
+            label = cells[0].upper()
+            v = _num_or(cells[cu_col])
+            if label == "GLOBAL TOTAL":
+                total = v
+            elif label:
+                regions[cells[0].title()] = regions.get(cells[0].title(), 0.0) + v
+        if total is None:  # fall back to the summed locations
+            total = sum(regions.values())
+        if total and total > 0:
+            out.append({"ts": ts, "cu_tonnes": total, "regions": regions})
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return out
 
 
 def fetch_lbma_vault() -> dict:
