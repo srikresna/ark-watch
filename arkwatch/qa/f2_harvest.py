@@ -202,9 +202,10 @@ def _harvest_positioning(conn) -> int:
     n = 0
     for sym in ("BTCUSDT", "ETHUSDT"):
         legs: dict[str, dict[str, float]] = {}
+        # taker-volume leg dropped (retired by Bybit, 404 — D-020); the
+        # column stays NULL until a replacement endpoint is pinned
         for key, fn in (
             ("ls", bybit.fetch_account_ratio),
-            ("tk", bybit.fetch_taker_volume),
             ("oi", bybit.fetch_open_interest_history),
         ):
             try:

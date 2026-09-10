@@ -112,14 +112,18 @@ def _v5(path: str, params: dict) -> list[dict]:
 
 
 def fetch_account_ratio(symbol: str = "BTCUSDT", period: str = "1d", limit: int = 30) -> list[dict]:
-    """Daily long-account SHARE — [{ts, ls_ratio}] (retail positioning).
+    """Daily long/buy-account SHARE — [{ts, ls_ratio}] (retail positioning).
 
-    UNIT WARNING (review ronde-1): Bybit's accountLongRatio is the long
-    account SHARE (0..1, neutral 0.5, long+short shares sum to 1) — NOT a
-    long/short ratio (which would be neutral at 1.0). The column name
-    ls_ratio is historical; interpretation throughout uses the SHARE
-    convention. Period vocabulary is 5min/15min/30min/1h/4h/1d ('D' returns
-    an EMPTY list — verified live).
+    UNIT WARNING (review ronde-1): this is a SHARE (0..1, neutral 0.5), NOT a
+    long/short ratio (neutral 1.0). The column name ls_ratio is historical.
+
+    SHAPE CHANGE (D-020, verified live 2026-09-10): Bybit removed
+    `accountLongRatio`; the endpoint now returns buyRatio/sellRatio (same
+    0..1 share semantics — buy side share). buyRatio is the primary field,
+    accountLongRatio kept as a fallback so either shape parses.
+
+    Period vocabulary is 5min/15min/30min/1h/4h/1d ('D' returns an EMPTY
+    list — verified live).
     """
     from datetime import datetime
 
@@ -129,29 +133,23 @@ def fetch_account_ratio(symbol: str = "BTCUSDT", period: str = "1d", limit: int 
     )
     out = []
     for r in rows:
+        raw = r.get("accountLongRatio", r.get("buyRatio"))
+        if raw is None:
+            continue
         ts = datetime.fromtimestamp(int(r["timestamp"]) / 1000, tz=UTC).date().isoformat()
-        out.append({"ts": ts, "ls_ratio": float(r["accountLongRatio"])})
+        out.append({"ts": ts, "ls_ratio": float(raw)})
     return sorted(out, key=lambda x: x["ts"])
 
 
 def fetch_taker_volume(symbol: str = "BTCUSDT", period: str = "1d", limit: int = 30) -> list[dict]:
-    """Daily taker buy/sell VOLUME ratio — [{ts, buy_ratio}] (aggressive flow).
+    """RETIRED BY BYBIT (verified live 2026-09-10: HTTP 404 — path removed,
+    apparently folded into account-ratio's buyRatio/sellRatio shape).
 
-    buy_ratio > 0.5 = market orders were net BUYING (takers lifting offers).
-    Path verified against the v5 docs; flagged degradable in ISSUE.md (D-020)
-    pending a live window — a 404 was observed once during the flaky window.
+    Kept as a loud named error so the f2 leg reports the true cause once and
+    can be re-pointed if Bybit revives the endpoint. bybit_positioning.
+    taker_buy_ratio stays NULL until then.
     """
-    from datetime import datetime
-
-    rows = _v5(
-        "/v5/market/taker-volume",
-        {"category": "linear", "symbol": symbol, "period": period, "limit": limit},
-    )
-    out = []
-    for r in rows:
-        ts = datetime.fromtimestamp(int(r["timestamp"]) / 1000, tz=UTC).date().isoformat()
-        out.append({"ts": ts, "buy_ratio": float(r["buyVolRatio"])})
-    return sorted(out, key=lambda x: x["ts"])
+    raise BybitError("bybit taker-volume: retired by Bybit (404)")
 
 
 def fetch_open_interest_history(symbol: str = "BTCUSDT", limit: int = 30) -> list[dict]:

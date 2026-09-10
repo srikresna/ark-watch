@@ -148,7 +148,9 @@ def _mock_bybit(monkeypatch, ls=None, tk=None, oi=None):
 def test_positioning_upsert_and_selfheal(conn, monkeypatch):
     from arkwatch.qa.f2_harvest import _harvest_positioning
 
-    # day 1: only the ls leg answers (Bybit window half-open)
+    # day 1: only the ls leg answers (Bybit window half-open).
+    # The tk leg is GONE from the harvest loop — Bybit retired taker-volume
+    # (404, D-020) — so taker_buy_ratio stays NULL forever here.
     _mock_bybit(
         monkeypatch,
         ls=[{"ts": "2026-09-07", "ls_ratio": 1.2}, {"ts": "2026-09-08", "ls_ratio": 1.3}],
@@ -161,11 +163,10 @@ def test_positioning_upsert_and_selfheal(conn, monkeypatch):
     ).fetchone()
     assert row == (1.3, None, None)
 
-    # day 2: all three legs answer — COALESCE fills the NULL legs, keeps old
+    # day 2: both live legs answer — COALESCE fills the NULL legs, keeps old
     _mock_bybit(
         monkeypatch,
         ls=[{"ts": "2026-09-08", "ls_ratio": 9.9}],  # would overwrite…
-        tk=[{"ts": "2026-09-08", "buy_ratio": 0.52}],
         oi=[{"ts": "2026-09-08", "oi": 56157.0}],
     )
     _harvest_positioning(conn)
@@ -174,7 +175,33 @@ def test_positioning_upsert_and_selfheal(conn, monkeypatch):
         " WHERE symbol='BTCUSDT' AND date='2026-09-08'"
     ).fetchone()
     # non-NULL incoming legs DO update (ls 1.3→9.9); NULL legs never clobber
-    assert row == (9.9, 0.52, 56157.0)
+    assert row == (9.9, None, 56157.0)
+
+
+def test_bybit_account_ratio_new_shape(monkeypatch):
+    """D-020 REGRESSION: Bybit removed accountLongRatio — the endpoint now
+    returns buyRatio/sellRatio (same 0..1 share). Either shape must parse."""
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {
+                "retCode": 0,
+                "result": {"list": [
+                    {"symbol": "BTCUSDT", "buyRatio": "0.573",
+                     "sellRatio": "0.427", "timestamp": "1788998400000"},
+                ]},
+            }
+
+    monkeypatch.setattr(bybit.requests, "get", lambda *a, **k: R())
+    rows = bybit.fetch_account_ratio("BTCUSDT")
+    assert rows == [{"ts": "2026-09-10", "ls_ratio": 0.573}]
+
+
+def test_bybit_taker_volume_retired(monkeypatch):
+    with pytest.raises(bybit.BybitError, match="retired"):
+        bybit.fetch_taker_volume("BTCUSDT")
 
 
 def test_positioning_total_outage_noop(conn, monkeypatch):
