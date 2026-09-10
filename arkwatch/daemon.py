@@ -141,9 +141,12 @@ def _run_job(cmd: str, desc: str) -> bool:
         )
         dt = time.monotonic() - t0
         if r.returncode == 0:
-            tail = (r.stdout or "").strip().splitlines()
-            summary = tail[-1] if tail else "OK"
-            logger.info(f"✓ {cmd} ({dt:.0f}s) — {summary[:120]}")
+            tail = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            # last FEW lines, not the last one: exit-0 jobs print per-source
+            # ⚠ warnings mid-run (a 3-week Farside freeze was invisible
+            # because the summary only kept f2's final LME line — D-021)
+            summary = " | ".join(tail[-3:]) if tail else "OK"
+            logger.info(f"✓ {cmd} ({dt:.0f}s) — {summary[:240]}")
             return True
         err = (r.stderr or r.stdout or "").strip().splitlines()
         logger.error(

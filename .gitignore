@@ -19,6 +19,7 @@ build/
 
 data/
 backups/
+health.csv
 *.db
 *.db-wal
 *.db-shm

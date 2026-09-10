@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -316,6 +316,18 @@ CREATE TABLE IF NOT EXISTS bybit_positioning (
   taker_buy_ratio REAL,     -- taker buy share of volume (>0.5 = net aggressive buying)
   oi REAL,                  -- open interest (contracts) from the history endpoint
   PRIMARY KEY (symbol, date)
+);
+""",
+    13: """-- v13: Farside per-issuer ETF flows (audit sumber 2026-09-10).
+-- [RISET: the aggregate net flow hides the structural GBTC-outflow vs
+--  IBIT-inflow divergence — the actual ETF-flow story. Issuer cells were
+--  already in the fetched HTML and dropped by the old 1-number parser.]
+CREATE TABLE IF NOT EXISTS etf_flows_issuer (
+  date TEXT NOT NULL,
+  etf TEXT NOT NULL,        -- 'BTC' | 'ETH'
+  issuer TEXT NOT NULL,     -- IBIT, FBTC, ..., GBTC / ETHA, ..., ETHE
+  flow_musd REAL,
+  PRIMARY KEY (date, etf, issuer)
 );
 """,
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import db
@@ -249,6 +249,270 @@ def _harvest_positioning(conn) -> int:
     return n
 
 
+def _stale_trade_days(today: str, days: int = 3) -> str:
+    """Cutoff `days` US business days back from `today` (Mon-Fri)."""
+    d = datetime.fromisoformat(today)
+    left = days
+    while left:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            left -= 1
+    return d.date().isoformat()
+
+
+def _monthly_gate(ts: str, max_days: int = 45) -> str | None:
+    """Monthly sources: staleness gate at (monthly cadence + publication lag).
+    Default 45d fits SAFE (~1wk lag) and LBMA (~4wk lag); TIC SLT releases
+    month-M data mid M+2 → 80d (a 45d gate flagged the CURRENT issue as
+    stale ~half the time — calibrated from the real release calendar)."""
+    cutoff = (datetime.now(UTC).date() - timedelta(days=max_days)).strftime("%Y-%m")
+    return None if ts >= cutoff else f"stale period {ts} (cutoff {cutoff})"
+
+
+def _harvest_cnn_fg(conn) -> None:
+    """CNN F&G — daily snapshot + components + momentum + 250d history
+    backfill, all from the SAME payload (degradable)."""
+    from .fetch_log import log_collection
+
+    cnn_err: str | None = None
+    try:
+        from ..fetchers.cnn import fetch_fear_greed
+
+        fg = fetch_fear_greed()
+        period = fg["ts"] or datetime.now(UTC).date().isoformat()
+        # PK binds to the REPORT date — a dead-key ts previously filed every
+        # snapshot under the run date, so FRED-lagged reports overwrote each
+        # other and the stored series ran one day hot.
+        conn.execute(
+            "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
+            " VALUES (?,'cnn_fg',?, 'score',1,?,?)"
+            " ON CONFLICT(period,kind) DO UPDATE SET value_raw=excluded.value_raw,"
+            " value=excluded.value, meta_json=excluded.meta_json",
+            (
+                period,
+                fg["score"],
+                fg["score"],
+                json.dumps(
+                    {
+                        "rating": fg["rating"],
+                        "prev_close": fg["prev_close"],
+                        "prev_1w": fg["prev_1w"],
+                        "prev_1m": fg["prev_1m"],
+                        "prev_1y": fg["prev_1y"],
+                    }
+                ),
+            ),
+        )
+        for name, comp in fg["components"].items():
+            conn.execute(
+                "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
+                " VALUES (?,?,?, 'score',1,?,?)"
+                " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value,"
+                " meta_json=excluded.meta_json",
+                (
+                    period,
+                    f"cnn_comp_{name}",
+                    comp["score"],
+                    comp["score"],
+                    json.dumps({"rating": comp["rating"], "raw": comp["raw"]}),
+                ),
+            )
+        # 250-day histories ride the same payload: composite + raw P/C (the
+        # retired CBOE put/call's replacement, D-017) + raw VIX cross-check.
+        # Idempotent upserts — re-running is free and self-heals gaps.
+        n_hist = 0
+        for kind, pts in fg["history"].items():
+            for p in pts:
+                conn.execute(
+                    "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
+                    " VALUES (?,?,?, 'raw',1,?)"
+                    " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value",
+                    (p["ts"], kind, p["value"], p["value"]),
+                )
+                n_hist += 1
+        conn.commit()
+        print(f"Fear&Greed: {fg['score']} ({fg['label']}) @ {period} + {n_hist} hist pts")
+        # stale gate: the payload always carries yesterday-or-today's report;
+        # an older one means the endpoint is serving a frozen cache
+        if period < (datetime.now(UTC).date() - timedelta(days=4)).isoformat():
+            cnn_err = f"stale report date {period}"
+        log_collection(
+            conn, "f2", "CNN:FG", {"ts": period, "score": fg["score"]}, 1, err=cnn_err
+        )
+    except Exception as ex:
+        print(f"  ⚠ CNN F&G: {str(ex)[:70]}")
+        log_collection(conn, "f2", "CNN:FG", None, 0, err=str(ex)[:140])
+
+
+def _harvest_flows_extra(conn) -> None:
+    """Farside ETF (window + per-issuer + cumulative) + SAFE + LBMA + TIC,
+    each with a fetch_log row + staleness gate (a 3-week Farside freeze was
+    invisible because failures only printed to stdout — D-021)."""
+    from ..fetchers import flows_extra
+    from .fetch_log import log_collection
+
+    print("=== Flows Extra (Farside ETF + PBoC + LBMA + TIC) ===")
+    for path, col, label in (
+        ("btc", "btc_etf_musd", "BTC-ETF"),
+        ("eth", "eth_etf_musd", "ETH-ETF"),
+    ):
+        try:
+            r = (
+                flows_extra.fetch_farside_btc()
+                if path == "btc"
+                else flows_extra.fetch_farside_eth()
+            )
+            latest = r["latest"]
+            n = 0
+            for row in r["rows"]:
+                if row["net_flow_musd"] is not None:
+                    conn.execute(
+                        f"INSERT INTO flows_daily(date, {col}) VALUES(?,?) "
+                        f"ON CONFLICT(date) DO UPDATE SET {col}=excluded.{col}",
+                        (row["date_iso"], row["net_flow_musd"]),
+                    )
+                for issuer, flow in row["issuers"].items():
+                    conn.execute(
+                        "INSERT INTO etf_flows_issuer(date, etf, issuer, flow_musd)"
+                        " VALUES (?,?,?,?)"
+                        " ON CONFLICT(date, etf, issuer) DO UPDATE SET"
+                        " flow_musd=excluded.flow_musd",
+                        (row["date_iso"], path.upper(), issuer, flow),
+                    )
+                n += 1
+            if r["cumulative"]:
+                conn.execute(
+                    "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
+                    " VALUES (?,?,?,?,1,?,?)"
+                    " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value,"
+                    " meta_json=excluded.meta_json",
+                    (
+                        latest["date_iso"],
+                        f"farside_cum_{path}",
+                        r["cumulative"].get("Total"),
+                        "usd_million",
+                        r["cumulative"].get("Total"),
+                        json.dumps(r["cumulative"]),
+                    ),
+                )
+            conn.commit()
+            flow_txt = (
+                f"{latest['net_flow_musd']:+.1f}M$" if latest["net_flow_musd"] is not None
+                else "(partial)"
+            )
+            print(
+                f"  {label}: {flow_txt} ({latest['date_iso']}) + {n - 1} window rows"
+            )
+            # stale gate: the table always shows yesterday-or-newer US flows;
+            # anything older than 3 business days = frozen page (D-021)
+            err = None
+            cutoff = _stale_trade_days(datetime.now(UTC).date().isoformat())
+            if latest["date_iso"] < cutoff:
+                err = f"stale latest date {latest['date_iso']} (cutoff {cutoff})"
+            log_collection(conn, "f2", f"FARSIDE:{path.upper()}", latest, n, err=err)
+        except Exception as ex:
+            print(f"  ⚠ {label}: {str(ex)[:80]}")
+            log_collection(conn, "f2", f"FARSIDE:{path.upper()}", None, 0, err=str(ex)[:140])
+
+    def _periodic(ts, kind, value_raw, unit_raw, factor, value, meta):
+        conn.execute(
+            "INSERT OR REPLACE INTO flows_periodic"
+            "(period, kind, value_raw, unit_raw, factor, value, meta_json)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (ts, kind, value_raw, unit_raw, factor, value, json.dumps(meta)),
+        )
+        conn.commit()
+        print(f"  {kind}: {value:,.1f} ({ts})")
+
+    try:
+        r = flows_extra.fetch_pboc_gold()
+        from ..units import wan_oz_to_tonnes
+
+        for m in r["months"]:
+            _periodic(
+                m["ts"],
+                "pboc_gold",
+                m["wan_oz"],
+                "万盎司",
+                wan_oz_to_tonnes(1.0),
+                m["tonnes"],
+                {"source": "SAFE official reserve assets", "unit_out": "tonne"},
+            )
+        # reserve composition: gold share of total = structural
+        # de-dollarization / official-sector bid; gold VALUE vs TONNAGE
+        # separates real buying from price revaluation.
+        if r["gold_share_pct"] is not None:
+            _periodic(
+                r["ts"],
+                "pboc_gold_share",
+                r["gold_share_pct"],
+                "pct",
+                1.0,
+                r["gold_share_pct"],
+                {
+                    "gold_value_usd_b": (r["gold_value_usd_yi"] or 0) / 100,
+                    "total_reserves_usd_b": (r["total_reserves_usd_yi"] or 0) / 100,
+                    "fx_reserves_usd_b": (r["fx_reserves_usd_yi"] or 0) / 100,
+                },
+            )
+        log_collection(
+            conn, "f2", "SAFE:RESERVES", r["latest"], len(r["months"]),
+            err=_monthly_gate(r["ts"]),
+        )
+    except Exception as ex:
+        print(f"  ⚠ PBoC: {str(ex)[:80]}")
+        log_collection(conn, "f2", "SAFE:RESERVES", None, 0, err=str(ex)[:140])
+    try:
+        r = flows_extra.fetch_lbma_vault()
+        from ..units import koz_to_tonnes
+
+        for m in r["months"]:
+            _periodic(
+                m["ts"],
+                "lbma_gold",
+                m["gold_koz"],
+                "k_oz_troy",
+                koz_to_tonnes(1.0),
+                m["gold_tonnes"],
+                {"source": "LBMA london vault data", "unit_out": "tonne"},
+            )
+            _periodic(
+                m["ts"],
+                "lbma_silver",
+                m["silver_koz"],
+                "k_oz_troy",
+                koz_to_tonnes(1.0),
+                m["silver_tonnes"],
+                {"source": "LBMA london vault data", "unit_out": "tonne"},
+            )
+        log_collection(
+            conn, "f2", "LBMA:VAULT", r["latest"], len(r["months"]),
+            err=_monthly_gate(r["ts"]),
+        )
+    except Exception as ex:
+        print(f"  ⚠ LBMA: {str(ex)[:80]}")
+        log_collection(conn, "f2", "LBMA:VAULT", None, 0, err=str(ex)[:140])
+    try:
+        r = flows_extra.fetch_tic_slt5()
+        for key, val in r["values"].items():
+            _periodic(
+                r["ts"],
+                f"tic_{key}",
+                val,
+                "usd_billion",
+                1.0,
+                val,
+                {"source": "Treasury TIC SLT table5 (ticdata.treasury.gov)"},
+            )
+        log_collection(
+            conn, "f2", "TIC:SLT5", {"ts": r["ts"], **r["values"]}, len(r["values"]),
+            err=_monthly_gate(r["ts"], max_days=80),
+        )
+    except Exception as ex:
+        print(f"  ⚠ TIC: {str(ex)[:80]}")
+        log_collection(conn, "f2", "TIC:SLT5", None, 0, err=str(ex)[:140])
+
+
 def compute_fedwatch(conn) -> list[dict]:
     """Read ZQ settlements from the DB → compute probabilities → save fedwatch_snapshots."""
     from ..transforms import fedwatch as fw
@@ -419,23 +683,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as ex:
         print(f"  ⚠ {ex}")
 
-    # CNN Fear & Greed — daily snapshot (degradable)
-    try:
-        from ..fetchers.cnn import fetch_fear_greed
-
-        fg = fetch_fear_greed()
-        today_fg = datetime.now(UTC).date().isoformat()
-        conn.execute(
-            "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
-            " VALUES (?,'cnn_fg',?, 'score',1,?)"
-            " ON CONFLICT(period,kind) DO UPDATE SET value_raw=excluded.value_raw,"
-            " value=excluded.value",
-            (today_fg, fg["score"], fg["score"]),
-        )
-        conn.commit()
-        print(f"Fear&Greed: {fg['score']} ({fg['label']})")
-    except Exception as ex:
-        print(f"  ⚠ CNN F&G: {str(ex)[:70]}")
+    # CNN Fear & Greed — snapshot + components + momentum + history
+    _harvest_cnn_fg(conn)
 
     print("=== GLD / SLV Flows ===")
     try:
@@ -474,90 +723,15 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as ex:
         print(f"  ⚠ SLV: {str(ex)[:90]}")
 
-    # Farside ETF + PBoC + LBMA + TIC
-    print("=== Flows Extra (Farside ETF + PBoC + LBMA + TIC) ===")
-    from ..fetchers import flows_extra
-
-    for path, col, label in (
-        ("btc", "btc_etf_musd", "BTC-ETF"),
-        ("eth", "eth_etf_musd", "ETH-ETF"),
-    ):
-        try:
-            r = (
-                flows_extra.fetch_farside_btc()
-                if path == "btc"
-                else flows_extra.fetch_farside_eth()
-            )
-            d = r.get("date_iso") or r["ts"]
-            conn.execute(
-                f"INSERT INTO flows_daily(date, {col}) VALUES(?,?) "
-                f"ON CONFLICT(date) DO UPDATE SET {col}=excluded.{col}",
-                (d, r["net_flow_musd"]),
-            )
-            conn.commit()
-            print(f"  {label}: {r['net_flow_musd']:+.1f}M$ ({d})")
-        except Exception as ex:
-            print(f"  ⚠ {label}: {str(ex)[:80]}")
-
-    def _periodic(ts, kind, value_raw, unit_raw, factor, value, meta):
-        conn.execute(
-            "INSERT OR REPLACE INTO flows_periodic"
-            "(period, kind, value_raw, unit_raw, factor, value, meta_json)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (ts, kind, value_raw, unit_raw, factor, value, json.dumps(meta)),
-        )
-        conn.commit()
-        print(f"  {kind}: {value:,.1f} ({ts})")
-
-    try:
-        r = flows_extra.fetch_pboc_gold()
-        from ..units import wan_oz_to_tonnes
-
-        _periodic(
-            r["ts"],
-            "pboc_gold",
-            r["wan_oz"],
-            "万盎司",
-            wan_oz_to_tonnes(1.0),
-            r["tonnes"],
-            {"source": "SAFE official reserve assets", "unit_out": "tonne"},
-        )
-    except Exception as ex:
-        print(f"  ⚠ PBoC: {str(ex)[:80]}")
-    try:
-        r = flows_extra.fetch_lbma_silver()
-        from ..units import koz_to_tonnes
-
-        _periodic(
-            r["ts"],
-            "lbma_silver",
-            r["koz"],
-            "k_oz_troy",
-            koz_to_tonnes(1.0),
-            r["tonnes"],
-            {"source": "LBMA london vault data", "unit_out": "tonne"},
-        )
-    except Exception as ex:
-        print(f"  ⚠ LBMA: {str(ex)[:80]}")
-    try:
-        r = flows_extra.fetch_tic_china()
-        _periodic(
-            r["ts"],
-            "tic_china",
-            r["china_usd_b"],
-            "usd_billion",
-            1.0,
-            r["china_usd_b"],
-            {"source": "treasury ticdata mfh.txt"},
-        )
-    except Exception as ex:
-        print(f"  ⚠ TIC: {str(ex)[:80]}")
+    # Farside ETF + PBoC + LBMA + TIC — each with fetch_log + stale gate
+    _harvest_flows_extra(conn)
 
     # LME copper stocks (daily; squeeze-watch trigger) — current month +
     # previous month (append-only; duplicates skipped by insert_observations)
     print("=== LME Copper Stocks ===")
     lme_err: str | None = None
     from .. import db as _db
+    from ..fetchers import flows_extra
 
     now_d = datetime.now(UTC).date()
     prev_y, prev_m = (now_d.year, now_d.month - 1) if now_d.month > 1 else (now_d.year - 1, 12)
@@ -617,12 +791,36 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(f"  total new backfill rows: {total_new}")
 
+    # LME off-warrant copper (monthly archive). KNOWN-FROZEN at 2025-02
+    # anonymously (Notice 25/054 moved dailies behind login/paid) — this is
+    # a baseline series for the squeeze trigger's shadow-supply context, and
+    # it self-resumes if the LME ever re-publishes monthly files. No stale
+    # gate on purpose: frozen-by-policy is documented, not an error.
+    n_ow = 0
+    try:
+        ow_rows = flows_extra.fetch_lme_offwarrant(session=_lme_sess)
+        for m in ow_rows:
+            conn.execute(
+                "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
+                " VALUES (?,'lme_offwarrant_cu',?, 'tonne',1,?,?)"
+                " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value,"
+                " meta_json=excluded.meta_json",
+                (m["ts"], m["cu_tonnes"], m["cu_tonnes"], json.dumps(m["regions"])),
+            )
+            n_ow += 1
+        conn.commit()
+        if n_ow:
+            print(f"  off-warrant CU: {n_ow} months (latest {ow_rows[0]['ts']})")
+    except Exception as ex:
+        print(f"  ⚠ LME off-warrant: {str(ex)[:80]}")
+
     # fetch_log for the f2 collections. The target is the series_id (so
     # health checks can join on it); the LME counter reports new rows;
     # flows-extra is idempotent by design and reports OK-0.
     from .fetch_log import log_collection
 
     log_collection(conn, "f2", "LME:CA_STOCKS", None, total_new, err=lme_err)
+    log_collection(conn, "f2", "LME:OFFWARRANT", None, n_ow)
 
     conn.close()
     return 0

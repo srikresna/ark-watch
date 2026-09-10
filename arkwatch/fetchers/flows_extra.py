@@ -1,9 +1,14 @@
-"""flows_extra.py — flow fetchers: Farside BTC/ETH ETF flows, TIC China
-holdings, PBoC gold reserves, LME copper stocks, and LBMA silver vault data.
+"""flows_extra.py — flow fetchers: Farside BTC/ETH ETF flows (per-issuer),
+TIC SLT foreign Treasury holdings, PBoC/SAFE reserve assets, LME copper
+stocks, and LBMA London vault data (gold + silver).
 
 The targets are bot-gated or ship unusual formats (Farside HTML tables with
 'DD MMM YYYY' dates, Treasury TIC HTML, SAFE/LME/LBMA XLSX archives), so each
 parser is tailored to a verified response shape.
+
+TRAP (F-K6 sibling, ISSUE D-021): never derive "latest" from DOM position —
+Farside renders date rows OLDEST-FIRST, so trs[0] was 19 days stale while the
+fetch exited 0. Always pick max() over the parsed date values.
 """
 
 from __future__ import annotations
@@ -20,48 +25,99 @@ UA = {
 }
 
 
-def _fetch_farside(path: str) -> dict:
-    """Fetch the latest net-flow row from a Farside table.
+def _signed(open_p: str, raw: str, close_p: str) -> float:
+    """Parenthesized '(1,234.5)' = outflow. Parens must be detected in the RAW
+    match — after comma-stripping the search string no longer matches
+    (F-K6)."""
+    val = float(raw.replace(",", "").rstrip("."))
+    return -val if (open_p and close_p) else val
 
-    Dates appear as 'DD MMM YYYY' inside span.tabletext in the tbody;
-    negative values are parenthesized '(5.7)' inside a redFont span.
+
+_FARSIDE_NUM = re.compile(
+    r'<span class="(?:tabletext|redFont|greenFont)">(\(?)([\d.,]+)(\))?</span>'
+)
+
+
+def _fetch_farside(path: str) -> dict:
+    """Full window parse of a Farside ETF-flow table.
+
+    Returns {'rows': [...], 'issuers': [...], 'latest': {...}, 'cumulative':
+    {...}} where each row is {'ts', 'date_iso', 'net_flow_musd', 'issuers':
+    {TICKER: signed $M}} and 'latest' is the max-DATE row (never the DOM-first
+    row). Rows whose only numeric cell is a bare '0.0' are intraday skeleton
+    placeholders and are skipped — landing one would write a fake zero-flow
+    day.
     """
     r = requests.get(f"https://farside.co.uk/{path}/", headers=UA, timeout=(10, 30))
     if r.status_code != 200:
         raise RuntimeError(f"Farside {path}: HTTP {r.status_code}")
-    # rows are keyed by a leading date cell
+    text = r.text
+
+    # issuer names: the thead run between 'Total' and 'Fee' (both stripped of
+    # tags/&nbsp). Live-verified order matches the data cells, Total excluded.
+    issuers: list[str] = []
+    thead = re.search(r"<thead>(.*?)</thead>", text, re.S)
+    if thead:
+        th = [
+            re.sub(r"&nbsp;|\s+", "", re.sub(r"<[^>]+>", "", c)).strip()
+            for c in re.findall(r"<th[^>]*>(.*?)</th>", thead.group(1), re.S)
+        ]
+        if "Total" in th and "Fee" in th:
+            issuers = [t for t in th[th.index("Total") + 1 : th.index("Fee")] if t]
+    if not issuers:
+        raise RuntimeError(f"Farside {path}: issuer header row not parsed")
+
+    # date rows: 'DD MMM YYYY' key + the numeric cells of that <tr>
     trs = re.findall(
-        r'<tr[^>]*>\s*<td><span class="tabletext">(\d{1,2}\s+\w{3}\s+\d{4})</span></td>.*?</tr>',
-        r.text,
+        r'<tr[^>]*>\s*<td><span class="tabletext">(\d{1,2}\s+\w{3}\s+\d{4})</span></td>(.*?)</tr>',
+        text,
         re.S,
     )
     if not trs:
         raise RuntimeError(f"Farside {path}: no date rows in tbody")
-    date = trs[0]  # latest
-    # normalize 'DD MMM YYYY' -> ISO for flows_daily
-    try:
-        iso = datetime.strptime(date, "%d %b %Y").date().isoformat()
-    except ValueError:
-        iso = date
-    # locate the full row for that date and slice to its </tr>
-    idx = r.text.find(f">{date}<")
-    if idx < 0:
-        raise RuntimeError(f"Farside {path}: date could not be located")
-    tr_end = r.text.find("</tr>", idx)
-    tr_text = r.text[idx:tr_end]
-    # Capture parentheses in the RAW match: detecting them after stripping
-    # commas would search for "(1234.5)" and never match "(1,234.5)", so
-    # thousand-separated outflows would lose their negative sign.
-    nums = re.findall(
-        r'<span class="(?:tabletext|redFont|greenFont)">(\(?)([\d.,]+)(\))?</span>', tr_text
+    rows = []
+    for date, rest in trs:
+        nums = _FARSIDE_NUM.findall(rest)
+        try:
+            iso = datetime.strptime(date, "%d %b %Y").date().isoformat()
+        except ValueError:
+            continue  # non-calendar date would poison the max-date pick
+        signed = [_signed(o, v, c) for o, v, c in nums]
+        # Cell-count contract (live-verified): a COMPLETE day renders
+        # len(issuers)+1 cells (issuer flows + Total). Fewer = intraday
+        # partial: issuer-only rows are landed per-issuer but their aggregate
+        # is NOT guessed (misreading the BTC-mini cell as 'Total' would write
+        # a wrong flows_daily net); sub-issuer rows are skipped and the daily
+        # whole-window upsert self-heals them on the next run.
+        if len(signed) == len(issuers) + 1:
+            per_issuer, total = dict(zip(issuers, signed[:-1], strict=True)), signed[-1]
+        elif len(signed) == len(issuers):
+            per_issuer, total = dict(zip(issuers, signed, strict=True)), None
+        else:
+            continue
+        rows.append(
+            {"ts": date, "date_iso": iso, "net_flow_musd": total, "issuers": per_issuer}
+        )
+    if not rows:
+        raise RuntimeError(f"Farside {path}: no filled date rows")
+
+    # footer: since-inception cumulative per issuer, then net total
+    cumulative: dict[str, float] = {}
+    m = re.search(
+        r'<tr[^>]*>\s*<td[^>]*>\s*<span class="tabletext">\s*Total\s*</span>(.*?)</tr>',
+        text,
+        re.S,
     )
-    if not nums:
-        raise RuntimeError(f"Farside {path}: no numbers in row")
-    open_p, total_raw, close_p = nums[-1]
-    val = float(total_raw.replace(",", "").rstrip("."))
-    if open_p and close_p:  # both parentheses captured raw = negative value
-        val = -val
-    return {"ts": date, "date_iso": iso, "net_flow_musd": val}
+    if m:
+        cums = _FARSIDE_NUM.findall(m.group(1))
+        if len(cums) == len(issuers) + 1:
+            cumulative = dict(
+                zip(issuers, [_signed(o, v, c) for o, v, c in cums[:-1]], strict=False)
+            )
+            cumulative["Total"] = _signed(*cums[-1])
+
+    latest = max(rows, key=lambda x: x["date_iso"])
+    return {"rows": rows, "issuers": issuers, "latest": latest, "cumulative": cumulative}
 
 
 def fetch_farside_btc() -> dict:
@@ -72,27 +128,37 @@ def fetch_farside_eth() -> dict:
     return _fetch_farside("eth")
 
 
-def fetch_tic_china() -> dict:
-    """China long-term Treasury holdings from the official MFH table (slt_table5).
+# rows extracted per country from the SLT table (label -> flows_periodic kind)
+_TIC_ROWS = {
+    "China, Mainland": "china",
+    "Belgium": "belgium",
+    "Japan": "japan",
+    "Cayman Islands": "cayman",
+    "United Kingdom": "united_kingdom",
+    "Grand Total": "grand_total",
+    "Of Which: Foreign Official Treasury Bills": "official_bills",
+}
 
-    Columns run newest-first, so the LEFTMOST column is the latest period.
-    The legacy ticdata mfh.txt endpoint is a stale snapshot frozen in
-    Feb-2023 and must not be used; this HTML table is the maintained source.
+
+def fetch_tic_slt5() -> dict:
+    """Foreign holdings of US Treasuries from the TIC SLT table5 (monthly).
+
+    The table displays a SINGLE populated column (the latest period) — the
+    dozen 'YYYY-mm' strings elsewhere in the HTML are a month picker, not
+    filled data columns, so there is no same-page history to read. Belgium =
+    the classic Euroclear 'stealth China' custody proxy; Grand Total pairs
+    with FISCAL:DEBT_TOTAL for the term-premium absorption story.
     """
     s = creq.Session(impersonate="chrome")
     r = s.get(
-        "https://www.treasury.gov/resource-center/data-chart-center/tic/Documents/slt_table5.html",
+        "https://ticdata.treasury.gov/resource-center/data-chart-center/tic/Documents/"
+        "slt_table5.html",
         timeout=(10, 30),
     )
     if r.status_code != 200:
         raise RuntimeError(f"TIC: HTTP {r.status_code}")
-    text = r.text
-    cells = [c.strip() for c in re.sub(r"<[^>]+>", "|", text).split("|")]
-    # Read periods only from the table header: a run of >= 3 consecutive
-    # 'YYYY-mm' cells. Empty split artifacts between <td>s are skipped so
-    # they do not break the run.
-    periods = []
-    run = []
+    cells = [c.strip() for c in re.sub(r"<[^>]+>", "|", r.text).split("|")]
+    periods, run = [], []
     for c in cells:
         if not c:
             continue
@@ -104,27 +170,43 @@ def fetch_tic_china() -> dict:
             run = []
     if len(run) >= 3:
         periods.extend(run)
-    try:
-        i = cells.index("China, Mainland")
-    except ValueError as exc:
-        raise RuntimeError("TIC: China, Mainland row not found") from exc
-    nums = []
-    for c in cells[i + 1 :]:
-        if re.fullmatch(r"[\d,.]+", c or ""):
-            nums.append(float(c.replace(",", "")))
-        elif nums:
-            break
-    if not nums:
-        raise RuntimeError("TIC: no numbers in the China row")
+    values: dict[str, float] = {}
+    for label, key in _TIC_ROWS.items():
+        try:
+            i = cells.index(label)
+        except ValueError:
+            continue  # row absent this month → kind simply not refreshed
+        for c in cells[i + 1 :]:
+            if re.fullmatch(r"[\d,.]+", c or ""):
+                values[key] = float(c.replace(",", ""))
+                break
+            if c:  # first non-empty non-number cell ends the row
+                break
+    if "china" not in values:
+        raise RuntimeError("TIC: China, Mainland row not found")
     return {
         "ts": periods[0] if periods else "latest",
-        "china_usd_b": nums[0],
-    }  # first column = latest period
+        "values": values,  # {key: $B}, china guaranteed
+    }
 
 
 def fetch_pboc_gold() -> dict:
-    """PBoC gold reserves from the SAFE monthly XLSX."""
+    """PBoC gold + reserve-asset composition from the SAFE monthly XLSX.
+
+    Layout (verified): row 3 date headers 'YYYY.MM' at ODD columns; each month
+    spans a USD/SDR column PAIR; the gold tonnage text 'N万盎司' is duplicated
+    across both columns of its pair. Reading tonnage at the odd (USD) columns
+    only is what binds each value to the correct month — scanning from the
+    right lands on the unlabelled SDR sub-column and, with a now() fallback,
+    mislabels the datum to the RUN month (ISSUE D-021).
+
+    Returns {'months': [{ts, wan_oz, tonnes}], 'latest': {...},
+    'fx_reserves_usd_yi', 'gold_value_usd_yi', 'total_reserves_usd_yi',
+    'gold_share_pct'} — months cover the current sheet year (Jan→latest).
+    """
     from openpyxl import load_workbook
+
+    from ..units import wan_oz_to_tonnes
 
     s = creq.Session(impersonate="chrome")
     r = s.get("https://www.safe.gov.cn/en/2021/0203/2045.html", timeout=(10, 30))
@@ -137,35 +219,62 @@ def fetch_pboc_gold() -> dict:
     if r2.status_code != 200 or r2.content[:2] != b"PK":
         raise RuntimeError(f"SAFE XLSX: HTTP {r2.status_code}")
     wb = load_workbook(io.BytesIO(r2.content), read_only=True, data_only=True)
-    # Sheet1 layout: row 3 holds 'YYYY.MM' date headers, rows 4-5 are unit
-    # rows (100M USD / 100M SDR), and the gold volume row embeds values in
-    # Chinese text like '7419万盎司' (wan-oz), one column per month. Volume
-    # is parsed from that text; conversion is centralized in units.
     ws = wb["Sheet1"]
     rows = list(ws.iter_rows(values_only=True))
-    # build column index -> 'YYYY-MM' from the row-3 date headers
-    date_cols: dict[int, str] = {}
-    if len(rows) > 3:
-        for i, c in enumerate(rows[3]):
-            m = re.match(r"(\d{4})\.(\d{2})", str(c).strip() if c else "")
-            if m:
-                date_cols[i] = f"{m.group(1)}-{m.group(2)}"
+
+    # month -> USD column index (odd cols) from the row-3 headers
+    month_cols: list[tuple[str, int]] = []
+    for i, c in enumerate(rows[3] if len(rows) > 3 else []):
+        m = re.match(r"(\d{4})\.(\d{2})", str(c).strip() if c else "")
+        if m and i % 2 == 1:
+            month_cols.append((f"{m.group(1)}-{m.group(2)}", i))
+
+    def _latest_usd(row_vals: list[str]) -> float | None:
+        """Last filled ODD-column numeric on a 亿美元 row (SDR cells skipped)."""
+        found = None
+        for _ts, col in month_cols:
+            if col < len(row_vals) and re.fullmatch(r"[-\d.,]+", row_vals[col] or ""):
+                found = float(row_vals[col].replace(",", ""))
+        return found
+
+    fx = gold_val = total = None
+    tonnage_rows: list[tuple[str, float]] = []
     for row in rows:
         vals = [str(c).strip() if c is not None else "" for c in row]
-        if not any("万盎司" in v for v in vals):
-            continue
-        # the LAST cell containing 'N万盎司' is the latest month
-        for i in range(len(vals) - 1, -1, -1):
-            m = re.search(r"([\d.,]+)\s*万盎司", vals[i])
-            if not m:
-                continue
-            wan_oz = float(m.group(1).replace(",", ""))
-            from ..units import wan_oz_to_tonnes
+        label = vals[0] if vals else ""
+        if "外汇储备" in label:
+            fx = _latest_usd(vals)
+        elif "黄金" in label:
+            gold_val = _latest_usd(vals)
+        elif "合计" in label:
+            total = _latest_usd(vals)
+        elif not label and any("万盎司" in v for v in vals):
+            # tonnage row: read the USD (odd) columns of each pair
+            for ts, col in month_cols:
+                m = re.search(r"([\d.,]+)\s*万盎司", vals[col] if col < len(vals) else "")
+                if m:
+                    tonnage_rows.append((ts, float(m.group(1).replace(",", ""))))
+    if not tonnage_rows:
+        raise RuntimeError("SAFE: gold volume row (万盎司) not found")
 
-            tonnes = wan_oz_to_tonnes(wan_oz)
-            ts = date_cols.get(i) or datetime.now(UTC).strftime("%Y-%m")
-            return {"ts": ts, "wan_oz": wan_oz, "tonnes": round(tonnes, 1)}
-    raise RuntimeError("SAFE: Gold volume row (万盎司) not found")
+    months = [
+        {"ts": ts, "wan_oz": w, "tonnes": round(wan_oz_to_tonnes(w), 1)}
+        for ts, w in tonnage_rows
+    ]
+    latest = months[-1]
+    gold_share = round(gold_val / total * 100, 2) if gold_val and total else None
+    return {
+        "months": months,
+        "latest": latest,
+        # legacy keys kept: f2 stored ts/wan_oz/tonnes at the top level
+        "ts": latest["ts"],
+        "wan_oz": latest["wan_oz"],
+        "tonnes": latest["tonnes"],
+        "fx_reserves_usd_yi": fx,
+        "gold_value_usd_yi": gold_val,
+        "total_reserves_usd_yi": total,
+        "gold_share_pct": gold_share,
+    }
 
 
 _LME_MONTHS = (
@@ -242,9 +351,118 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
     return out
 
 
-def fetch_lbma_silver() -> dict:
-    """LBMA silver vault holdings from the CDN XLSX."""
+_LBMA_MONTHS = {
+    "january": "01",
+    "february": "02",
+    "march": "03",
+    "april": "04",
+    "may": "05",
+    "june": "06",
+    "july": "07",
+    "august": "08",
+    "september": "09",
+    "october": "10",
+    "november": "11",
+    "december": "12",
+}
+
+
+_LME_OW_MONTHS = {m: f"{i:02d}" for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"), start=1
+)}
+
+
+def fetch_lme_offwarrant(session=None) -> list[dict]:
+    """Off-warrant copper stocks from the LME monthly archive (tonnes).
+
+    Context (Notice 25/054, verified 2026-09-10): since 2025-04 the DAILY
+    off-warrant reports are T+1 paid ($1,200/yr licensing) or T+3 free via an
+    LME.com LOGIN; the anonymous monthly archive here is FROZEN at 2025-02.
+    So this is a baseline/backfill series — the off-warrant share of total
+    stocks before reporting moved behind login — not a live feed. The page
+    lists every monthly file, so if the LME ever re-publishes anonymously,
+    the next harvest picks it up with zero changes. Returns
+    [{'ts': 'YYYY-MM', 'cu_tonnes': float, 'regions': {..}}], newest first.
+    """
     from openpyxl import load_workbook
+
+    s = session if session is not None else creq.Session(impersonate="chrome")
+    r = s.get(
+        "https://www.lme.com/market-data/reports-and-data/warehouse-and-stocks-reports/"
+        "off-warrant-stock-reporting",
+        timeout=(10, 30),
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"LME off-warrant: HTTP {r.status_code}")
+    links = sorted(set(re.findall(
+        r'href="(/-/media/files/data/reports-and-data/warehouse-and-stock-reports/'
+        r'off-warrant-stock-reporting/[^"]+\.xlsx)"', r.text
+    )))
+    out = []
+    for href in links:
+        m = re.search(r"-([a-z]+)-(\d{4})\.xlsx$", href, re.I)
+        mm = _LME_OW_MONTHS.get(m.group(1).lower()) if m else None
+        if not mm:
+            continue
+        ts = f"{m.group(2)}-{mm}"
+        r2 = s.get(f"https://www.lme.com{href}", timeout=(10, 60))
+        if r2.status_code != 200 or r2.content[:2] != b"PK":
+            continue
+        wb = load_workbook(io.BytesIO(r2.content), read_only=True, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        rows = list(ws.iter_rows(values_only=True))
+        # header: 'Region|Location|AA|AL|CU|NA|NI|PB|SN|ZN'
+        hdr_i = cu_col = None
+        for i, row in enumerate(rows[:10]):
+            cells = [str(c).strip().upper() if c is not None else "" for c in row]
+            if "LOCATION" in cells and "CU" in cells:
+                hdr_i, cu_col = i, cells.index("CU")
+                break
+        if hdr_i is None:
+            continue
+        regions: dict[str, float] = {}
+        total = 0.0
+        for row in rows[hdr_i + 1 :]:
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            if len(cells) <= cu_col or not cells[0]:
+                continue
+            label = cells[0].upper()
+            if not label.startswith("TOTAL"):
+                continue
+            region = label.replace("TOTAL", "").strip().title()
+            if not region:
+                continue  # the bare grand-TOTAL row would double-count
+            v = _num_or(cells[cu_col])
+            regions[region] = v
+            total += v
+        if total <= 0:
+            continue
+        out.append({"ts": ts, "cu_tonnes": total, "regions": regions})
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return out
+
+
+def _num_or(v) -> float:
+    """LME cells: numbers, '/' (not held), or empty — '/' must be 0."""
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def fetch_lbma_vault() -> dict:
+    """LBMA London vault holdings (gold + silver) — FULL history in one XLSX.
+
+    The single file carries every month since 2016-07 (verified: 125 rows),
+    so the daily harvest doubles as the backfill. Gold is the physical-gold
+    map's London leg next to PBoC tonnage and GLD shares; the old fallback
+    URL pattern moved to /downloads/ when the CDN was restructured
+    (media/lbv-*.xlsx is a guaranteed 403 today).
+    """
+    from openpyxl import load_workbook
+
+    from ..units import koz_to_tonnes
 
     s = creq.Session(impersonate="chrome")
     r = s.get("https://www.lbma.org.uk/prices-and-data/london-vault-data", timeout=(10, 30))
@@ -255,61 +473,69 @@ def fetch_lbma_silver() -> dict:
     )
     if not links:
         now = datetime.now(UTC)
-        prev = f"{now.year}-{now.month - 1:02d}" if now.month > 1 else f"{now.year - 1}-12"
-        links = [f"https://cdn.lbma.org.uk/media/london-vault-data/lbv-{prev}.xlsx"]
+        py, pm = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
+        name = next(n for n, mm in _LBMA_MONTHS.items() if mm == f"{pm:02d}")
+        links = [f"https://cdn.lbma.org.uk/downloads/LBMA-London-Vault-Holdings-Data-{name}-{py}.xlsx"]
     r2 = s.get(links[0], timeout=(10, 60))
     if r2.status_code != 200 or r2.content[:2] != b"PK":
         raise RuntimeError(f"LBMA: HTTP {r2.status_code}")
     wb = load_workbook(io.BytesIO(r2.content), read_only=True, data_only=True)
-    # Layout: row 1 headers ('Month End|Gold|Silver'), row 2 units
-    # ("Troy Ounces ('000s)" = thousand oz), row 3 = newest month with an
-    # EMPTY 'Month End' label, rows 4+ = 'YYYY-MM' descending. The
-    # koz -> tonnes conversion is centralized in units.koz_to_tonnes.
+    # Layout (verified 2026-09): row 1 headers ('Month End|Gold|Silver'), row
+    # 2 units ("Troy Ounces ('000s)"), row 3+ data with 'YYYY-MM' string
+    # labels (newer) or datetime cells (2016-2023 era). Newest-first.
     ws = wb[wb.sheetnames[0]]
     rows = list(ws.iter_rows(values_only=True))
-    silver_col = None
+    gold_col = silver_col = None
     for row in rows[:3]:
-        for i, c in enumerate(row):
-            if c and str(c).strip().lower() == "silver":
-                silver_col = i
-                break
-        if silver_col is not None:
+        cells = [str(c).strip().lower() if c is not None else "" for c in row]
+        if "gold" in cells and "silver" in cells:
+            gold_col, silver_col = cells.index("gold"), cells.index("silver")
             break
-    if silver_col is None:
-        raise RuntimeError("LBMA: Silver column not found in header")
-    for row in rows:
-        if row is None or len(row) <= silver_col:
-            continue
-        v = row[silver_col]
-        if isinstance(v, (int, float)) and v > 0:
-            koz = float(v)
-            # ts from the row label; when empty (newest row), derive it from
-            # the filename pattern 'July-2026.xlsx'
-            ts = str(row[0]).strip() if row and row[0] else ""
-            if not re.match(r"\d{4}-\d{2}", ts):
-                m = re.search(r"([A-Za-z]+)-(\d{4})", links[0])
-                if m:
-                    mo = {
-                        "january": "01",
-                        "february": "02",
-                        "march": "03",
-                        "april": "04",
-                        "may": "05",
-                        "june": "06",
-                        "july": "07",
-                        "august": "08",
-                        "september": "09",
-                        "october": "10",
-                        "november": "11",
-                        "december": "12",
-                    }.get(m.group(1).lower())
-                    if mo:
-                        ts = f"{m.group(2)}-{mo}"
-            from ..units import koz_to_tonnes
+    if gold_col is None:
+        raise RuntimeError("LBMA: Gold/Silver columns not found in header")
 
-            return {
-                "ts": ts or datetime.now(UTC).strftime("%Y-%m"),
-                "koz": round(koz, 1),
-                "tonnes": round(koz_to_tonnes(koz), 1),
+    months: list[dict] = []
+    for row in rows:
+        if row is None or len(row) <= max(gold_col, silver_col):
+            continue
+        g, v = row[gold_col], row[silver_col]
+        if not (isinstance(g, (int, float)) and g > 0):
+            continue
+        if not (isinstance(v, (int, float)) and v > 0):
+            continue
+        # normalize labels: 'YYYY-MM' strings or datetime cells
+        ts = ""
+        if row[0] is not None:
+            if hasattr(row[0], "strftime"):
+                ts = row[0].strftime("%Y-%m")
+            else:
+                m = re.match(r"(\d{4}-\d{2})", str(row[0]).strip())
+                ts = m.group(1) if m else ""
+        if not ts:  # label-less newest row → month from the filename
+            m = re.search(r"-([A-Za-z]+)-(\d{4})", links[0])
+            if m:
+                mm = _LBMA_MONTHS.get(m.group(1).lower())
+                ts = f"{m.group(2)}-{mm}" if mm else ""
+        if not ts:
+            continue
+        months.append(
+            {
+                "ts": ts,
+                "gold_koz": round(float(g), 1),
+                "silver_koz": round(float(v), 1),
+                "gold_tonnes": round(koz_to_tonnes(float(g)), 1),
+                "silver_tonnes": round(koz_to_tonnes(float(v)), 1),
             }
-    raise RuntimeError("LBMA: no Silver data rows")
+        )
+    if not months:
+        raise RuntimeError("LBMA: no data rows")
+    latest = months[0]  # file is newest-first; verified by header layout
+    return {
+        "months": months,
+        "latest": latest,
+        # legacy keys kept (f2 stored ts/koz/tonnes of silver at top level)
+        "ts": latest["ts"],
+        "koz": latest["silver_koz"],
+        "tonnes": latest["silver_tonnes"],
+        "url": links[0],
+    }

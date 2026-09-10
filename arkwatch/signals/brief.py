@@ -5,6 +5,7 @@ A pure renderer: domain results → markdown.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -109,6 +110,20 @@ _S2_EVENT_MAP = {
     "FRED:GDPNOW": ("GDPNOW", ()),
     "FRED:ICSA": ("INITIAL JOBLESS CLAIMS", ("CONTINUING", "4 WEEK", "AVERAGE")),
     "FRED:CPIAUCSL": ("CPI S A", ("CORE", "Y Y", "M M", "EX FOOD", "ENERGY")),
+}
+
+
+# CNN F&G component short labels for the divergence line
+_CNN_COMP_LBL = {
+    "market_momentum_sp500": "SPX mom",
+    "market_momentum_sp125": "SP125 mom",
+    "stock_price_strength": "52w strength",
+    "stock_price_breadth": "breadth",
+    "put_call_options": "P/C",
+    "market_volatility_vix": "VIX",
+    "market_volatility_vix_50": "VIX/50d",
+    "junk_bond_demand": "junk bonds",
+    "safe_haven_demand": "stocks-vs-bonds",
 }
 
 
@@ -567,12 +582,32 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         ).fetchone()
         if etf_row:
             etf_parts = []
-            if etf_row[1] is not None:
-                etf_parts.append(f"BTC {etf_row[1]:+.0f}M$")
-            if etf_row[2] is not None:
-                etf_parts.append(f"ETH {etf_row[2]:+.0f}M$")
+            # per-issuer structural pair (GBTC vs IBIT / ETHE vs ETHA): the
+            # aggregate net hides the bleed-vs-accumulation divergence
+            for etf, agg, pair in (("BTC", etf_row[1], ("GBTC", "IBIT")), ("ETH", etf_row[2], ("ETHE", "ETHA"))):
+                if agg is None:
+                    continue
+                txt = f"{etf} {agg:+.0f}M$"
+                try:
+                    issuer_row = conn.execute(
+                        "SELECT issuer, flow_musd FROM etf_flows_issuer "
+                        "WHERE etf=? AND date=? AND issuer IN (?,?)",
+                        (etf, etf_row[0], *pair),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    issuer_row = []  # pre-v13 DB — per-issuer data not yet landed
+                if len(issuer_row) == 2 and any(
+                    (v or 0) for _i, v in issuer_row if abs(v or 0) >= 1
+                ):
+                    d = dict(issuer_row)
+                    txt += f" ({pair[0]} {d[pair[0]] or 0:+.0f}·{pair[1]} {d[pair[1]] or 0:+.0f})"
+                etf_parts.append(txt)
             if etf_parts:
-                lines.append(f"  ETF flows ({etf_row[0][5:]}): {' · '.join(etf_parts)}")
+                # freshness: US flows land T+0/T+1; >4 calendar days = frozen
+                # source (D-021) — flag instead of serving the number cold
+                age = (datetime.now(UTC).date() - datetime.fromisoformat(etf_row[0]).date()).days
+                stale = " ⚠stale" if age > 4 else ""
+                lines.append(f"  ETF flows ({etf_row[0][5:]}): {' · '.join(etf_parts)}{stale}")
         if flow_row[5]:
             # '(approx)' marker for the shares-fallback path. Without
             # MAX(period) the flag query reads an arbitrary row from the
@@ -590,34 +625,83 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         # the brief would print the entire monthly history)
         per = conn.execute(
             "SELECT kind, period, value FROM flows_periodic fp "
-            "WHERE kind IN ('pboc_gold','lbma_silver','tic_china','wgc_gold') "
+            "WHERE kind IN ('pboc_gold','pboc_gold_share','lbma_gold','lbma_silver',"
+            "'tic_china','tic_belgium','tic_grand_total','wgc_gold') "
             "AND period=(SELECT MAX(period) FROM flows_periodic f2 "
             "            WHERE f2.kind=fp.kind)"
         ).fetchall()
         if per:
-            lbl = {
-                "pboc_gold": "PBoC Au",
-                "lbma_silver": "LBMA Ag",
-                "tic_china": "TIC CN",
-                "wgc_gold": "WGC Au",
-            }
-            parts = [
-                f"{lbl.get(k, k)} {v:,.0f}{'t' if k != 'tic_china' else 'B$'} ({p})"
-                for k, p, v in per
-            ]
-            lines.append(f"  {' · '.join(parts)}")
+            d = {k: (p, v) for k, p, v in per}
+            # physical-map line: official sector + London vault (gold map:
+            # PBoC tonnage + share, LBMA vault gold & silver)
+            phys = []
+            if "pboc_gold" in d:
+                phys.append(f"PBoC Au {d['pboc_gold'][1]:,.0f}t ({d['pboc_gold'][0][2:]})")
+            if "pboc_gold_share" in d:
+                phys.append(f"Au share {d['pboc_gold_share'][1]:.1f}%")
+            if "lbma_gold" in d:
+                phys.append(f"LBMA Au {d['lbma_gold'][1]:,.0f}t")
+            if "lbma_silver" in d:
+                phys.append(f"LBMA Ag {d['lbma_silver'][1]:,.0f}t")
+            if phys:
+                lines.append(f"  {' · '.join(phys)}")
+            # foreign-holdings line: China + Belgium = the classic Euroclear
+            # 'stealth China' composite; Grand Total = foreign absorption vs
+            # deficit supply (term-premium pressure)
+            tic = []
+            if "tic_china" in d and "tic_belgium" in d:
+                cn, be = d["tic_china"][1], d["tic_belgium"][1]
+                if cn is not None and be is not None:
+                    tic.append(f"TIC CN {cn:,.0f}B$+BE {be:,.0f}B$={cn + be:,.0f}B$")
+                elif cn is not None:
+                    tic.append(f"TIC CN {cn:,.0f}B$")
+            elif "tic_china" in d:
+                tic.append(f"TIC CN {d['tic_china'][1]:,.0f}B$")
+            if "tic_grand_total" in d:
+                tic.append(f"foreign total {d['tic_grand_total'][1]:,.0f}B$")
+            if "wgc_gold" in d:  # manual CLI entry (FR-28), shown when fresher
+                tic.append(f"WGC Au {d['wgc_gold'][1]:,.0f}t")
+            if tic:
+                tic_p = d.get(
+                    "tic_china", d.get("tic_belgium", d.get("tic_grand_total", ("", None)))
+                )[0][2:]
+                suffix = f" ({tic_p})" if tic_p else ""
+                lines.append(f"  {' · '.join(tic)}{suffix}")
         # CNN Fear & Greed — degradable: the line disappears when the fetch failed
         fg_row = conn.execute(
-            "SELECT value FROM flows_periodic WHERE kind='cnn_fg'"
+            "SELECT period, value, meta_json FROM flows_periodic WHERE kind='cnn_fg'"
             " AND period=(SELECT MAX(period) FROM flows_periodic WHERE kind='cnn_fg')"
         ).fetchone()
-        if fg_row and fg_row[0] is not None:
-            sc = fg_row[0]
+        if fg_row and fg_row[1] is not None:
+            sc = fg_row[1]
             # Use the canonical labels from fetchers/cnn.py (single source)
             from ..fetchers.cnn import score_to_label
 
             lbl = score_to_label(sc)
-            lines.append(f"  Fear&Greed: {sc:.0f} ({lbl})")
+            txt = f"  Fear&Greed: {sc:.0f} ({lbl})"
+            try:
+                meta = json.loads(fg_row[2] or "{}")
+            except ValueError:
+                meta = {}
+            if meta.get("prev_1m") is not None:
+                txt += f" · 1m-ago {meta['prev_1m']:.0f}"
+            lines.append(txt)
+            # cross-asset split: the composite averages away divergence —
+            # equity "extreme fear" while credit reads "greed" IS the signal
+            comp = conn.execute(
+                "SELECT kind, value FROM flows_periodic WHERE kind LIKE 'cnn_comp_%'"
+                " AND period=?",
+                (fg_row[0],),
+            ).fetchall()
+            if len(comp) >= 2:
+                scores = sorted(
+                    (v, _CNN_COMP_LBL.get(k[9:], k[9:])) for k, v in comp if v is not None
+                )
+                lo, hi = scores[0], scores[-1]
+                if hi[0] - lo[0] >= 40:
+                    lines.append(
+                        f"  F&G split: {lo[1]} {lo[0]:.0f} vs {hi[1]} {hi[0]:.0f}"
+                    )
         lines.append("")
 
     # FedWatch

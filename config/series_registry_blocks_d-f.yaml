@@ -1513,7 +1513,12 @@ series:
   value_format: fraction
   freq: D
   ts_convention: daily_et
-  release_schedule: "monthly LME stocks-summary XLSX (±2 business day delay; archive starts 2021-01)"
+  # Data granularity is DAILY; 'monthly' is only the publication cadence.
+  # Month-M file lands ~3 business days after month-end, and the running
+  # month is NOT published until the next file — so the newest point ages
+  # 1 day..~5 weeks through the month (avg ~2.5 weeks). A stale copper_stocks
+  # trigger reading is expected mid-month, not a source failure.
+  release_schedule: "monthly LME stocks-summary XLSX (~3 business day delay after month-end; archive starts 2021-01)"
   expected_start: "2021-01-04"       # stocks-january-2021.xlsx = first file under this
                                     # naming scheme
   sanity_min: 10000                   # 2021-2026 live range ≈ 90K-380K tonnes; the floor
