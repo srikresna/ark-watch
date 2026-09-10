@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 from ..config import load_anchors, load_registry
-from ..fetchers import atl, cboe, cleve, eodhd, fiscal, fred, misc, nyfed, philly, treasury
+from ..fetchers import atl, cboe, cleve, ecb, eodhd, fiscal, fred, misc, nyfed, philly, treasury
 
 # series_id → fetcher routing
 ROUTES = {
@@ -32,9 +32,10 @@ ROUTES = {
     "PHILLY:": philly,
     "ATL:": atl,
     "NYFED:": nyfed,
+    "ECB:": ecb,
 }
 # Fetchers exposing early history (depth gate); others show depth=· until backfilled
-DEPTH_CAPABLE = ("FRED:", "FISCAL:", "CLEVE:", "CBOE:")
+DEPTH_CAPABLE = ("FRED:", "FISCAL:", "CLEVE:", "CBOE:", "ECB:")
 # Gate-4 crossval: FRED ↔ FMP treasury-rates pairs (FMP column)
 CROSSVAL_MAP = {
     "FRED:DGS2": "year2",
@@ -161,7 +162,11 @@ def verify(
                 # non-FRED: series_id is the direct key (their primary_source
                 # is descriptive, not a mnemonic)
                 cur = mod.fetch_latest(e["series_id"])
-                cur_anchor_pool = []
+                # the latest obs itself is the anchor pool: a golden anchor
+                # matches only when its anchor_date IS the latest ts (an
+                # anchored day that has since rolled past = stale anchor,
+                # surfaced as · and recalibrated — never silently compared)
+                cur_anchor_pool = [cur]
 
             # GATE 2 — SANITY
             smin, smax = e.get("sanity_min"), e.get("sanity_max")

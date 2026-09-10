@@ -162,3 +162,10 @@ fd_auction_weak_pct: 10           # headline 10Y (5Y fallback) auction b/c perce
 cooldown_hours_default: 6
 cooldown_hours_stress: 1        # when VIX > vix_stress_level (or z-VIX 60d > 1)
 vix_stress_level: 25
+
+# --- ECBWatch (D-006 ESTRWatch; qa/watcher.py) ---------------------------------------
+# [RISET: day-1 placeholder 2026-09-10 — trigger probabilitas kebijakan pertama
+#  di repo. Kalibrasi setelah ≥30 hari histori snapshot diy_ecb; ambang 0.85
+#  = konvensi "high conviction" yang lazim, belum teruji empiris di sini.]
+ecb_high_conviction_prob: 0.85  # dominant hike/cut prob that counts as conviction
+ecb_high_conviction_days: 7     # ... within N days of the GC decision

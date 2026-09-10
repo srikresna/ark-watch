@@ -47,6 +47,8 @@ OPTIONS_PCR_EXTREME_RATIO = float(_PS.get("options_pcr_extreme_ratio", 0.30))
 DEALER_STRESS_4W_PCT = float(_PS.get("dealer_stress_4w_pct", -3.0))
 FED_OPS_RESUME_QUIET_DAYS = int(_PS.get("fed_ops_resume_quiet_days", 30))
 FD_AUCTION_WEAK_PCT = float(_PS.get("fd_auction_weak_pct", 10))
+ECB_HIGH_CONVICT_PROB = float(_PS.get("ecb_high_conviction_prob", 0.85))
+ECB_HIGH_CONVICT_DAYS = int(_PS.get("ecb_high_conviction_days", 7))
 COOLDOWN_HOURS_DEFAULT = int(_PS.get("cooldown_hours_default", 6))
 COOLDOWN_HOURS_STRESS = int(_PS.get("cooldown_hours_stress", 1))
 VIX_STRESS_LEVEL = int(_PS.get("vix_stress_level", 25))
@@ -780,6 +782,69 @@ def check_all(conn) -> list[str]:
                 "XCUUSD squeeze-watch: avoid fresh shorts; check COT top-4 HG",
             ):
                 fired.append("copper_stocks_drain")
+
+    # ECBWatch (D-006 ESTRWatch) — policy-probability triggers. Quiet when
+    # no diy_ecb rows exist (funding-NULL convention: a missing source is
+    # never an alert).
+    ecb_dates = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT date FROM fedwatch_snapshots WHERE source='diy_ecb'"
+            " ORDER BY date DESC LIMIT 2"
+        ).fetchall()
+    ]
+    if ecb_dates:
+        def _nearest(d: str):
+            return conn.execute(
+                "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate"
+                " FROM fedwatch_snapshots WHERE source='diy_ecb' AND date=?"
+                " AND meeting_date >= date('now') ORDER BY meeting_date LIMIT 1",
+                (d,),
+            ).fetchone()
+
+        cur = _nearest(ecb_dates[0])
+        if cur:
+            def _dominant(r):
+                vals = {"cut": r[1], "hold": r[2], "hike": r[3]}
+                return max(vals, key=vals.get)
+
+            act, prob = _dominant(cur), max(cur[1], cur[2], cur[3])
+            # (a) flip: dominant action changed vs the previous snapshot
+            # date. Cooldown key = SNAPSHOT date (the SOMA pattern), NOT
+            # the meeting: probabilities rewrite daily, so a per-meeting
+            # permanent key would swallow a genuine re-flip (hike→cut→hike)
+            # for the same meeting — the most tradeable signal of all
+            if len(ecb_dates) == 2:
+                prev = _nearest(ecb_dates[1])
+                if prev and _dominant(prev) != act:
+                    if _fire(
+                        conn,
+                        "ecb_watch_flip",
+                        f"ECB {cur[0]}: market pricing flipped to {act.upper()}",
+                        f"Nearest GC meeting {cur[0]}: {act} {prob:.0%}"
+                        f" (prev snapshot {ecb_dates[1]}: {_dominant(prev)})",
+                        "EUR crosses / DXY: policy-path repricing in motion",
+                        cooldown_key=f"ecb_flip@{ecb_dates[0]}",
+                    ):
+                        fired.append("ecb_watch_flip")
+            # (b) high conviction inside the decision window — one alert
+            # per snapshot date (≤1/day across the window)
+            if prob >= ECB_HIGH_CONVICT_PROB and act in ("hike", "cut"):
+                days_left = (
+                    datetime.fromisoformat(cur[0]).date() - datetime.now(UTC).date()
+                ).days
+                if 0 <= days_left <= ECB_HIGH_CONVICT_DAYS:
+                    if _fire(
+                        conn,
+                        "ecb_high_conviction",
+                        f"ECB {cur[0]} (in {days_left}d): {act} priced {prob:.0%}",
+                        f"ESR-implied DFR after meeting: {cur[4]:.2f}%"
+                        if cur[4] is not None
+                        else "implied rate n/a",
+                        "EUR-cross book: position for the decision window",
+                        cooldown_key=f"ecb_conviction@{ecb_dates[0]}",
+                    ):
+                        fired.append("ecb_high_conviction")
 
     return fired
 

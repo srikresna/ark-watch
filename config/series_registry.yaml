@@ -546,6 +546,28 @@
   tolerance: 0.02                 # 2bp, same as PAR_7Y
   active: 1
 
+- series_id: ECB:ESTR
+  name: Euro Short-Term Rate (€STR fixing)
+  block: A
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day          # fixing date, publishes T+1 ~08:00 CET
+  release_schedule: business days (TARGET); ECB Data Portal T+1
+  expected_start: "2019-10-02"    # series launch
+  sanity_min: -1.0
+  sanity_max: 6.0
+  primary_source: ECB Data Portal EST.B.EU000A2X2A25.WT (csvdata)
+  secondary_source: FRED:ECBDFR   # deposit facility rate — context only; the
+  tolerance: null                 # €STR−DFR basis floats (−6..−15bp regimes):
+                                  # NOT a pass/fail pair, never a substitute
+                                  # anchor for ESTRWatch (±5bp = ±20pp prob)
+  active: 1
+  # Anchor of ESTRWatch (D-006): the ESR-implied path is €STR space, so the
+  # reference must be the fixing itself. f2's compute_ecbwatch also pulls a
+  # ~60d fixings window itself for the front-quarter accrual.
+
 # =====================================================================================
 # --- Real Yield --------------------------------------------------------------
 # The 5 FRED series below.

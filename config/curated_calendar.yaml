@@ -141,3 +141,43 @@ recurring:
     dates_2027: null                # not yet published by Treasury — do not extrapolate
                               # the quarterly-Wednesday pattern unlabeled
     provenance: "Web-search verified 2026-08-31, home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding + press release 'next quarterly refunding announcement'"
+
+# ---------------------------------------------------------------------------
+# (e) ECB Governing Council MONETARY-POLICY meetings (rate decisions) —
+#     ESTRWatch (D-006). tz Europe/Berlin (NEW convention for this file:
+#     prior entries are ET); decision press release 14:15 local, presser
+#     14:45. NON-monetary-policy GC meetings (2026-09-30, 2026-11-25; 2027
+#     virtual: Feb-24, Apr-07, May-19, Jun-23, Sep-29, Nov-24) are
+#     deliberately ABSENT — they carry no rate decision.
+#     transforms/ecbwatch.py vendors its own copy (ECB_GC_DECISIONS, the
+#     fedwatch/FOMC_SCHEDULE precedent) — keep both in sync on refresh.
+# ---------------------------------------------------------------------------
+ecb_gc_2026:
+  - dates: ["2026-09-09", "2026-09-10"]
+    decision_day: "2026-09-10"      # Berlin (Bundesbank-hosted)
+    time_local: "14:15"
+    tz: "Europe/Berlin"
+    implementation: "2026-09-16"    # first Wednesday after (RMP start)
+    provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"
+  - dates: ["2026-10-28", "2026-10-29"]
+    decision_day: "2026-10-29"
+    time_local: "14:15"
+    tz: "Europe/Berlin"
+    implementation: "2026-11-04"
+    provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"
+  - dates: ["2026-12-16", "2026-12-17"]
+    decision_day: "2026-12-17"
+    time_local: "14:15"
+    tz: "Europe/Berlin"
+    implementation: "2026-12-23"
+    provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"
+
+ecb_gc_2027:
+  - {dates: ["2027-02-03", "2027-02-04"], decision_day: "2027-02-04", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-02-10", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-03-17", "2027-03-18"], decision_day: "2027-03-18", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-03-24", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-04-28", "2027-04-29"], decision_day: "2027-04-29", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-05-05", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-06-09", "2027-06-10"], decision_day: "2027-06-10", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-06-16", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-07-21", "2027-07-22"], decision_day: "2027-07-22", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-07-28", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-09-08", "2027-09-09"], decision_day: "2027-09-09", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-09-15", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-10-27", "2027-10-28"], decision_day: "2027-10-28", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-11-03", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}
+  - {dates: ["2027-12-15", "2027-12-16"], decision_day: "2027-12-16", time_local: "14:15", tz: "Europe/Berlin", implementation: "2027-12-22", provenance: "Accessed 2026-09-10, ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"}

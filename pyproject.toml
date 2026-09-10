@@ -7,6 +7,7 @@ dependencies = [
     "curl_cffi>=0.7",     # impersonated HTTP for bot-gated sites (cmegroup, QuikStrike)
     "requests>=2.31",
     "pandas>=2.2",        # read_excel (calamine engine)
+    "numpy>=1.26",        # lstsq (rank-deficient ECB-watch design matrix)
     "openpyxl>=3.1",      # XLSX sources (WGC, ADS, WGT, LME)
     "python-dotenv>=1.0", # credentials via .env only
     "pyyaml>=6",

@@ -731,6 +731,40 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                 )
             }"
         )
+    # ECBWatch (D-006 ESTRWatch) — the euro counterpart, next meeting only;
+    # degradable identically to FedWatch (no rows → no line)
+    try:
+        from ..transforms.ecbwatch import ECBMeetingProb
+        from ..transforms.ecbwatch import format_brief as fmt_ecb
+
+        eb_rows = conn.execute(
+            "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate, raw_json,"
+            " (SELECT MAX(date) FROM fedwatch_snapshots WHERE source='diy_ecb')"
+            " FROM fedwatch_snapshots WHERE source='diy_ecb' AND meeting_date >= ?"
+            " ORDER BY meeting_date LIMIT 1",
+            (datetime.now(UTC).date().isoformat(),),
+        ).fetchone()
+        if eb_rows:
+            import contextlib
+
+            diag = exact = None
+            delta_bp = 0.0
+            with contextlib.suppress(ValueError):
+                meta = json.loads(eb_rows[5] or "{}")
+                diag = meta.get("diag")
+                first = (meta.get("rows") or [{}])[0]
+                exact = first.get("exact")
+                delta_bp = float(first.get("delta_bp") or 0.0)
+            p = ECBMeetingProb(
+                meeting_date=datetime.fromisoformat(eb_rows[0]).date(),
+                impl_date=datetime.fromisoformat(eb_rows[0]).date(),
+                prob_ease=eb_rows[1], prob_hold=eb_rows[2], prob_hike=eb_rows[3],
+                implied_rate=eb_rows[4], expected_moves=0.0, delta_bp=delta_bp,
+                exact=bool(exact), noise_amp=None,
+            )
+            lines.append(f"Policy: {fmt_ecb([p], diag, asof=eb_rows[6])}")
+    except Exception as ex:
+        print(f"⚠ ecbwatch brief line failed: {str(ex)[:100]}")
     lines.append("")
 
     # XCCY — computed straight from cme_settlements

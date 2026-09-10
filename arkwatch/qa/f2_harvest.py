@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from .. import db
@@ -632,6 +633,117 @@ def compute_fedwatch(conn) -> list[dict]:
     ]
 
 
+def compute_ecbwatch(conn) -> list[dict]:
+    """ESTRWatch (D-006): ECB hike/cut/hold per GC meeting from ESR
+    settlements → fedwatch_snapshots source='diy_ecb'.
+
+    Anchor gate copied from compute_fedwatch: a missing €STR fixing anchor
+    means NO snapshot (never a frozen hardcoded rate — ±5bp anchor error
+    moves probabilities ±20pp). Also self-harvests a ~6-month fixings
+    window for the front-quarter accrual (idempotent upsert). Strip age is
+    gated (5 trading days — a failed cme job must not silently price the
+    brief off an old strip) and the ESR date rides into the brief line.
+    """
+    from ..transforms import ecbwatch
+
+    strip_td = conn.execute(
+        "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=10247"
+    ).fetchone()[0]
+    strip = dict(
+        conn.execute(
+            "SELECT month, settle FROM cme_settlements WHERE product_id=10247"
+            " AND settle IS NOT NULL AND trade_date=?",
+            (strip_td,),
+        ).fetchall()
+    )
+    if not strip:
+        print("  ECBWatch: no ESR settlements in DB")
+        return []
+    strip_age = (datetime.now(UTC).date() - date.fromisoformat(strip_td)).days
+    strip_stale = strip_age > 7  # calendar window ≈ 5 trading days
+    if strip_stale:
+        print(f"  ⚠ ECBWatch: ESR strip is {strip_age} days old ({strip_td})")
+
+    # anchor + fixings window (self-harvested; the registry harvest lands
+    # one obs/day, here we pull the running-quarter tail ourselves)
+    from ..fetchers import ecb as ecb_fetcher
+
+    try:
+        # 120 obs ≈ 6 months: covers a running front quarter plus backfill
+        # slack on the first run (idempotent INSERT OR IGNORE afterwards)
+        fix_rows = ecb_fetcher.fetch_estr_fixings(last_n=120)
+        conn.executemany(
+            "INSERT OR IGNORE INTO raw_observations"
+            "(series_id,ts,release_ts,value,vintage_ts,source,fetched_at)"
+            " VALUES ('ECB:ESTR',?,'na',?,'realtime','ECB',?)",
+            [(r["ts"], r["value"], datetime.now(UTC).isoformat(timespec="seconds"))
+             for r in fix_rows],
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as ex:
+        # fresh DB before the 06:00 registry harvest has no ECB:ESTR row
+        # yet (review P2) — name the fix instead of a bare FK error
+        print(f"  ⚠ ECB:ESTR not in series_registry yet — run harvest/backfill"
+              f" sync first ({str(ex)[:50]})")
+    except Exception as ex:
+        print(f"  ⚠ ECB €STR fixings fetch: {str(ex)[:80]}")
+
+    a = conn.execute(
+        "SELECT ts, value FROM raw_observations WHERE series_id='ECB:ESTR'"
+        " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    if a is None:
+        print("  ⚠ ECBWatch: no ECB:ESTR anchor — snapshot skipped")
+        return []
+    estr, estr_asof = a[1], date.fromisoformat(a[0])
+
+    fixings = {
+        date.fromisoformat(r[0]): r[1]
+        for r in conn.execute(
+            "SELECT ts, value FROM raw_observations WHERE series_id='ECB:ESTR'"
+            " AND vintage_ts='realtime'",
+        ).fetchall()
+    }
+    dfr_row = conn.execute(
+        "SELECT value FROM raw_observations WHERE series_id='FRED:ECBDFR'"
+        " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    dfr = dfr_row[0] if dfr_row else None
+
+    rows, diag = ecbwatch.compute(strip, estr=estr, estr_asof=estr_asof,
+                                  fixings=fixings, dfr=dfr)
+    if not rows:
+        print(f"  ⚠ ECBWatch: degenerate ({diag.get('flags')})")
+        return []
+    if strip_stale:
+        diag["flags"].append("strip_stale")
+    meta = json.dumps(
+        {"diag": diag,
+         "rows": [{"impl": r.impl_date.isoformat(), "delta_bp": r.delta_bp,
+                   "exact": r.exact, "noise_amp": r.noise_amp,
+                   "sizes": r.sizes} for r in rows]},
+        default=str,
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO fedwatch_snapshots"
+                "(date,meeting_date,source,prob_ease,prob_hold,prob_hike,"
+                "implied_rate,raw_json) VALUES (?,?,?,?,?,?,?,?)",
+                (strip_td, r.meeting_date.isoformat(), "diy_ecb",
+                 r.prob_ease, r.prob_hold, r.prob_hike, r.implied_rate, meta),
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    brief_line = ecbwatch.format_brief(rows, diag, asof=strip_td)
+    print(f"  ECBWatch: {brief_line} (rms {diag.get('rms_bp')}bp, K={diag.get('k_solved')})")
+    return [{"meeting": r.meeting_date.isoformat(), "hike": r.prob_hike,
+             "hold": r.prob_hold, "ease": r.prob_ease} for r in rows]
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="arkwatch f2")
     p.add_argument("--db", default=str(DEFAULT_DB))
@@ -672,6 +784,14 @@ def main(argv: list[str] | None = None) -> int:
             f"  {p['meeting']}: ease={p['ease']:.1%} hold={p['hold']:.1%} "
             f"hike={p['hike']:.1%} implied={p['implied']:.2f}%"
         )
+
+    print("=== ECBWatch-DIY (from ESR settlements in DB) ===")
+    try:
+        compute_ecbwatch(conn)
+    except Exception as ex:
+        # review P1: a broken numpy env must not abort the rest of the
+        # harvest (every sibling block is individually guarded)
+        print(f"  ⚠ ECBWatch: {str(ex)[:90]}")
 
     print("=== XCCY Basis (CIP from SR3+ESR+6E) ===")
     try:

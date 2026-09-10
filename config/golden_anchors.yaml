@@ -311,3 +311,9 @@ golden_anchors:
     expected: 25.6635
     tolerance: 0.05      # live 4dp print; looser than GCVL
     provenance: "live-test verified 2026-08-28, CME backdoor /services/cvol symbol=MVL"
+
+  - series_id: ECB:ESTR
+    anchor_date: "2026-09-09"
+    expected: 2.189
+    tolerance: 0.01      # benchmark fixings are final at publication (no revisions)
+    provenance: "live-test verified 2026-09-10, ECB Data Portal EST.B.EU000A2X2A25.WT"
