@@ -129,6 +129,10 @@ def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
 def _run_job(cmd: str, desc: str) -> bool:
     t0 = time.monotonic()
     logger.info(f"▶ {cmd} — {desc}")
+    # heartbeat inside the wrapper too: a job >5 min (verify measured
+    # 221-269s, harvest 368s) leaves the loop-top heartbeat stale, one step
+    # from tripping the 5-min staleness contract (D-018c)
+    _heartbeat()
     try:
         r = subprocess.run(
             [sys.executable, "-m", "arkwatch"] + cmd.split(),
