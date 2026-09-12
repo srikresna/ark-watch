@@ -26,6 +26,31 @@ DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.
 # changes. Implemented in the harvest loop below.
 
 
+def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dict | None]:
+    """GAP-HEAL (audit P1-1, 2026-09-13): fetchers exposing fetch_window land
+    EVERY observation in the window — a shutdown night that missed a
+    publication day heals on the next run (the latest-only contract froze
+    those holes permanently; e.g. the 2026-09-04 one-day gap, 26 series).
+    Unsupported series fall back to fetch_latest."""
+    fw = getattr(mod, "fetch_window", None)
+    pts = None
+    if callable(fw):
+        try:
+            pts = fw(sid_full, days=10)
+        except Exception:
+            pts = None
+    if pts:
+        rows = [
+            (sid_full, p["ts"], p["value"], prefix.rstrip(":"))
+            for p in pts
+            if p.get("value") is not None
+        ]
+        first_obj = rows and {"ts": rows[-1][1], "value": rows[-1][2]} or None
+        return rows, first_obj
+    cur = mod.fetch_latest(sid_full)
+    return [(sid_full, cur["ts"], cur["value"], prefix.rstrip(":"))], cur
+
+
 def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tuple[int, int, int]:
     from dotenv import load_dotenv
 
@@ -76,9 +101,7 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     if o["value"] is not None
                 ]
             else:
-                cur = mod.fetch_latest(sid_full)
-                first_obj = cur
-                rows = [(sid_full, cur["ts"], cur["value"], prefix.rstrip(":"))]
+                rows, first_obj = _window_or_latest(mod, sid_full, prefix)
             fp = _schema_fp(first_obj)
             # Anti-drift alarm: compare with the last fingerprint for this series
             if fp:

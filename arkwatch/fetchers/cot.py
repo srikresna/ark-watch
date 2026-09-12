@@ -126,20 +126,18 @@ def fetch_cot(dataset: str, contract_code: str, limit: int = 156) -> list[dict]:
         conc8s = _f(row.get("conc_gross_le_8_tdr_short"))
 
         for cat_key, field_prefix in cats.items():
-            # field names vary: some categories use the _all suffix, some do not
-            long_key = f"{field_prefix}_positions_long_all"
-            short_key = f"{field_prefix}_positions_short_all"
-            spread_key = f"{field_prefix}_positions_spread"
-            # fallback for fields without the _all suffix (prod_merc, other_rept)
-            if row.get(long_key) is None:
-                long_key = f"{field_prefix}_positions_long"
-            if row.get(short_key) is None:
-                short_key = f"{field_prefix}_positions_short"
-
-            lng = _i(row.get(long_key))
-            sht = _i(row.get(short_key))
-            if lng is None and sht is None:
-                continue
+            # field names vary: some categories use the _all suffix, some do
+            # not (prod_merc, other_rept) — and the disagg SWAP category is
+            # the CFTC double-underscore quirk: 'swap__positions_short_all'
+            # (audit P1-2: the single-underscore chain never matched, so
+            # swap-dealer short/spread were NULL for 158 weeks — 61.7% of
+            # all open gold shorts were missing from the raw memory)
+            def _pick(stem: str, field_prefix=field_prefix, row=row):
+                for p in (f"{field_prefix}_{stem}", f"{field_prefix}__{stem}"):
+                    v = row.get(p)
+                    if v is not None:
+                        return v
+                return None
 
             # An `or` chain would turn legitimate 0 values into None
             # (pct=0/traders=0/change=0 would vanish); pick the first
@@ -150,31 +148,17 @@ def fetch_cot(dataset: str, contract_code: str, limit: int = 156) -> list[dict]:
                         return v
                 return None
 
-            spr = _first(
-                _i(row.get(spread_key)), _i(row.get(f"{field_prefix}_positions_spread_all"))
-            )
-            pct = _first(
-                _f(row.get(f"pct_of_oi_{field_prefix}_long_all")),
-                _f(row.get(f"pct_of_oi_{field_prefix}_long")),
-            )
-            # trader counts
-            trl = _first(
-                _i(row.get(f"traders_{field_prefix}_long_all")),
-                _i(row.get(f"traders_{field_prefix}_long")),
-            )
-            trs = _first(
-                _i(row.get(f"traders_{field_prefix}_short_all")),
-                _i(row.get(f"traders_{field_prefix}_short")),
-            )
-            # weekly changes
-            chl = _first(
-                _i(row.get(f"change_in_{field_prefix}_long_all")),
-                _i(row.get(f"change_in_{field_prefix}_long")),
-            )
-            chs = _first(
-                _i(row.get(f"change_in_{field_prefix}_short_all")),
-                _i(row.get(f"change_in_{field_prefix}_short")),
-            )
+            lng = _first(_i(_pick("positions_long_all")), _i(_pick("positions_long")))
+            sht = _first(_i(_pick("positions_short_all")), _i(_pick("positions_short")))
+            if lng is None and sht is None:
+                continue
+
+            spr = _first(_i(_pick("positions_spread")), _i(_pick("positions_spread_all")))
+            pct = _first(_f(_pick("pct_of_oi_long_all")), _f(_pick("pct_of_oi_long")))
+            trl = _first(_i(_pick("traders_long_all")), _i(_pick("traders_long")))
+            trs = _first(_i(_pick("traders_short_all")), _i(_pick("traders_short")))
+            chl = _first(_i(_pick("change_in_long_all")), _i(_pick("change_in_long")))
+            chs = _first(_i(_pick("change_in_short_all")), _i(_pick("change_in_short")))
 
             out.append(
                 {

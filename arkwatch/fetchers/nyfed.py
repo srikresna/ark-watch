@@ -157,6 +157,56 @@ def _repo_daily(base_path: str, *, full_allotment: bool) -> dict[str, float]:
     return daily
 
 
+def fetch_window(series_id: str, days: int = 12) -> list[dict]:
+    """GAP-HEAL (audit P1-1, 2026-09-13): return EVERY observation in a
+    ~`days`-business-day window, not just the latest — a PC-shutdown night
+    that misses a publication day left a permanent hole because these
+    endpoints are latest-only snapshots. Landing the whole window is
+    idempotent (PK dedup) and self-heals gaps up to the window length.
+
+    One search.json call per family (unsecured/secured) covers all rate
+    series; SOFR percentiles ride their own last/N endpoint; SRF/ONRRP
+    aggregate the 14-day operations window they already fetch."""
+    from datetime import timedelta
+
+    key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    start = (datetime.now(UTC).date() - timedelta(days=int(days * 1.8))).isoformat()
+    all_fields = UNSECURED_ALL_SERIES | SECURED_ALL_SERIES
+    if key in all_fields:
+        path = (
+            "/rates/unsecured/all/search.json"
+            if key in UNSECURED_ALL_SERIES
+            else "/rates/secured/all/search.json"
+        )
+        j = _get(path, {"startDate": start})
+        rate_type, field = key.split("_", 1)[0], all_fields[key]
+        pts = [
+            {"ts": r["effectiveDate"], "value": _f(r.get(field))}
+            for r in j.get("refRates", [])
+            if r.get("type") == rate_type and _f(r.get(field)) is not None
+        ]
+        pts.sort(key=lambda p: p["ts"])
+        return pts
+    if key in PERCENTILE_SERIES:
+        col = PERCENTILE_SERIES[key].replace("percentPercentile", "p")
+        rows = fetch_sofr_percentiles(days + 5)
+        pts = [
+            {"ts": r["ts"], "value": _f(r.get(col))}
+            for r in rows
+            if _f(r.get(col)) is not None
+        ]
+        pts.sort(key=lambda p: p["ts"])
+        return pts
+    if key in ("SRF_TOTAL", "ONRRP_TOTAL"):
+        daily = _repo_daily(
+            "/rp/results/search.json" if key == "SRF_TOTAL"
+            else "/rp/reverserepo/propositions/search.json",
+            full_allotment=key == "SRF_TOTAL",
+        )
+        return [{"ts": d, "value": v} for d, v in sorted(daily.items())]
+    raise NyFedError(f"unknown nyfed series: {key}")
+
+
 def fetch_latest(series_id: str) -> dict:
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     all_fields = UNSECURED_ALL_SERIES | SECURED_ALL_SERIES

@@ -285,6 +285,37 @@ def parse_avg_rate_row(r: dict) -> dict | None:
     }
 
 
+def fetch_window(series_id: str, days: int = 12, session=None) -> list[dict]:
+    """GAP-HEAL (audit P1-1): land every observation in the window, not just
+    the latest row — shutdown nights otherwise leave permanent one-day holes
+    in the debt/TGA series (verified: fiscaldata still serves 2026-09-04)."""
+    if series_id in DEBT_PENNY_FIELD:
+        field = DEBT_PENNY_FIELD[series_id]
+        rows = _get(
+            DEBT_PENNY,
+            {"fields": f"record_date,{field}", "sort": "-record_date",
+             "page[size]": int(days * 1.8)},
+            session,
+        ).get("data", [])
+        pts = [
+            {"ts": r["record_date"], "value": _num(r.get(field))}
+            for r in rows
+            if _num(r.get(field)) is not None
+        ]
+        pts.sort(key=lambda p: p["ts"])
+        return pts
+    if series_id == "FISCAL:TGA_DAILY":
+        rows = _rows(ERAS[-1][0], "-record_date", int(days * 1.8))
+        pts = [
+            {"ts": r["record_date"], "value": _close(r)}
+            for r in rows
+            if _close(r) is not None
+        ]
+        pts.sort(key=lambda p: p["ts"])
+        return pts
+    raise FiscalError(f"fetch_window: unsupported series {series_id}")
+
+
 def fetch_latest(series_id: str = "FISCAL:TGA_DAILY", session=None) -> dict:
     if series_id in DEBT_PENNY_FIELD:
         field = DEBT_PENNY_FIELD[series_id]

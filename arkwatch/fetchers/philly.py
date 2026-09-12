@@ -98,6 +98,20 @@ def fetch_latest(series_id: str = "PHILLY:ADS") -> dict:
     d, v = last
     if isinstance(d, datetime):
         d = d.date().isoformat()
+    else:
+        # AUDIT P1-4 (2026-09-13): the ADS XLSX types its date column as
+        # TEXT 'YYYY:MM:DD' (colons) — passing it through stored
+        # '2026:09:05' rows that break fromisoformat and sort AFTER real
+        # ISO dates (':' > '-'). Normalize every text shape here.
+        s = str(d).strip()
+        for fmt in ("%Y:%m:%d", "%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+            try:
+                d = datetime.strptime(s, fmt).date().isoformat()
+                break
+            except ValueError:
+                continue
+        else:
+            raise PhillyError(f"philly ADS: unparseable date cell {s!r}")
     return {"ts": str(d)[:10], "value": v}
 
 

@@ -129,21 +129,39 @@ def harvest_flows(conn) -> dict[str, float | None]:
     scaled by 10000 becomes −10000bps in flows_daily, passes the watcher's bps
     filter, and fires a false extreme-funding alert. Legitimate negative
     funding rates are unaffected.
+
+    AUDIT P1-3 (2026-09-13) hardening: (a) every Bybit/DefiLlama leg error is
+    surfaced as a named fetch_log row (BYBIT:FLOWS) — the funding/OI legs were
+    previously print-only, dead for 4+ days with zero trace; (b) the funding
+    EOD average refuses to write when the feed's last fixing is stale (the
+    BTC feed froze mid-day once while ETH stayed live — without the gate, a
+    recovering run would stamp the stale average under today's date).
     """
+    from .fetch_log import log_collection
+
     out: dict[str, float | None] = {}
+    leg_errors: list[str] = []
 
     def _funding_eod_bps(symbol: str) -> float | None:
-        """Average of the last UTC day's three 8-hour points = EOD."""
+        """Average of the last UTC day's three 8-hour points = EOD, gated on
+        freshness: the newest fixing must be today's (f2 runs 08:30 WIB = 01:30
+        UTC, so yesterday's 16:00 UTC point IS today's EOD by WIB clock —
+        accept fixing dates >= yesterday UTC; anything older = frozen feed)."""
         try:
             hist = bybit.fetch_funding_history(symbol, limit=9)
             if not hist:
                 return None
             last_day = max(h["ts"] for h in hist)[:10]
+            yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+            if last_day < yesterday:
+                leg_errors.append(f"funding {symbol}: feed frozen at {last_day}")
+                return None
             rates = [h["rate"] for h in hist if h["ts"].startswith(last_day)]
             if not rates:
                 return None
             return sum(rates) / len(rates) * 10_000
-        except Exception:
+        except Exception as ex:
+            leg_errors.append(f"funding {symbol}: {str(ex)[:50]}")
             return None
 
     for sym, key in (("BTCUSDT", "btc"), ("ETHUSDT", "eth")):
@@ -152,31 +170,49 @@ def harvest_flows(conn) -> dict[str, float | None]:
             out[f"oi_{key}"] = t["open_interest"]
         except Exception as ex:
             out[f"oi_{key}"] = None
+            leg_errors.append(f"oi {sym}: {str(ex)[:50]}")
             print(f"  ⚠ Bybit {sym}: {str(ex)[:70]}")
         fed = _funding_eod_bps(sym)
         if fed is None:  # Fallback: instantaneous point (degradable)
             try:
                 fed = bybit.fetch_ticker(sym)["funding_rate"] * 10_000
-            except Exception:
+            except Exception as ex:
+                leg_errors.append(f"ticker-fallback {sym}: {str(ex)[:50]}")
                 fed = None
         out[f"funding_{key}"] = fed
     # DefiLlama stablecoins
     try:
         s = bybit.fetch_stablecoin_total()
         out["stablecoin_usd"] = s["total_usd"]
-    except Exception:
+    except Exception as ex:
         out["stablecoin_usd"] = None
+        leg_errors.append(f"stablecoin: {str(ex)[:50]}")
+    # fetch_log: named legs row (audit P1-3) — ERROR when the Bybit legs
+    # failed, OK when they landed; EMPTY never hides a dead source
+    n_bybit_legs = sum(
+        1 for k in ("funding_btc", "funding_eth", "oi_btc", "oi_eth") if out.get(k) is not None
+    )
+    log_collection(
+        conn, "f2", "BYBIT:FLOWS",
+        {"funding_btc": out.get("funding_btc"), "oi_btc": out.get("oi_btc")},
+        n_bybit_legs,
+        err="; ".join(leg_errors)[:200] or None,
+    )
     # Write ONLY these columns of flows_daily (not a full-row REPLACE): a
     # REPLACE would NULL out columns already filled by other jobs when this
-    # job retries
+    # job retries. COALESCE (audit P1-3): a retry whose legs failed must not
+    # NULL-out values a successful earlier run already wrote — the excluded
+    # value only wins when it is NOT NULL (the bybit_positioning convention)
     today = datetime.now(UTC).date().isoformat()
     conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         "INSERT INTO flows_daily(date,funding_bps,oi_btc,oi_eth,stablecoin_usd)"
         " VALUES (?,?,?,?,?)"
-        " ON CONFLICT(date) DO UPDATE SET funding_bps=excluded.funding_bps,"
-        " oi_btc=excluded.oi_btc, oi_eth=excluded.oi_eth,"
-        " stablecoin_usd=excluded.stablecoin_usd",
+        " ON CONFLICT(date) DO UPDATE SET"
+        " funding_bps=COALESCE(excluded.funding_bps, funding_bps),"
+        " oi_btc=COALESCE(excluded.oi_btc, oi_btc),"
+        " oi_eth=COALESCE(excluded.oi_eth, oi_eth),"
+        " stablecoin_usd=COALESCE(excluded.stablecoin_usd, stablecoin_usd)",
         (
             today,
             out.get("funding_btc"),

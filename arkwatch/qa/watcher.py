@@ -712,7 +712,21 @@ def check_all(conn) -> list[str]:
     # (default 5) consecutive down streak; HG curve context from
     # cme_settlements (backwardation corroborates a squeeze) + 3y percentile
     cu = recent_values(conn, "LME:CA_STOCKS", 800)
-    if len(cu) >= 60:
+    # AUDIT P2 (2026-09-13): the channel is a MONTHLY XLSX (newest point ages
+    # 1 day..~5 weeks mid-month) — Δ20d/streak on a frozen window is noise.
+    # Gate: skip the trigger entirely when the newest observation is >45 days
+    # old (publication stalled), and label the intra-month age otherwise.
+    cu_ts = conn.execute(
+        "SELECT MAX(ts) FROM raw_observations WHERE series_id='LME:CA_STOCKS'"
+        " AND vintage_ts='realtime'"
+    ).fetchone()[0]
+    cu_age = (
+        (datetime.now(UTC).date() - datetime.fromisoformat(cu_ts[:10]).date()).days
+        if cu_ts else 9999
+    )
+    if cu_age > 45:
+        print(f"  ⚠ copper trigger skipped: LME stocks frozen {cu_age}d ({cu_ts})")
+    elif len(cu) >= 60:
         lvl = cu[-1]
         d20 = (cu[-1] / cu[-21] - 1) if len(cu) >= 21 else None
         streak, i = 0, len(cu) - 1  # a week ≈ 5 trading days

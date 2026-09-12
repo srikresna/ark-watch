@@ -912,12 +912,20 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     from ..qa.watcher import COPPER_DRAIN_20D_PCT
 
     cu = conn.execute(
-        "SELECT value FROM raw_observations WHERE series_id='LME:CA_STOCKS' "
+        "SELECT value, ts FROM raw_observations WHERE series_id='LME:CA_STOCKS' "
         "AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 25"
     ).fetchall()
-    if len(cu) >= 21:
+    # AUDIT P2: monthly publication channel — the Δ20d reads a window whose
+    # newest point can be ~5 weeks old mid-month; show the age, and never
+    # print a DRAIN flag off a frozen (>45d) feed
+    cu_age = (
+        (datetime.now(UTC).date() - datetime.fromisoformat(cu[0][1][:10]).date()).days
+        if cu else 9999
+    )
+    if len(cu) >= 21 and cu_age <= 45:
         lvl = cu[0][0]
         d20 = lvl / cu[20][0] - 1  # cu is DESC → cu[20] = 20 business days ago
+        age_txt = f", {cu_age}d old" if cu_age > 10 else ""
         flag = " ⚠DRAIN" if d20 <= COPPER_DRAIN_20D_PCT else ""
         # off-warrant shadow supply (daily OWSR, T+3): a DRAIN with thick
         # shadow supply is far less scary than a genuine physical scarcity
@@ -930,7 +938,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             share = ow[1] / lvl * 100 if lvl else None
             pct_txt = f" ({share:.0f}% of LME)" if share is not None else ""
             ow_txt = f" · off-warrant {ow[1]:,.0f}t{pct_txt}"
-        lines.append(f"Cu physical: LME {lvl:,.0f}t (Δ20d {d20:+.0%}){flag}{ow_txt}")
+        lines.append(f"Cu physical: LME {lvl:,.0f}t (Δ20d {d20:+.0%}{age_txt}){flag}{ow_txt}")
 
     # events (7 days — dedup by normalized name + date)
     events = conn.execute(
