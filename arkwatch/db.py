@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -328,6 +328,22 @@ CREATE TABLE IF NOT EXISTS etf_flows_issuer (
   issuer TEXT NOT NULL,     -- IBIT, FBTC, ..., GBTC / ETHA, ..., ETHE
   flow_musd REAL,
   PRIMARY KEY (date, etf, issuer)
+);
+""",
+    14: """-- v14: FMP earnings calendar (vendor-api audit NICE #7, owner GO
+-- 2026-09-13). Data-first phase: the table is the deliverable — the
+-- weekly heavy-weight share lands in computed_signals; no brief line
+-- (delivery paused).
+CREATE TABLE IF NOT EXISTS earnings_calendar (
+  symbol TEXT NOT NULL,
+  date TEXT NOT NULL,             -- announcement date
+  eps_estimated REAL,
+  eps_actual REAL,
+  revenue_estimated REAL,
+  revenue_actual REAL,
+  last_updated TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (symbol, date)
 );
 """,
 }

@@ -1,0 +1,37 @@
+# =====================================================================================
+# ark-watch — config/index_heavyweights.yaml
+# Index heavyweight constituents + approximate weights for the earnings-week
+# gauge (FMP earnings calendar → "how much of the index reports this week").
+#
+# WHY APPROXIMATE: index weights drift daily with prices. The signal is
+# coarse by design (does ~40% of the index report this week or not) and is
+# robust to ±1pp weight errors. Refresh quarterly against the latest
+# SPDR/Invesco fund factsheets.
+#
+# [RISET: weights are approximate as of 2026-09 (order verified; pp-level
+#  values rounded from fund-factsheet order of magnitude); refresh quarterly]
+# =====================================================================================
+
+spx:   # S&P 500 — top ~10 ≈ 39% of the index
+  - {symbol: NVDA,   weight: 7.5}
+  - {symbol: AAPL,   weight: 7.0}
+  - {symbol: MSFT,   weight: 6.5}
+  - {symbol: AMZN,   weight: 4.0}
+  - {symbol: GOOGL,  weight: 4.0}
+  - {symbol: META,   weight: 2.5}
+  - {symbol: AVGO,   weight: 2.5}
+  - {symbol: TSLA,   weight: 2.0}
+  - {symbol: BRK.B,  weight: 1.8}
+  - {symbol: JPM,    weight: 1.5}
+
+ndx:   # Nasdaq-100 — top ~10 ≈ 54% of the index (US100 driver)
+  - {symbol: NVDA,   weight: 9.0}
+  - {symbol: AAPL,   weight: 9.0}
+  - {symbol: MSFT,   weight: 9.0}
+  - {symbol: AMZN,   weight: 6.0}
+  - {symbol: GOOGL,  weight: 5.5}
+  - {symbol: AVGO,   weight: 4.5}
+  - {symbol: META,   weight: 4.0}
+  - {symbol: TSLA,   weight: 3.0}
+  - {symbol: NFLX,   weight: 2.0}
+  - {symbol: COST,   weight: 2.0}

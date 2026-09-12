@@ -793,6 +793,21 @@ def main(argv: list[str] | None = None) -> int:
         # harvest (every sibling block is individually guarded)
         print(f"  ⚠ ECBWatch: {str(ex)[:90]}")
 
+    # Earnings calendar (FMP) — data-first phase deliverable: the weekly
+    # heavyweight-share gauge lands in computed_signals (no brief; delivery
+    # paused 2026-09-13)
+    print("=== Earnings calendar (FMP) ===")
+    try:
+        from .earnings import compute_earnings_weeks, harvest_earnings
+
+        n = harvest_earnings(conn)
+        print(f"  calendar: {n} rows (21d window)")
+        for w in compute_earnings_weeks(conn):
+            print(f"    wk {w['week']}: SPX {w['spx_pp']}pp · NDX {w['ndx_pp']}pp"
+                  f" ({w['n_heavy']} heavy)")
+    except Exception as ex:
+        print(f"  ⚠ earnings: {str(ex)[:90]}")
+
     print("=== XCCY Basis (CIP from SR3+ESR+6E) ===")
     try:
         xccy_rows = xccy.compute_xccy(conn)

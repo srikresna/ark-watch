@@ -31,7 +31,10 @@ WIB = ZoneInfo("Asia/Jakarta")
 # weekday key)
 SCHEDULE = [
     (3, 45, "saturday", "f2", "Saturday: COT post-release (Fri 15:30 ET) BEFORE brief"),
-    (4, 15, "saturday", "brief", "Saturday positioning special brief"),
+    # (4, 15, "saturday", "brief", "Saturday positioning special brief"),
+    #   ^ PAUSED 2026-09-13 (owner decision: data-first phase — delivery
+    #   refocused later; code kept: identity gates + golden tests remain
+    #   part of data QA). Resume by uncommenting the brief/send lines.
     (6, 0, "daily", "harvest", "Increment harvest for all active registry series"),
     (6, 0, "friday", "soma harvest", "SOMA per-CUSIP weekly harvest"),
     # fiscaldata publishes DTS ~afternoon ET → a 06:10 WIB run catches yesterday;
@@ -45,14 +48,14 @@ SCHEDULE = [
     # pd BEFORE the 07:00 brief (same slot, list order = launch order): the survey
     # release lands Wed night ET = Thu ~06:00 WIB, so the brief sees fresh data
     (7, 0, "thursday", "nyfed pd", "Primary Dealer Positions Survey (release Wed night ET)"),
-    (
-        7,
-        0,
-        "daily",
-        "brief",
-        "Generate brief + outbox (skip if Saturday edition already published)",
-    ),
-    (7, 5, "daily", "send", "Send brief via Telegram"),
+    # (
+    #     7,
+    #     0,
+    #     "daily",
+    #     "brief",
+    #     "Generate brief + outbox (skip if Saturday edition already published)",
+    # ),  # PAUSED 2026-09-13 (data-first phase; see note at the Saturday slot)
+    # (7, 5, "daily", "send", "Send brief via Telegram"),  # PAUSED 2026-09-13
     (7, 15, "daily", "verify", "Truth gate"),
     (8, 15, "daily", "cme", "CME settlements + CVOL + VOI (gray harvester)"),
     (8, 30, "daily", "f2", "COT + flows (Bybit/Farside/PBoC/LBMA/TIC/LME) + FedWatch"),
