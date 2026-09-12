@@ -20,24 +20,58 @@ ALERT_MIN_GAP_S = 300  # minimum gap between alert attempts
 
 
 def _claim_brief_rows(conn: sqlite3.Connection) -> list[tuple]:
-    """Atomic claim: new pending + stale sending + failed-under-cap."""
+    """Atomic claim — NEWEST BRIEF ONLY per channel (round-3 P2): a multi-day
+    pause (D-023) accumulates one pending row per generated day; claiming all
+    of them would blast the whole backlog as separate ~4KB messages on resume.
+    Older pending rows are superseded (their content is stale by construction
+    — a fresher brief exists for the same channel)."""
     now = datetime.now(UTC)
     stale = (now - timedelta(minutes=CLAIM_STALE_MIN)).isoformat(timespec="seconds")
     conn.execute("BEGIN IMMEDIATE")
-    rows = conn.execute(
-        "SELECT id, brief_date, channel FROM brief_deliveries"
-        " WHERE status='pending'"
-        " OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?))"
-        " OR (status='failed' AND attempts < ?)"
-        " ORDER BY brief_date",
-        (stale, BRIEF_MAX_ATTEMPTS),
+    # newest date per channel over ALL rows — if the newest was already
+    # SENT, an older pending row must not resurrect as a stale delivery
+    newest = conn.execute(
+        "SELECT channel, MAX(brief_date) FROM brief_deliveries"
+        " GROUP BY channel"
     ).fetchall()
-    for row_id, _date, _ch in rows:
+    keep_ids: list[int] = []
+    for channel, _max_date in newest:
+        row = conn.execute(
+            "SELECT id FROM brief_deliveries"
+            " WHERE channel=? AND brief_date=?"
+            " AND (status='pending'"
+            "  OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?))"
+            "  OR (status='failed' AND attempts < ?))"
+            " ORDER BY id DESC LIMIT 1",
+            (channel, _max_date, stale, BRIEF_MAX_ATTEMPTS),
+        ).fetchone()
+        if row:
+            keep_ids.append(row[0])
+    # supersede everything older still marked undelivered
+    if keep_ids:
+        marks = ",".join("?" * len(keep_ids))
+        conn.execute(
+            "UPDATE brief_deliveries SET status='superseded'"
+            f" WHERE id NOT IN ({marks}) AND status IN ('pending','sending','failed')",
+            keep_ids,
+        )
+    else:
+        conn.execute(
+            "UPDATE brief_deliveries SET status='superseded'"
+            " WHERE status IN ('pending','sending','failed')"
+        )
+    rows = []
+    for row_id in keep_ids:
+        r = conn.execute(
+            "SELECT id, brief_date, channel FROM brief_deliveries WHERE id=?",
+            (row_id,),
+        ).fetchone()
         conn.execute(
             "UPDATE brief_deliveries SET status='sending', claimed_at=?,"
             " attempts=attempts+1, last_error=NULL WHERE id=?",
             (now.isoformat(timespec="seconds"), row_id),
         )
+        rows.append(r)
     conn.execute("COMMIT")
     return rows
 

@@ -52,36 +52,53 @@ def fetch_recession_prob(lookback_days: int = 200) -> dict:
     return {"ts": newest["date"][:10], "value": float(newest["value"])}
 
 
+FMP_EARNINGS_PAGE_CAP = 4000  # round-3 P1: page 0 truncates newest-first at
+# exactly 4000 rows in season — the NEAREST (actionable) weeks never land
+
+
 def fetch_earnings_calendar(from_d: str, to_d: str, page: int = 0) -> list[dict]:
-    """FMP earnings calendar window (universe-wide; filter client-side —
-    ~1200 rows per fortnight). [{symbol, date, eps_estimated, eps_actual,
+    """FMP earnings calendar window, ALL pages walked (round-3 P1: a single
+    page-0 GET at the 42d harvest window returns exactly the 4000-row cap in
+    NEWEST-FIRST order — the near weeks silently never landed; page 1 carried
+    the missing 1230 rows). [{symbol, date, eps_estimated, eps_actual,
     revenue_estimated, revenue_actual, last_updated}]."""
     key = os.environ.get("FMP_API_KEY", "")
     if not key:
         raise RuntimeError("FMP_API_KEY not set")
-    r = requests.get(
-        "https://financialmodelingprep.com/stable/earnings-calendar",
-        params={"from": from_d, "to": to_d, "page": page, "apikey": key},
-        timeout=(10, 60),
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"FMP earnings-calendar: HTTP {r.status_code}")
-    rows = r.json()
-    if not isinstance(rows, list):
-        raise RuntimeError("FMP earnings-calendar: unrecognized shape")
-    return [
-        {
-            "symbol": x.get("symbol", ""),
-            "date": str(x.get("date", ""))[:10],
-            "eps_estimated": x.get("epsEstimated"),
-            "eps_actual": x.get("epsActual"),
-            "revenue_estimated": x.get("revenueEstimated"),
-            "revenue_actual": x.get("revenueActual"),
-            "last_updated": str(x.get("lastUpdated", ""))[:10],
-        }
-        for x in rows
-        if x.get("symbol") and x.get("date")
-    ]
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    while True:
+        r = requests.get(
+            "https://financialmodelingprep.com/stable/earnings-calendar",
+            params={"from": from_d, "to": to_d, "page": page, "apikey": key},
+            timeout=(10, 60),
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"FMP earnings-calendar: HTTP {r.status_code}")
+        rows = r.json()
+        if not isinstance(rows, list):
+            raise RuntimeError("FMP earnings-calendar: unrecognized shape")
+        for x in rows:
+            if not (x.get("symbol") and x.get("date")):
+                continue
+            k = (x["symbol"], str(x["date"])[:10])
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(
+                {
+                    "symbol": x.get("symbol", ""),
+                    "date": str(x.get("date", ""))[:10],
+                    "eps_estimated": x.get("epsEstimated"),
+                    "eps_actual": x.get("epsActual"),
+                    "revenue_estimated": x.get("revenueEstimated"),
+                    "revenue_actual": x.get("revenueActual"),
+                    "last_updated": str(x.get("lastUpdated", ""))[:10],
+                }
+            )
+        if len(rows) < FMP_EARNINGS_PAGE_CAP:
+            return out
+        page += 1  # full page → the window has more pages (cap truncation)
 
 # fetch_fmp_holidays DELETED 2026-09-13 (vendor-api audit #5): zero callers
 # since it landed — the CME harvest walk-back already treats empty days as

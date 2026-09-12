@@ -4,7 +4,7 @@ Socrata datasets:
   Legacy 6dca-aqww · TFF gpe5-46if · Disaggregated 72hh-3qpy
 
 Native field names per dataset (verified):
-  Disagg: m_money_positions_*_all · prod_merc_positions_* · swap_positions_*_all
+  Disagg: m_money_positions_*_all · prod_merc_positions_* · swap__positions_*_all (DOUBLE underscore — CFTC quirk)
           other_rept_positions_* · nonrept_positions_*_all
   TFF:    lev_money_positions_*_all · asset_mgr_positions_*_all
           dealer_positions_*_all · other_rept_positions_*

@@ -841,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
         from .earnings import compute_earnings_weeks, harvest_earnings
 
         n = harvest_earnings(conn)
-        print(f"  calendar: {n} rows (21d window)")
+        print(f"  calendar: {n} rows (42d window)")
         for w in compute_earnings_weeks(conn):
             print(f"    wk {w['week']}: SPX {w['spx_pp']}pp · NDX {w['ndx_pp']}pp"
                   f" ({w['n_heavy']} heavy)")
