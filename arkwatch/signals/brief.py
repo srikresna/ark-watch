@@ -939,6 +939,13 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             pct_txt = f" ({share:.0f}% of LME)" if share is not None else ""
             ow_txt = f" · off-warrant {ow[1]:,.0f}t{pct_txt}"
         lines.append(f"Cu physical: LME {lvl:,.0f}t (Δ20d {d20:+.0%}{age_txt}){flag}{ow_txt}")
+    elif len(cu) >= 21:
+        # frozen channel: show the level + age with a stale suffix rather
+        # than vanishing (review ronde-2 — a silent gap reads as 'no data',
+        # which is a different claim than 'stale data')
+        lines.append(
+            f"Cu physical: LME {cu[0][0]:,.0f}t ⚠stale {cu_age}d (monthly channel)"
+        )
 
     # events (7 days — dedup by normalized name + date)
     events = conn.execute(

@@ -139,11 +139,13 @@ def test_harvest_uses_fetch_window_and_falls_back(monkeypatch):
             calls["latest"].append(sid)
             return {"ts": _day(0), "value": 9.0}
 
-    rows, first = h._window_or_latest(FakeMod, "FAKE:SUPPORTED", "FAKE")
+    rows, first, werr = h._window_or_latest(FakeMod, "FAKE:SUPPORTED", "FAKE")
     assert len(rows) == 2 and rows[-1][1] == _day(1) and first["value"] == 2.0
-    rows, first = h._window_or_latest(FakeMod, "FAKE:OTHER", "FAKE")
+    assert werr is None
+    rows, first, werr = h._window_or_latest(FakeMod, "FAKE:OTHER", "FAKE")
     assert len(rows) == 1 and first["value"] == 9.0
     assert calls["latest"] == ["FAKE:OTHER"]
+    assert werr and werr.startswith("WINDOW_FALLBACK")  # review ronde-2 P2
 
 
 # --- P1-3: Bybit legs ---------------------------------------------------------

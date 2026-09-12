@@ -38,13 +38,24 @@ def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def harvest_earnings(conn, days: int = 21) -> int:
+def harvest_earnings(conn, days: int = 42) -> int:
     """Land the next `days` of the earnings calendar (idempotent upsert;
-    universe-wide — the heavyweights gauge reads from the table)."""
+    universe-wide — the heavyweights gauge reads from the table).
+
+    days=42 (review ronde-2 P2): aligns with compute_earnings_weeks'
+    5-week horizon + slack — at 21 days the outer gauge weeks silently
+    had zero rows. Failure path logs fetch_log ERROR (the BYBIT:FLOWS
+    class — it was print-only before)."""
     from ..fetchers.misc import fetch_earnings_calendar
 
     today = datetime.now(UTC).date()
-    rows = fetch_earnings_calendar(today.isoformat(), (today + timedelta(days=days)).isoformat())
+    try:
+        rows = fetch_earnings_calendar(
+            today.isoformat(), (today + timedelta(days=days)).isoformat()
+        )
+    except Exception as ex:
+        log_collection(conn, "f2", "FMP:EARNINGS", None, 0, err=str(ex)[:140])
+        raise
     now = datetime.now(UTC).isoformat(timespec="seconds")
     n = 0
     for r in rows:
@@ -71,6 +82,14 @@ def compute_earnings_weeks(conn, weeks_ahead: int = 5) -> list[dict]:
     computed_signals (signal_id earnings_week_spx / earnings_week_ndx;
     value = weight-share in PERCENT-POINTS of the index)."""
     spx_w, ndx_w = _heavyweights()
+    # review ronde-2 (P2): normalize ticker forms ONCE — FMP serves
+    # BRK-B (dash) while the config uses BRK.B (dot); without this the
+    # Berkshire weight silently never counts
+    def _norm(s: str) -> str:
+        return s.upper().replace(".", "-")
+
+    spx_w = {_norm(k): v for k, v in spx_w.items()}
+    ndx_w = {_norm(k): v for k, v in ndx_w.items()}
     today = datetime.now(UTC).date()
     horizon = today + timedelta(days=7 * weeks_ahead)
 
@@ -82,11 +101,12 @@ def compute_earnings_weeks(conn, weeks_ahead: int = 5) -> list[dict]:
     for sym, d in rows:
         wk = _week_start(date.fromisoformat(d))
         bucket = by_week.setdefault(wk, {"spx": 0.0, "ndx": 0.0, "n": 0})
-        if sym in spx_w:
-            bucket["spx"] += spx_w[sym]
-        if sym in ndx_w:
-            bucket["ndx"] += ndx_w[sym]
-        if sym in spx_w or sym in ndx_w:
+        key = _norm(sym)
+        if key in spx_w:
+            bucket["spx"] += spx_w[key]
+        if key in ndx_w:
+            bucket["ndx"] += ndx_w[key]
+        if key in spx_w or key in ndx_w:
             bucket["n"] += 1
 
     now = datetime.now(UTC).isoformat(timespec="seconds")

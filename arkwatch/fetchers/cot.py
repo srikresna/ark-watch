@@ -154,11 +154,28 @@ def fetch_cot(dataset: str, contract_code: str, limit: int = 156) -> list[dict]:
                 continue
 
             spr = _first(_i(_pick("positions_spread")), _i(_pick("positions_spread_all")))
-            pct = _first(_f(_pick("pct_of_oi_long_all")), _f(_pick("pct_of_oi_long")))
-            trl = _first(_i(_pick("traders_long_all")), _i(_pick("traders_long")))
-            trs = _first(_i(_pick("traders_short_all")), _i(_pick("traders_short")))
-            chl = _first(_i(_pick("change_in_long_all")), _i(_pick("change_in_long")))
-            chs = _first(_i(_pick("change_in_short_all")), _i(_pick("change_in_short")))
+            # REGRESSION-CAUGHT (P0, review ronde-2): positions fields are
+            # PREFIX-first ('m_money_positions_long_all', 'swap__positions_…')
+            # but pct/traders/change are METRIC-first
+            # ('pct_of_oi_m_money_long_all', 'traders_m_money_long_all',
+            #  'change_in_m_money_long_all') — a prefix-first _pick silently
+            # NULLed these three metrics for the re-harvested weeks
+            def _pick_metric(metric: str, side: str, field_prefix=field_prefix, row=row):
+                for cand in (
+                    f"{metric}_{field_prefix}_{side}",
+                    f"{metric}_{field_prefix}__{side}",
+                    f"{metric}_{field_prefix}_{side}".replace("_all", ""),
+                ):
+                    v = row.get(cand)
+                    if v is not None:
+                        return v
+                return None
+
+            pct = _f(_pick_metric("pct_of_oi", "long_all"))
+            trl = _i(_pick_metric("traders", "long_all"))
+            trs = _i(_pick_metric("traders", "short_all"))
+            chl = _i(_pick_metric("change_in", "long_all"))
+            chs = _i(_pick_metric("change_in", "short_all"))
 
             out.append(
                 {

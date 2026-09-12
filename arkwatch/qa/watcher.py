@@ -791,7 +791,7 @@ def check_all(conn) -> list[str]:
             if _fire(
                 conn,
                 "copper_stocks_drain",
-                f"LME Cu stocks {lvl:,.0f}t ({d20_txt} streak {streak}w)",
+                f"LME Cu stocks {lvl:,.0f}t ({d20_txt} streak {streak}w, data {cu_age}d old)",
                 f"Physical tightness: {curve_txt}; percentile {pct:.0f} of 3y{ow_txt}",
                 "XCUUSD squeeze-watch: avoid fresh shorts; check COT top-4 HG",
             ):

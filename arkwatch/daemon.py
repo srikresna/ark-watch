@@ -31,10 +31,10 @@ WIB = ZoneInfo("Asia/Jakarta")
 # weekday key)
 SCHEDULE = [
     (3, 45, "saturday", "f2", "Saturday: COT post-release (Fri 15:30 ET) BEFORE brief"),
-    # (4, 15, "saturday", "brief", "Saturday positioning special brief"),
-    #   ^ PAUSED 2026-09-13 (owner decision: data-first phase — delivery
-    #   refocused later; code kept: identity gates + golden tests remain
-    #   part of data QA). Resume by uncommenting the brief/send lines.
+    (4, 15, "saturday", "brief", "Saturday positioning special brief"),
+    #   ^ RE-ENABLED 2026-09-13 (review ronde-2): pausing GENERATION killed
+    #   the five store_* audit trails (computed_signals froze) — generation
+    #   must run for the data phase; only DELIVERY stays paused (send below)
     (6, 0, "daily", "harvest", "Increment harvest for all active registry series"),
     (6, 0, "friday", "soma harvest", "SOMA per-CUSIP weekly harvest"),
     # fiscaldata publishes DTS ~afternoon ET → a 06:10 WIB run catches yesterday;
@@ -48,14 +48,8 @@ SCHEDULE = [
     # pd BEFORE the 07:00 brief (same slot, list order = launch order): the survey
     # release lands Wed night ET = Thu ~06:00 WIB, so the brief sees fresh data
     (7, 0, "thursday", "nyfed pd", "Primary Dealer Positions Survey (release Wed night ET)"),
-    # (
-    #     7,
-    #     0,
-    #     "daily",
-    #     "brief",
-    #     "Generate brief + outbox (skip if Saturday edition already published)",
-    # ),  # PAUSED 2026-09-13 (data-first phase; see note at the Saturday slot)
-    # (7, 5, "daily", "send", "Send brief via Telegram"),  # PAUSED 2026-09-13
+    (7, 0, "daily", "brief", "Generate brief + outbox (skip if Saturday edition already published)"),
+    (7, 5, "daily", "send", "Send brief via Telegram (PAUSED holder — see _run_job guard)"),
     (7, 15, "daily", "verify", "Truth gate"),
     (8, 15, "daily", "cme", "CME settlements + CVOL + VOI (gray harvester)"),
     (8, 30, "daily", "f2", "COT + flows (Bybit/Farside/PBoC/LBMA/TIC/LME) + FedWatch"),
@@ -66,6 +60,11 @@ SCHEDULE = [
 # runs it as its own subprocess each cycle
 WATCH_INTERVAL_S = 60
 RETRY_DELAY_S = 600
+
+# D-023 data-first phase (owner 2026-09-13): GENERATION must keep running
+# (the brief pipeline persists five audit-trail store_* families), only the
+# OUTBOUND delivery is held. Resume delivery by emptying this set.
+PAUSED_JOBS = {"send"}
 
 DAY_MAP = {
     "mon": 0,
@@ -130,6 +129,9 @@ def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
 
 
 def _run_job(cmd: str, desc: str) -> bool:
+    if cmd in PAUSED_JOBS:
+        logger.info(f"⏸ {cmd} paused (D-023 data-first) — {desc}")
+        return True
     t0 = time.monotonic()
     logger.info(f"▶ {cmd} — {desc}")
     # heartbeat inside the wrapper too: a job >5 min (verify measured

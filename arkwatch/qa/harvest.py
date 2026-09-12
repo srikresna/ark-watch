@@ -34,11 +34,17 @@ def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dic
     Unsupported series fall back to fetch_latest."""
     fw = getattr(mod, "fetch_window", None)
     pts = None
+    window_err = None
     if callable(fw):
         try:
             pts = fw(sid_full, days=10)
-        except Exception:
+        except Exception as ex:
+            # review ronde-2 (P2): the fallback itself is correct, but a
+            # PERSISTENTLY dead window path would silently re-freeze holes
+            # (the P1-1 failure mode returning invisibly) — surface it in
+            # the caller's fetch_log error field
             pts = None
+            window_err = f"WINDOW_FALLBACK {str(ex)[:60]}"
     if pts:
         rows = [
             (sid_full, p["ts"], p["value"], prefix.rstrip(":"))
@@ -46,9 +52,10 @@ def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dic
             if p.get("value") is not None
         ]
         first_obj = rows and {"ts": rows[-1][1], "value": rows[-1][2]} or None
-        return rows, first_obj
+        return rows, first_obj, None
     cur = mod.fetch_latest(sid_full)
-    return [(sid_full, cur["ts"], cur["value"], prefix.rstrip(":"))], cur
+    rows = [(sid_full, cur["ts"], cur["value"], prefix.rstrip(":"))]
+    return rows, cur, window_err
 
 
 def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tuple[int, int, int]:
@@ -101,7 +108,9 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     if o["value"] is not None
                 ]
             else:
-                rows, first_obj = _window_or_latest(mod, sid_full, prefix)
+                rows, first_obj, window_err = _window_or_latest(mod, sid_full, prefix)
+                if window_err:
+                    err = window_err  # visible in fetch_log (review ronde-2 P2)
             fp = _schema_fp(first_obj)
             # Anti-drift alarm: compare with the last fingerprint for this series
             if fp:

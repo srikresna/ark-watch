@@ -186,7 +186,9 @@ def harvest_flows(conn) -> dict[str, float | None]:
         out["stablecoin_usd"] = s["total_usd"]
     except Exception as ex:
         out["stablecoin_usd"] = None
-        leg_errors.append(f"stablecoin: {str(ex)[:50]}")
+        # inserted FIRST (review ronde-2): it was appended last and the cap
+        # truncated it — a dead DefiLlama was invisible in its own error row
+        leg_errors.insert(0, f"stablecoin: {str(ex)[:50]}")
     # fetch_log: named legs row (audit P1-3) — ERROR when the Bybit legs
     # failed, OK when they landed; EMPTY never hides a dead source
     n_bybit_legs = sum(
@@ -196,7 +198,9 @@ def harvest_flows(conn) -> dict[str, float | None]:
         conn, "f2", "BYBIT:FLOWS",
         {"funding_btc": out.get("funding_btc"), "oi_btc": out.get("oi_btc")},
         n_bybit_legs,
-        err="; ".join(leg_errors)[:200] or None,
+        # review ronde-2 (P2): cap raised + stablecoin error FIRST (it was
+        # appended last and the 200-char cap always truncated it away)
+        err="; ".join(leg_errors)[:400] or None,
     )
     # Write ONLY these columns of flows_daily (not a full-row REPLACE): a
     # REPLACE would NULL out columns already filled by other jobs when this
