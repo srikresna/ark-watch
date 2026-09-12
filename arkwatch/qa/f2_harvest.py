@@ -973,6 +973,20 @@ def main(argv: list[str] | None = None) -> int:
     log_collection(conn, "f2", "LME:OFFWARRANT", None, n_ow)
     log_collection(conn, "f2", "LME:OWSR", None, n_owsr, err=owsr_err)
 
+    # COT parser gate (vendor-api audit #2): FMP's independent parse of the
+    # same CFTC filings vs ours — OI + nonreportable must match EXACTLY.
+    # Saturdays only (post COT-release), quiet-degradable on other days.
+    if datetime.now(UTC).weekday() == 5:  # Saturday
+        try:
+            from .cot_gate import run_cot_gate
+
+            run_cot_gate(conn)
+        except Exception as ex:
+            from .fetch_log import log_collection as _lc
+
+            _lc(conn, "f2", "FMP:COT-GATE", None, 0, err=str(ex)[:140])
+            print(f"  ⚠ cot-gate: {str(ex)[:90]}")
+
     conn.close()
     return 0
 

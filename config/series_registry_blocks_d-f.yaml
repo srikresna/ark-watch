@@ -153,8 +153,7 @@ series:
   sanity_max: 110.0                  # historical max = 104.10; +margin
   primary_source: "FRED:INDPRO"
   secondary_source: "FMP:industrialProductionTotalIndex"
-  tolerance: 0.5                     # index — small FMP methodology differences; verify
-                                    # once the FMP key works
+  tolerance: 0.5                     # index; Gate-4c verified exact 2026-09-13
   active: 1
   # Hard-activity growth input — factory-sector pulse alongside CFNAI/ADS (cyclical confirmation).
 
@@ -171,9 +170,10 @@ series:
   sanity_min: 150000                 # historical min = 158,647 (1992); margin
   sanity_max: 850000                 # historical max = 768,072; +margin
   primary_source: "FRED:RSAFS"
-  secondary_source: "FMP:retailSales"
-  tolerance: 500                     # after converting FMP units → $M in the unit
-                                    # registry; 0.1% of level
+  secondary_source: null              # ANNOTATED 2026-09-13 (Gate-4c live): FMP retailSales
+  tolerance: null                     # is a DIFFERENT series definition (live Δ13.6% vs
+                                     # RSAFS Jul-26: 660k vs 763.6k $M) — NOT a level
+                                     # comparator; direction-only cross-check if ever
   active: 1
   # Consumer-spend hard data (advance retail) — household-demand pulse for the growth block.
 
@@ -1250,6 +1250,44 @@ series:
   tolerance: null
   active: 1
   # Z-window 3y — same exception as BAMLH0A0HYM2.
+
+- series_id: EODHD:SENT_BTC
+  name: "BTC news sentiment (EODHD, scale -1..+1)"
+  block: F
+  tier: 1
+  unit: "sentiment (-1..+1)"
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day            # article date; SPARSE (a few points/month)
+  release_schedule: "irregular — news-driven; displayed WITH its date, never implied daily"
+  expected_start: "2026-08-01"      # endpoint returns only recent points
+  sanity_min: -1.0
+  sanity_max: 1.0
+  primary_source: "EODHD:/api/sentiments btc-usd.cc"
+  secondary_source: null            # CNN F&G is a DIFFERENT gauge (equity risk
+  tolerance: null                   # appetite) — displayed side-by-side, never
+                                    # cross-calibrated (owner decision 2026-09-13)
+  active: 1
+  # Vendor-api audit #3: crypto-book sentiment leg. CNN F&G covers equity
+  # appetite; this covers BTC news tone. Brief shows both side by side with
+  # the sparse date label.
+
+- series_id: EODHD:SENT_ETH
+  name: "ETH news sentiment (EODHD, scale -1..+1)"
+  block: F
+  tier: 1
+  unit: "sentiment (-1..+1)"
+  value_format: fraction
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "irregular — even sparser than BTC"
+  expected_start: "2026-08-01"
+  sanity_min: -1.0
+  sanity_max: 1.0
+  primary_source: "EODHD:/api/sentiments eth-usd.cc"
+  secondary_source: null
+  tolerance: null
+  active: 1
 
 - series_id: FRED:NFCI
   name: "Chicago Fed National Financial Conditions Index"

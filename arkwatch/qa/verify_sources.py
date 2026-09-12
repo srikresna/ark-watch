@@ -42,6 +42,36 @@ CROSSVAL_MAP = {
     "FRED:DGS10": "year10",
     "FRED:DGS30": "year30",
 }
+# Gate-4b (vendor-api audit #1): FRED ↔ EODHD UST curves, same date. Block B
+# previously had a SINGLE leg; these make the registry's long-promised
+# secondary a live daily check (tolerance from the registry rows, 2bp).
+EODHD_UST_XVAL = {
+    "FRED:DFII10": ("real", "10Y"),
+    "FRED:DFII5": ("real", "5Y"),
+    "FRED:DGS10": ("nominal", "10Y"),
+}
+
+
+def _crossval_eodhd_ust(series_id: str, fred_value: float, fred_ts: str,
+                        tolerance: float | None) -> str:
+    """Same-date |FRED − EODHD| ≤ tol. EODHD unreachable → '·' (degradable:
+    the vendor leg may never block the gate), mismatch → ✗ with the delta."""
+    kind, tenor = EODHD_UST_XVAL[series_id]
+    try:
+        if kind == "real":
+            rows = eodhd.fetch_ust_real_yields(tenor, days=10)
+        else:
+            rows = eodhd.fetch_ust_nominal(tenor, days=10)
+        by_date = {r["ts"]: r["value"] for r in rows}
+        v = by_date.get(str(fred_ts)[:10])
+        if v is None:
+            avail = max(by_date)
+            return f"· EODHD last {avail} ≠ FRED {fred_ts}"
+        diff = abs(v - fred_value)
+        tol = tolerance if tolerance is not None else 0.03
+        return "✓" if diff <= tol else f"✗ Δ{diff:.3f} @{fred_ts}"
+    except Exception as ex:
+        return f"· {str(ex)[:40]}"
 
 
 def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: float | None) -> str:
@@ -81,6 +111,76 @@ def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: fl
         return "✓" if diff <= tol else f"✗ Δ{diff:.3f} @{fred_ts}"
     except Exception as ex:
         return f"✗ {str(ex)[:60]}"
+
+
+# Gate-4c (vendor-api audit #5): FMP economic-indicators crossval for the
+# registry secondaries that were declared but never fetched ("premium key
+# 401 during verification" — the note is stale, the key works). Levels that
+# reach the brief: ICSA, UNRATE, PAYEMS (all verified exact at wiring).
+# DFF deliberately ABSENT: FMP updates federalFunds monthly-only (verified
+# live 2026-09-13: last 2026-08-01 vs FRED daily) — no same-date leg exists.
+FMP_IND_XVAL = {
+    "FRED:ICSA": ("initialClaims", 21),      # weekly
+    "FRED:UNRATE": ("unemploymentRate", 75), # monthly
+    "FRED:PAYEMS": ("totalNonfarmPayroll", 75),
+    "FRED:INDPRO": ("industrialProductionTotalIndex", 75),
+    # RSAFS deliberately ABSENT: live-wired 2026-09-13 and immediately caught
+    # a 13.6% definitional gap (FRED RSAFS = retail trade+food services, FMP
+    # retailSales = a narrower series) — a semantic mismatch, not an error;
+    # registry annotated accordingly
+}
+
+
+def _crossval_fmp_indicator(series_id: str, fred_value: float, fred_ts: str,
+                            tolerance: float | None) -> str:
+    """Same-observation |FRED − FMP economic-indicator| ≤ tol. FMP mirrors the
+    official initial print; same-date lookup, monthly series matched on the
+    month (ts is month-start)."""
+    import os
+
+    import requests as _rq
+
+    key = os.environ.get("FMP_API_KEY", "")
+    if not key:
+        return "·"
+    name, window = FMP_IND_XVAL[series_id]
+    monthly = series_id in ("FRED:UNRATE", "FRED:PAYEMS")
+    try:
+        from datetime import datetime
+        from datetime import timedelta as _td
+
+        today = datetime.utcnow().date()
+        r = _rq.get(
+            "https://financialmodelingprep.com/stable/economic-indicators",
+            params={
+                "name": name,
+                "from": str(today - _td(days=window)),
+                "to": str(today + _td(days=1)),
+                "apikey": key,
+            },
+            timeout=(10, 30),
+        )
+        rows = r.json()
+        if not isinstance(rows, list) or not rows:
+            return "· FMP empty"
+        by_date = {str(x.get("date", ""))[:10]: x for x in rows}
+        want = str(fred_ts)[:10]
+        row = by_date.get(want)
+        if row is None and monthly:
+            # monthly series: match any observation in the same YYYY-MM
+            cands = [v for k, v in by_date.items() if k[:7] == want[:7]]
+            row = cands[-1] if cands else None
+        if row is None:
+            avail = max(by_date)
+            return f"· FMP last {avail} ≠ FRED {fred_ts}"
+        val = row.get("value")
+        if val is None:
+            return "· FMP value null"
+        diff = abs(float(val) - fred_value)
+        tol = tolerance if tolerance is not None else 0.1
+        return "✓" if diff <= tol else f"✗ Δ{diff:,.3f} @{fred_ts}"
+    except Exception as ex:
+        return f"· {str(ex)[:40]}"
 
 
 GRACE_DAYS = 90  # expected_start in the seed is approximate
@@ -219,6 +319,19 @@ def verify(
             # GATE 4 — CROSSVAL (FRED treasury ↔ FMP, same date)
             if e["series_id"] in CROSSVAL_MAP:
                 r.crossval = _crossval_fmp(
+                    e["series_id"], cur["value"], cur["ts"], e.get("tolerance")
+                )
+            elif e["series_id"] in FMP_IND_XVAL:
+                r.crossval = _crossval_fmp_indicator(
+                    e["series_id"], cur["value"], cur["ts"], e.get("tolerance")
+                )
+            # GATE 4b — EODHD UST crossval (vendor-api audit #1): block B had
+            # ONE leg (FRED DFII/DGS); the registry has promised the EODHD
+            # secondary all along. Same-date compare — the whole point is a
+            # lie-detector for silent parse/vintage drift on the block that
+            # drives the metals book. Degradable: EODHD down → "·", not ✗.
+            if e["series_id"] in EODHD_UST_XVAL:
+                r.crossval = _crossval_eodhd_ust(
                     e["series_id"], cur["value"], cur["ts"], e.get("tolerance")
                 )
         except Exception as ex:  # a fetch error is recorded; it must not crash the gate

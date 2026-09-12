@@ -702,6 +702,23 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                     lines.append(
                         f"  F&G split: {lo[1]} {lo[0]:.0f} vs {hi[1]} {hi[0]:.0f}"
                     )
+        # Crypto news sentiment (EODHD) — side-by-side with F&G per owner
+        # decision 2026-09-13: DIFFERENT gauges (equity risk appetite vs
+        # BTC/ETH news tone), never cross-calibrated; sparse (few points a
+        # month) → the date is always shown, and >45d-old points vanish
+        sent_parts = []
+        for sid, lbl in (("EODHD:SENT_BTC", "BTC"), ("EODHD:SENT_ETH", "ETH")):
+            srow = conn.execute(
+                "SELECT ts, value FROM raw_observations WHERE series_id=?"
+                " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1",
+                (sid,),
+            ).fetchone()
+            if srow and srow[1] is not None:
+                age = (datetime.now(UTC).date() - datetime.fromisoformat(srow[0]).date()).days
+                if age <= 45:
+                    sent_parts.append(f"{lbl} {srow[1]:+.2f} ({srow[0][5:]})")
+        if sent_parts:
+            lines.append(f"  Crypto sentiment: {' · '.join(sent_parts)}")
         lines.append("")
 
     # FedWatch

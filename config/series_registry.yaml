@@ -575,9 +575,46 @@
 #     threshold)
 #   - 5y z-score + 20d momentum (XAUUSD driver #1) → computed
 # Daily identity (brief gate): DFII10 ≈ DGS10 − T10YIE (±25bps).
-# EODHD failover: /ust/real-yield-rates (single call) — wired as secondary
-# for the whole block.
+# EODHD failover: /ust/real-yield-rates — live daily Gate-4b crossval since
+# 2026-09-13 (vendor-api audit #1); same-date FRED↔EODHD agreement verified
+# exact-to-the-bp on 5Y & 10Y at wiring time.
 # =====================================================================================
+
+- series_id: EODHD:USTR10
+  name: Real yield 10Y (TIPS) — EODHD secondary leg
+  block: B
+  tier: 1
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days (UST real yield curve)
+  expected_start: 2015-01-01    # EODHD curve history depth unverified ±
+  sanity_min: -2.5
+  sanity_max: 5.0
+  primary_source: EODHD:/ust/real-yield-rates (10Y)
+  secondary_source: FRED:DFII10
+  tolerance: 0.02                 # same-date Gate-4b: verified exact-to-the-bp 2026-09-13
+  active: 1
+  # Vendor-api audit #1: the block-B second leg. Lands daily so a FRED outage
+  # leaves block B alive; Gate-4b compares same-date vs FRED:DFII10.
+
+- series_id: EODHD:USTR5
+  name: Real yield 5Y (TIPS) — EODHD secondary leg
+  block: B
+  tier: 1
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: et_close
+  release_schedule: business days (UST real yield curve)
+  expected_start: 2015-01-01    # ±
+  sanity_min: -2.5
+  sanity_max: 5.0
+  primary_source: EODHD:/ust/real-yield-rates (5Y)
+  secondary_source: FRED:DFII5
+  tolerance: 0.02
+  active: 1
 
 - series_id: FRED:DFII10
   name: Real yield 10Y (TIPS)

@@ -51,31 +51,11 @@ def fetch_recession_prob(lookback_days: int = 200) -> dict:
     newest = max(rows, key=lambda x: x["date"][:10])
     return {"ts": newest["date"][:10], "value": float(newest["value"])}
 
-
-def fetch_fmp_holidays(exchange: str = "NYSE", year: int | None = None) -> list[dict]:
-    """Exchange holiday calendar via FMP holidays-by-exchange.
-
-    Used to detect CME harvest windows colliding with equity holidays.
-    """
-    key = os.environ.get("FMP_API_KEY", "")
-    params = {"apikey": key, "exchange": exchange}
-    if year:
-        params["year"] = year
-    r = requests.get(
-        "https://financialmodelingprep.com/stable/holidays-by-exchange",
-        params=params,
-        timeout=(10, 30),
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"FMP holidays: HTTP {r.status_code}")
-    rows = r.json()
-    if not isinstance(rows, list):
-        return []
-    return [
-        {"date": x.get("date"), "name": x.get("name", ""), "closed": x.get("closed", True)}
-        for x in rows
-        if x.get("date")
-    ]
+# fetch_fmp_holidays DELETED 2026-09-13 (vendor-api audit #5): zero callers
+# since it landed — the CME harvest walk-back already treats empty days as
+# soft-holidays, making the pre-check dead weight. holidays-by-exchange
+# remains documented in the vendor docs if a scheduler-holiday feature
+# (NICE_TO_HAVE #8) is ever built.
 
 
 def fetch_mpt_mortgage() -> dict | None:
