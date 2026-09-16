@@ -13,7 +13,6 @@ later measured on the daily bar.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import math
 import sys
 import time
@@ -83,7 +82,12 @@ def backfill_fmp(conn, years: int = 5, db_path: str | None = None) -> int:
             nn = norm(e["name"])
             if not nn:
                 continue
-            uid = hashlib.sha1(f"{nn}|{e['ts_utc']}|US".encode()).hexdigest()[:16]
+            # RONDE-4 P0 (D-027): the CANONICAL date-based uid — the old
+            # full-timestamp uid here created a parallel row population the
+            # calendar upsert could never reach (actuals froze)
+            from .calendar import event_uid
+
+            uid = event_uid(nn, e["ts_utc"])
             rows.append(
                 (
                     uid,

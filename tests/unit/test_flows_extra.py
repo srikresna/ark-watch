@@ -471,7 +471,10 @@ def test_lbma_fallback_url_uses_downloads_pattern(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def _cnn_payload(score=39.0, ts="2026-09-09T23:59:55+00:00"):
+def _cnn_payload(score=39.0, ts=None):
+    # TIME-BOMB FIX (ronde-5): a fixed 2026-09-09 date trips the 4-day
+    # stale gate once the wall clock moves on — build from today instead
+    ts = ts or (datetime.now(UTC).date().isoformat() + "T23:59:55+00:00")
     return {
         "fear_and_greed": {
             "score": score,
@@ -525,7 +528,7 @@ def test_cnn_ts_from_timestamp_key(monkeypatch):
     report date lives at fd['timestamp']."""
     _mock_cnn(monkeypatch, _cnn_payload())
     fg = cnn.fetch_fear_greed()
-    assert fg["ts"] == "2026-09-09"
+    assert fg["ts"] == datetime.now(UTC).date().isoformat()
     assert fg["score"] == 39.0
     assert fg["prev_1m"] == 64.4
 
@@ -552,7 +555,8 @@ def test_cnn_landing_report_date_components_history(conn, monkeypatch):
     )  # f2 imports the symbol lazily; patch at the source module
     _harvest_cnn_fg(conn)
     sc, meta = conn.execute(
-        "SELECT value, meta_json FROM flows_periodic WHERE kind='cnn_fg' AND period='2026-09-09'"
+        "SELECT value, meta_json FROM flows_periodic WHERE kind='cnn_fg' AND period=?",
+        (datetime.now(UTC).date().isoformat(),),
     ).fetchone()
     assert sc == 39.0
     assert json.loads(meta)["prev_1m"] == 64.4

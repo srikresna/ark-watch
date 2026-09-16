@@ -181,16 +181,23 @@ def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict]
     return events, counts
 
 
+def event_uid(normalized_name: str, ts_utc: str) -> str:
+    """Canonical event uid — DATE-based: sha1(normalized_name|DATE|US)[:16].
+
+    RONDE-4 P0 (D-027): two uid schemes lived simultaneously (this date-based
+    one in calendar.save, and a FULL-TIMESTAMP one in qa/surprise.py) — 92.5%
+    of stored rows carried uids the calendar upsert could never match, so
+    actuals silently never filled for them. ONE canonical helper for ALL
+    writers; the uid uses only the DATE because the winning TIME can change
+    between pulls (dedup key is name+date)."""
+    return hashlib.sha1(f"{normalized_name}|{ts_utc[:10]}|US".encode()).hexdigest()[:16]
+
+
 def save(db_path: str, events: list[dict]) -> int:
     conn = db.get_conn(db_path, allow_init=True)
     rows = []
     for e in events:
-        # The uid uses only the DATE, not the merged time: the winning time can
-        # change between pulls, which would change the uid and duplicate rows.
-        # The dedup key is (name, date).
-        uid = hashlib.sha1(f"{e['normalized_name']}|{e['ts_utc'][:10]}|US".encode()).hexdigest()[
-            :16
-        ]
+        uid = event_uid(e["normalized_name"], e["ts_utc"])
         rows.append(
             (
                 uid,
