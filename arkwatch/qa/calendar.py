@@ -231,7 +231,8 @@ def save(db_path: str, events: list[dict]) -> int:
             "indicator_key)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(event_uid) DO UPDATE SET "
-            "  actual=excluded.actual, actual_source=excluded.actual_source "
+            "  actual=excluded.actual, actual_source=excluded.actual_source, "
+            "  ts_utc=excluded.ts_utc, release_ts=excluded.release_ts "
             " WHERE events.actual IS NULL AND excluded.actual IS NOT NULL",
             rows,
         )

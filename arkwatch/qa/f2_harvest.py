@@ -173,6 +173,15 @@ def harvest_flows(conn) -> dict[str, float | None]:
             rates = [h["rate"] for h in hist if h["ts"].startswith(last_day)]
             if not rates:
                 return None
+            # ronde-6 P2-5: completeness — the EOD is defined as THREE 8-hour
+            # fixings; a 2-of-3 average (run before the day's final fixing)
+            # is a partial print presented as complete. Refuse below 2, and
+            # flag 2-of-3 so the consumer knows it's partial.
+            if len(rates) < 2:
+                leg_errors.append(f"funding {symbol}: only {len(rates)} fixing(s)")
+                return None
+            if len(rates) < 3:
+                leg_errors.append(f"funding {symbol}: partial {len(rates)}/3 fixings")
             return sum(rates) / len(rates) * 10_000
         except Exception as ex:
             leg_errors.append(f"funding {symbol}: {str(ex)[:50]}")
@@ -194,10 +203,16 @@ def harvest_flows(conn) -> dict[str, float | None]:
                 leg_errors.append(f"ticker-fallback {sym}: {str(ex)[:50]}")
                 fed = None
         out[f"funding_{key}"] = fed
-    # DefiLlama stablecoins
+    # DefiLlama stablecoins — freshness-gated (ronde-6 P2-6): a dead feed
+    # silently served its last chart point forever; now the payload ts must
+    # be recent or the leg refuses to write (the funding-gate convention)
     try:
         s = bybit.fetch_stablecoin_total()
-        out["stablecoin_usd"] = s["total_usd"]
+        sc_ts = str(s.get("ts", ""))[:10]
+        if sc_ts and sc_ts < (datetime.now(UTC).date() - timedelta(days=3)).isoformat():
+            leg_errors.insert(0, f"stablecoin: stale chart point {sc_ts}")
+        else:
+            out["stablecoin_usd"] = s["total_usd"]
     except Exception as ex:
         out["stablecoin_usd"] = None
         # inserted FIRST (review ronde-2): it was appended last and the cap
@@ -224,16 +239,18 @@ def harvest_flows(conn) -> dict[str, float | None]:
     today = datetime.now(UTC).date().isoformat()
     conn.execute("BEGIN IMMEDIATE")
     conn.execute(
-        "INSERT INTO flows_daily(date,funding_bps,oi_btc,oi_eth,stablecoin_usd)"
-        " VALUES (?,?,?,?,?)"
+        "INSERT INTO flows_daily(date,funding_bps,funding_eth,oi_btc,oi_eth,stablecoin_usd)"
+        " VALUES (?,?,?,?,?,?)"
         " ON CONFLICT(date) DO UPDATE SET"
         " funding_bps=COALESCE(excluded.funding_bps, funding_bps),"
+        " funding_eth=COALESCE(excluded.funding_eth, funding_eth),"
         " oi_btc=COALESCE(excluded.oi_btc, oi_btc),"
         " oi_eth=COALESCE(excluded.oi_eth, oi_eth),"
         " stablecoin_usd=COALESCE(excluded.stablecoin_usd, stablecoin_usd)",
         (
             today,
             out.get("funding_btc"),
+            out.get("funding_eth"),
             out.get("oi_btc"),
             out.get("oi_eth"),
             out.get("stablecoin_usd"),

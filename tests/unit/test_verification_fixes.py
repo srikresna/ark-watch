@@ -90,16 +90,40 @@ def test_nyfed_fetch_window_covers_hole_dates(monkeypatch):
 def test_eodhd_fetch_window_all_rows_not_max(monkeypatch):
     from arkwatch.fetchers import eodhd
 
+    # dates must be RECENT (today-1) so the ronde-6 span guard passes
+    today = datetime.now(UTC).date()
     monkeypatch.setattr(
         eodhd, "_get",
         lambda path, params=None: [
-            {"code": "EFFR_SOFR", "date": "2026-09-03", "value_bps": -3.0},
-            {"code": "EFFR_SOFR", "date": "2026-09-04", "value_bps": -2.0},
-            {"code": "OTHER", "date": "2026-09-04", "value_bps": 99.0},
+            {"code": "EFFR_SOFR", "date": (today - timedelta(days=1)).isoformat(),
+             "value_bps": -3.0},
+            {"code": "EFFR_SOFR", "date": today.isoformat(), "value_bps": -2.0},
+            {"code": "OTHER", "date": today.isoformat(), "value_bps": 99.0},
         ],
     )
     pts = eodhd.fetch_window("EODHD:FS_EFFR_SOFR", days=10)
-    assert [(p["ts"], p["value"]) for p in pts] == [("2026-09-03", -3.0), ("2026-09-04", -2.0)]
+    assert [(p["ts"], p["value"]) for p in pts] == [
+        ((today - timedelta(days=1)).isoformat(), -3.0),
+        (today.isoformat(), -2.0),
+    ]
+
+
+def test_eodhd_fetch_window_stale_span_raises(monkeypatch):
+    """ronde-6 P2-8: a stale window (newest >5d old) means the server
+    shrank/truncated the response — raise, don't silently partial-heal."""
+    from arkwatch.fetchers import eodhd
+
+    old_day = (datetime.now(UTC).date() - timedelta(days=30)).isoformat()
+    monkeypatch.setattr(
+        eodhd, "_get",
+        lambda path, params=None: [
+            {"code": "EFFR_SOFR", "date": old_day, "value_bps": -3.0},
+        ],
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(eodhd.EodhdError, match="stale"):
+        eodhd.fetch_window("EODHD:FS_EFFR_SOFR", days=10)
 
 
 def test_fiscal_fetch_window_multi_day(monkeypatch):
@@ -167,7 +191,7 @@ def test_funding_eod_stale_feed_refuses(monkeypatch):
 
     c = sqlite3.connect(":memory:", isolation_level=None)
     c.execute("CREATE TABLE flows_daily (date TEXT PRIMARY KEY, funding_bps REAL,"
-              " oi_btc REAL, oi_eth REAL, stablecoin_usd REAL)")
+              " funding_eth REAL, oi_btc REAL, oi_eth REAL, stablecoin_usd REAL)")
     c.execute("CREATE TABLE fetch_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT,"
               " fetcher TEXT, target TEXT, status TEXT, http_status INTEGER,"
               " schema_fp TEXT, error TEXT, duration_ms INTEGER, rows INTEGER,"
@@ -201,7 +225,7 @@ def test_flows_upsert_coalesce_protects_prior_values():
 
     c = sqlite3.connect(":memory:", isolation_level=None)
     c.execute("CREATE TABLE flows_daily (date TEXT PRIMARY KEY, funding_bps REAL,"
-              " oi_btc REAL, oi_eth REAL, stablecoin_usd REAL)")
+              " funding_eth REAL, oi_btc REAL, oi_eth REAL, stablecoin_usd REAL)")
     mock_harvest(c, 3.5, 1000.0)     # morning success
     mock_harvest(c, None, None)      # afternoon retry, legs dead
     row = c.execute("SELECT funding_bps, oi_btc FROM flows_daily").fetchone()

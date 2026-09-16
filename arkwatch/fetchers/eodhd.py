@@ -104,11 +104,22 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     code = key[3:]
     rows = [r for r in _get("/spreads/funding-stress") if r.get("code") == code]
     rows.sort(key=lambda r: r["date"])
-    return [
+    out = [
         {"ts": r["date"], "value": float(r["value_bps"])}
         for r in rows[-int(days * 1.8):]
         if r.get("value_bps") is not None
     ]
+    # ronde-6 P2-8: server-shrink guard — if the newest point is >5 days
+    # old the window is stale (a shrunk/truncated response heals nothing);
+    # raise so the harvest records WINDOW_FALLBACK instead of a silent
+    # partial heal
+    from datetime import UTC, date, datetime
+
+    if out:
+        newest = date.fromisoformat(out[-1]["ts"])
+        if (datetime.now(UTC).date() - newest).days > 5:
+            raise EodhdError(f"funding-stress window stale: newest {out[-1]['ts']}")
+    return out
 
 
 def fetch_latest(series_id: str) -> dict:

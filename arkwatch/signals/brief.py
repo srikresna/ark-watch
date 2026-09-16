@@ -185,7 +185,11 @@ def _event_consensus(conn: sqlite3.Connection, date_iso: str, sid: str) -> float
 # Data-age thresholds (days) per frequency — W/M/Q/A get proportional
 # windows so monthly/quarterly series are not always flagged 'stale' by the
 # daily threshold.
-_STALE_DAYS = {"D": 5, "W": 14, "M": 45, "Q": 120, "A": 400}
+# RONDE-6 (P2-3): widened for release lag — the ts is the REFERENCE period,
+# not the release date, so a monthly series ages ref_period + publication
+# lag before its next print (the flat M:45 false-flagged 30/115 series
+# that were sitting at the source frontier)
+_STALE_DAYS = {"D": 5, "W": 14, "M": 75, "Q": 150, "A": 500}
 
 
 def _brief_health_check(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
