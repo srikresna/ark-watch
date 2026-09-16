@@ -99,6 +99,8 @@ def fetch_earnings_calendar(from_d: str, to_d: str, page: int = 0) -> list[dict]
         if len(rows) < FMP_EARNINGS_PAGE_CAP:
             return out
         page += 1  # full page → the window has more pages (cap truncation)
+        if page > 10:  # ronde-5: bound the walk — a server that ignores the
+            return out  # page param (always-full pages) must not loop forever
 
 # fetch_fmp_holidays DELETED 2026-09-13 (vendor-api audit #5): zero callers
 # since it landed — the CME harvest walk-back already treats empty days as

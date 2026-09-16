@@ -110,17 +110,26 @@ def backfill_fmp(conn, years: int = 5, db_path: str | None = None) -> int:
         added = 0
         if rows:
             conn.execute("BEGIN IMMEDIATE")
+            # RONDE-5 P1 (D-028): INSERT OR IGNORE could never fill an existing
+            # canonical row's NULL actual — the Aug-2026 NFP stayed frozen
+            # because the daily pull window (now-3d) had already passed it.
+            # The conditional upsert mirrors calendar.save's heal semantics:
+            # fill-if-NULL, never overwrite a filled value.
             cur = conn.executemany(
-                "INSERT OR IGNORE INTO events(event_uid,ts_utc,release_ts,country,name,"
+                "INSERT INTO events(event_uid,ts_utc,release_ts,country,name,"
                 "normalized_name,importance,consensus,consensus_source,actual,actual_source,"
                 "previous,surprise_z,is_curated,indicator_key)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(event_uid) DO UPDATE SET"
+                " actual=excluded.actual, actual_source=excluded.actual_source,"
+                " previous=COALESCE(events.previous, excluded.previous)"
+                " WHERE events.actual IS NULL AND excluded.actual IS NOT NULL",
                 rows,
             )
             conn.execute("COMMIT")
             added = cur.rowcount
             total += added
-        print(f"  {q:%Y-%m}: +{len(rows)} pairs ({added} new)")
+        print(f"  {q:%Y-%m}: +{len(rows)} pairs ({added} new/healed)")
         q = q_end + timedelta(days=1)
         time.sleep(0.4)  # polite rate limit
     return total

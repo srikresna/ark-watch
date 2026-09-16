@@ -57,13 +57,27 @@ def harvest_cot(conn, weeks: int = 156) -> dict[str, int]:
             except Exception:
                 out[f"{name}|{combined_type}"] = -1
 
-        # Optional legacy historical depth when defined in config
+        # Optional legacy historical depth when defined in config — GATED
+        # (ronde-5): a retired series (copper 085691 died 1989-12-15; the
+        # live one is 085692) would otherwise be re-downloaded and its 285
+        # dead rows rewritten on EVERY f2 run (8x/week) for nothing. Skip
+        # once the stored MAX for that code is older than 5 years.
         if c.get("legacy_code") and c.get("legacy_dataset"):
-            try:
-                rows_l = cot.fetch_cot("legacy", str(c["legacy_code"]), limit=weeks)
-                out[f"{name}|legacy"] = _save_cot(conn, rows_l)
-            except Exception:
-                out[f"{name}|legacy"] = -1
+            ceiling = conn.execute(
+                "SELECT MAX(report_date) FROM cot_raw WHERE contract_code=?",
+                (str(c["legacy_code"]),),
+            ).fetchone()[0]
+            retired = ceiling is not None and ceiling < (
+                datetime.now(UTC).date() - timedelta(days=365 * 5)
+            ).isoformat()
+            if retired:
+                out[f"{name}|legacy"] = 0  # retired series — skip fetch
+            else:
+                try:
+                    rows_l = cot.fetch_cot("legacy", str(c["legacy_code"]), limit=weeks)
+                    out[f"{name}|legacy"] = _save_cot(conn, rows_l)
+                except Exception:
+                    out[f"{name}|legacy"] = -1
     return out
 
 

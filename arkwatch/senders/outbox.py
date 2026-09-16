@@ -47,18 +47,24 @@ def _claim_brief_rows(conn: sqlite3.Connection) -> list[tuple]:
         ).fetchone()
         if row:
             keep_ids.append(row[0])
-    # supersede everything older still marked undelivered
+    # supersede everything older still marked undelivered — but NEVER a
+    # fresh 'sending' row (< CLAIM_STALE_MIN old): a second send_pending
+    # inside the claim window would terminally kill the in-flight delivery
     if keep_ids:
         marks = ",".join("?" * len(keep_ids))
         conn.execute(
             "UPDATE brief_deliveries SET status='superseded'"
-            f" WHERE id NOT IN ({marks}) AND status IN ('pending','sending','failed')",
-            keep_ids,
+            f" WHERE id NOT IN ({marks}) AND status IN ('pending','failed')"
+            " OR (id NOT IN (" + marks + ") AND status='sending'"
+            " AND (claimed_at IS NULL OR claimed_at < ?))",
+            (*keep_ids, *keep_ids, stale),
         )
     else:
         conn.execute(
             "UPDATE brief_deliveries SET status='superseded'"
-            " WHERE status IN ('pending','sending','failed')"
+            " WHERE status IN ('pending','failed')"
+            " OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?))",
+            (stale,),
         )
     rows = []
     for row_id in keep_ids:

@@ -92,10 +92,15 @@ def fetch_sentiments(tickers: str = "btc-usd.cc,eth-usd.cc") -> dict[str, list[d
 def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     """GAP-HEAL (audit P1-1): the funding-stress response already carries a
     ~19-day window per code — landing only the max row left shutdown-day
-    holes permanent. Return every row for the code (PK dedup upstream)."""
+    holes permanent. Return every row for the code (PK dedup upstream).
+
+    Unsupported series return [] (ronde-5): raising made every non-FS series
+    log a daily WINDOW_FALLBACK error, burying real FS-window failures in
+    expected noise — an empty list is the honest 'no window support' signal
+    and the harvest falls back silently, as designed."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     if not key.startswith("FS_"):
-        raise EodhdError(f"fetch_window: unsupported series {key}")
+        return []
     code = key[3:]
     rows = [r for r in _get("/spreads/funding-stress") if r.get("code") == code]
     rows.sort(key=lambda r: r["date"])
