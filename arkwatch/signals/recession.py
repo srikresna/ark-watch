@@ -45,6 +45,12 @@ ANXIOUS_FORECAST_LEAD_DAYS = 92  # ~1 quarter
 # suppress the leg most of each month — gate it on the Q window instead.
 SAHM_STALE_DAYS = 120
 
+# ANXIOUS gets its own quarterly gate (ronde-7): the blanket Q window was
+# widened to 190d for slow quarterlies, but a survey 2+ cycles dead must
+# still vanish from the triangulation — a quarterly survey at frontier ages
+# ~1Q + publication ~4wk ≈ 122d; anything past ~130d is genuinely stale.
+ANXIOUS_STALE_DAYS = 130
+
 
 def _latest(conn: sqlite3.Connection, sid: str) -> tuple[str, float] | None:
     row = conn.execute(
@@ -71,7 +77,7 @@ def recession_snapshot(conn: sqlite3.Connection) -> dict:
     out["model_ts"] = None if m is None else m[0]
     a = _latest(conn, ANXIOUS)
     a_eff = None if a is None else (date.fromisoformat(a[0]) - timedelta(days=ANXIOUS_FORECAST_LEAD_DAYS)).isoformat()
-    out["anxious_pct"] = None if a is None or _age(a_eff) > _STALE_DAYS["Q"] else a[1]
+    out["anxious_pct"] = None if a is None or _age(a_eff) > ANXIOUS_STALE_DAYS else a[1]
     out["anxious_ts"] = None if a is None else a[0]
     s = _latest(conn, SAHM)
     out["sahm"] = None if s is None or _age(s[0]) > SAHM_STALE_DAYS else s[1]

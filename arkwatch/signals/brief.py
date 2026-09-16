@@ -189,7 +189,7 @@ def _event_consensus(conn: sqlite3.Connection, date_iso: str, sid: str) -> float
 # not the release date, so a monthly series ages ref_period + publication
 # lag before its next print (the flat M:45 false-flagged 30/115 series
 # that were sitting at the source frontier)
-_STALE_DAYS = {"D": 5, "W": 14, "M": 75, "Q": 150, "A": 500}
+_STALE_DAYS = {"D": 5, "W": 14, "M": 95, "Q": 190, "A": 550}
 
 
 def _brief_health_check(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
@@ -682,7 +682,15 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             from ..fetchers.cnn import score_to_label
 
             lbl = score_to_label(sc)
-            txt = f"  Fear&Greed: {sc:.0f} ({lbl})"
+            # ronde-7 P2: age gate mirrors the ETF-flows line — a frozen
+            # endpoint still writes its last score before the fetch_log gate
+            # fires, so the renderer must flag staleness itself (D-021 class)
+            fg_age = (
+                (datetime.now(UTC).date() - datetime.fromisoformat(fg_row[0]).date()).days
+                if fg_row[0] else 999
+            )
+            fg_stale = f" ⚠stale {fg_age}d" if fg_age > 4 else ""
+            txt = f"  Fear&Greed: {sc:.0f} ({lbl}){fg_stale}"
             try:
                 meta = json.loads(fg_row[2] or "{}")
             except ValueError:
@@ -725,11 +733,15 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             lines.append(f"  Crypto sentiment: {' · '.join(sent_parts)}")
         lines.append("")
 
-    # FedWatch
+    # FedWatch — ronde-7 P1: ORDER BY meeting_date alone let a tie on
+    # meeting_date across snapshot dates resolve to the OLDEST row (scan
+    # order) — the brief showed a 19-day-stale probability as current.
+    # The date = MAX(date) subquery pins the newest snapshot.
     fw_rows = conn.execute(
         "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate "
         "FROM fedwatch_snapshots WHERE source='diy' AND meeting_date >= ? "
-        "ORDER BY meeting_date LIMIT 1",
+        "AND date=(SELECT MAX(date) FROM fedwatch_snapshots WHERE source='diy')"
+        " ORDER BY meeting_date LIMIT 1",
         (datetime.now(UTC).date().isoformat(),),
     ).fetchone()
     if fw_rows:
@@ -758,10 +770,12 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         from ..transforms.ecbwatch import ECBMeetingProb
         from ..transforms.ecbwatch import format_brief as fmt_ecb
 
+        # ronde-7 P1: same tiebreak fix as FedWatch — pin the newest snapshot
         eb_rows = conn.execute(
             "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate, raw_json,"
             " (SELECT MAX(date) FROM fedwatch_snapshots WHERE source='diy_ecb')"
             " FROM fedwatch_snapshots WHERE source='diy_ecb' AND meeting_date >= ?"
+            " AND date=(SELECT MAX(date) FROM fedwatch_snapshots WHERE source='diy_ecb')"
             " ORDER BY meeting_date LIMIT 1",
             (datetime.now(UTC).date().isoformat(),),
         ).fetchone()
@@ -773,7 +787,17 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             with contextlib.suppress(ValueError):
                 meta = json.loads(eb_rows[5] or "{}")
                 diag = meta.get("diag")
-                first = (meta.get("rows") or [{}])[0]
+                # ronde-7 P2: rows[0] is the FIRST unknown meeting (often a
+                # passed date) — pair the meta row to the MEETING the query
+                # selected (impl date match), falling back to rows[0]
+                meet_iso = eb_rows[0]
+                rows_meta = meta.get("rows") or [{}]
+                first = next(
+                    (r for r in rows_meta if r.get("impl", "")[:10] and meet_iso >= r["impl"][:10]),
+                    rows_meta[0],
+                )
+                # exact/delta belong to the displayed meeting — approximate
+                # by the row whose impl date is the latest <= meeting_date
                 exact = first.get("exact")
                 delta_bp = float(first.get("delta_bp") or 0.0)
             p = ECBMeetingProb(

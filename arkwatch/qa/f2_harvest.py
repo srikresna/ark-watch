@@ -157,26 +157,29 @@ def harvest_flows(conn) -> dict[str, float | None]:
     leg_errors: list[str] = []
 
     def _funding_eod_bps(symbol: str) -> float | None:
-        """Average of the last UTC day's three 8-hour points = EOD, gated on
-        freshness: the newest fixing must be today's (f2 runs 08:30 WIB = 01:30
-        UTC, so yesterday's 16:00 UTC point IS today's EOD by WIB clock —
-        accept fixing dates >= yesterday UTC; anything older = frozen feed)."""
+        """Average of YESTERDAY's three 8-hour fixings = the last COMPLETE
+        UTC day's EOD (ronde-7 P1: slicing the max day refused every healthy
+        feed at realistic run times — after 00:00 UTC the newest day has
+        exactly 1 fixing, so the gate fired 'only 1 fixing(s)' daily and the
+        instantaneous ticker fallback got stored under the EOD label).
+        Freshness gate: the newest fixing must still be >= yesterday."""
         try:
             hist = bybit.fetch_funding_history(symbol, limit=9)
             if not hist:
                 return None
-            last_day = max(h["ts"] for h in hist)[:10]
+            newest = max(h["ts"] for h in hist)[:10]
             yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
-            if last_day < yesterday:
-                leg_errors.append(f"funding {symbol}: feed frozen at {last_day}")
+            if newest < yesterday:
+                leg_errors.append(f"funding {symbol}: feed frozen at {newest}")
                 return None
-            rates = [h["rate"] for h in hist if h["ts"].startswith(last_day)]
+            rates = [h["rate"] for h in hist if h["ts"].startswith(yesterday)]
             if not rates:
-                return None
-            # ronde-6 P2-5: completeness — the EOD is defined as THREE 8-hour
-            # fixings; a 2-of-3 average (run before the day's final fixing)
-            # is a partial print presented as complete. Refuse below 2, and
-            # flag 2-of-3 so the consumer knows it's partial.
+                # today's fixings exist but yesterday's dropped out of the
+                # window (clock edge) — fall back to the newest day present
+                last_day = newest
+                rates = [h["rate"] for h in hist if h["ts"].startswith(last_day)]
+                if not rates:
+                    return None
             if len(rates) < 2:
                 leg_errors.append(f"funding {symbol}: only {len(rates)} fixing(s)")
                 return None
@@ -797,7 +800,16 @@ def compute_ecbwatch(conn) -> list[dict]:
     )
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # ronde-7 P1: cap stored meetings at the liquid horizon — the
+        # far-tail rows (thin/zero-OI months beyond the strip's meaningful
+        # end) are non-monotone artifacts that a data-only NULL could never
+        # outlive (every run regenerated them)
+        from datetime import date as _d
+
+        horizon_cap = (_d.today() + timedelta(days=550)).isoformat()
         for r in rows:
+            if r.meeting_date.isoformat() > horizon_cap:
+                continue
             conn.execute(
                 "INSERT OR REPLACE INTO fedwatch_snapshots"
                 "(date,meeting_date,source,prob_ease,prob_hold,prob_hike,"
