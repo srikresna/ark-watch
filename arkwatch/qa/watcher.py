@@ -601,26 +601,10 @@ def check_all(conn) -> list[str]:
     except Exception as ex:
         print(f"⚠ fiscal trigger skipped: {str(ex)[:120]}")
 
-    # 5. Extreme funding (|rate| > funding_extreme_bps, default 0.05%/8h = 5bps)
-    # — NULL = fetch failure (skip). A sentinel error value must not pass the
-    # bps filter; the row must also be fresh (≤2 days) so a stale row cannot re-fire
-    flow = conn.execute(
-        "SELECT funding_bps, date FROM flows_daily "
-        "WHERE funding_bps IS NOT NULL ORDER BY date DESC LIMIT 1"
-    ).fetchone()
-    if flow:
-        funding_bps, f_date = flow
-        fresh = (datetime.now(UTC).date() - datetime.fromisoformat(f_date).date()).days <= 2
-        if fresh and abs(funding_bps) > FUNDING_EXTREME_BPS:
-            side = "LONG CROWDED" if funding_bps > 0 else "SHORT CROWDED"
-            if _fire(
-                conn,
-                "funding_extreme",
-                f"BTC funding {funding_bps:.1f}bps/8h ({f_date})",
-                f"{side} — extreme leverage sentiment",
-                "Beware a counter-direction squeeze",
-            ):
-                fired.append("funding_extreme")
+    # 5. Extreme funding — RETIRED 2026-09-16 (Bybit unreachable from all our
+    # networks; served one alert at 22% fill rate over 23 days). Historical
+    # funding values remain in flows_daily but nothing writes new ones.
+    # The FUNDING_EXTREME_BPS threshold stays in params_signals.yaml (provenance).
 
     # 6. Gold↔RY divergence (simple form: RY up & gold up)
     ry = recent_values(conn, "FRED:DFII10", 60)

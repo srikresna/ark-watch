@@ -1,4 +1,10 @@
-"""Tests for the CBOE revival (vixterm signal) + Bybit positioning harvest."""
+"""Tests for the CBOE revival (vixterm signal).
+
+Bybit positioning/funding tests REMOVED 2026-09-16 (owner decision): the
+Bybit API endpoints were retired — unreachable from all our networks.
+The file keeps its name for git-blame continuity; only the CBOE/vixterm
+tests below remain.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +13,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from arkwatch import db
-from arkwatch.fetchers import bybit
-from arkwatch.signals.vixterm import (
-    store_vixterm_signals,
-    vix9d_ratio,
-    vixterm_brief_line,
-)
 
 
 @pytest.fixture()
@@ -132,136 +132,6 @@ def test_ratio_missing_leg_degrades(conn):
     assert vix9d_ratio(conn) is None
 
 
-# --- Bybit positioning harvest -----------------------------------------------------
-
-
-def _mock_bybit(monkeypatch, ls=None, tk=None, oi=None):
-    ls = ls or []
-    tk = tk or []
-    oi = oi or []
-
-    monkeypatch.setattr(bybit, "fetch_account_ratio", lambda s, limit=30: ls)
-    monkeypatch.setattr(bybit, "fetch_taker_volume", lambda s, limit=30: tk)
-    monkeypatch.setattr(bybit, "fetch_open_interest_history", lambda s, limit=30: oi)
-
-
-def test_positioning_upsert_and_selfheal(conn, monkeypatch):
-    from arkwatch.qa.f2_harvest import _harvest_positioning
-
-    # day 1: only the ls leg answers (Bybit window half-open).
-    # The tk leg is GONE from the harvest loop — Bybit retired taker-volume
-    # (404, D-020) — so taker_buy_ratio stays NULL forever here.
-    _mock_bybit(
-        monkeypatch,
-        ls=[{"ts": "2026-09-07", "ls_ratio": 1.2}, {"ts": "2026-09-08", "ls_ratio": 1.3}],
-    )
-    n = _harvest_positioning(conn)
-    assert n == 4  # 2 dates x 2 symbols
-    row = conn.execute(
-        "SELECT ls_ratio, taker_buy_ratio, oi FROM bybit_positioning"
-        " WHERE symbol='BTCUSDT' AND date='2026-09-08'"
-    ).fetchone()
-    assert row == (1.3, None, None)
-
-    # day 2: both live legs answer — COALESCE fills the NULL legs, keeps old
-    _mock_bybit(
-        monkeypatch,
-        ls=[{"ts": "2026-09-08", "ls_ratio": 9.9}],  # would overwrite…
-        oi=[{"ts": "2026-09-08", "oi": 56157.0}],
-    )
-    _harvest_positioning(conn)
-    row = conn.execute(
-        "SELECT ls_ratio, taker_buy_ratio, oi FROM bybit_positioning"
-        " WHERE symbol='BTCUSDT' AND date='2026-09-08'"
-    ).fetchone()
-    # non-NULL incoming legs DO update (ls 1.3→9.9); NULL legs never clobber
-    assert row == (9.9, None, 56157.0)
-
-
-def test_bybit_account_ratio_new_shape(monkeypatch):
-    """D-020 REGRESSION: Bybit removed accountLongRatio — the endpoint now
-    returns buyRatio/sellRatio (same 0..1 share). Either shape must parse."""
-
-    class R:
-        status_code = 200
-
-        def json(self):
-            return {
-                "retCode": 0,
-                "result": {"list": [
-                    {"symbol": "BTCUSDT", "buyRatio": "0.573",
-                     "sellRatio": "0.427", "timestamp": "1788998400000"},
-                ]},
-            }
-
-    monkeypatch.setattr(bybit.requests, "get", lambda *a, **k: R())
-    rows = bybit.fetch_account_ratio("BTCUSDT")
-    assert rows == [{"ts": "2026-09-10", "ls_ratio": 0.573}]
-
-
-def test_bybit_taker_volume_retired(monkeypatch):
-    with pytest.raises(bybit.BybitError, match="retired"):
-        bybit.fetch_taker_volume("BTCUSDT")
-
-
-def test_positioning_total_outage_noop(conn, monkeypatch):
-    from arkwatch.qa.f2_harvest import _harvest_positioning
-
-    def dead(*a, **k):
-        raise bybit.BybitError("connection refused")
-
-    monkeypatch.setattr(bybit, "fetch_account_ratio", dead)
-    monkeypatch.setattr(bybit, "fetch_taker_volume", dead)
-    monkeypatch.setattr(bybit, "fetch_open_interest_history", dead)
-    assert _harvest_positioning(conn) == 0  # no rows, no crash, prints warnings
-
-
-def test_bybit_v5_no_retry_on_api_error(monkeypatch):
-    """API-level answers (404/param) must not retry — they don't heal; only
-    transport errors get the second attempt."""
-
-    class R:
-        status_code = 404
-        text = "{}"
-
-    calls = []
-
-    def fake_get(*a, **k):
-        calls.append(1)
-        return R()
-
-    monkeypatch.setattr(bybit.requests, "get", fake_get)
-    with pytest.raises(bybit.BybitError, match="404"):
-        bybit._v5("/v5/market/taker-volume", {})
-    assert len(calls) == 1
-
-
-def test_bybit_v5_transport_error_retries_once(monkeypatch):
-    """The OTHER half of the retry policy: a transport error (connection
-    refused — the documented TCP-intermittency) gets exactly one re-attempt,
-    and a success on attempt 2 is returned."""
-    import time
-
-    calls = []
-
-    class R:
-        status_code = 200
-
-        def json(self):
-            return {"retCode": 0, "result": {"list": [{"a": 1}]}}
-
-    def fake_get(*a, **k):
-        calls.append(1)
-        if len(calls) == 1:
-            raise bybit.requests.ConnectionError("refused")
-        return R()
-
-    monkeypatch.setattr(time, "sleep", lambda s: None)
-    monkeypatch.setattr(bybit.requests, "get", fake_get)
-    assert bybit._v5("/v5/market/account-ratio", {}) == [{"a": 1}]
-    assert len(calls) == 2
-
-
 def test_ratio_common_date_join(conn):
     """REGRESSION (review ronde-1): the two legs must quote the SAME trade
     date — FRED VIXCLS lags the CDN a day, and dividing VIX9D@today by
@@ -321,3 +191,11 @@ def test_cboe_rejects_non_calendar_dates(monkeypatch):
     rows = cboe.fetch_history_rows("VIX9D")
     assert len(rows) == 1
     assert rows[0]["ts"] == "2026-09-04"  # the garbage row never lands
+
+
+# import at the bottom to avoid the circular-import at module scope in tests
+from arkwatch.signals.vixterm import (  # noqa: E402
+    store_vixterm_signals,
+    vix9d_ratio,
+    vixterm_brief_line,
+)

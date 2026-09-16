@@ -570,14 +570,10 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         "FROM flows_daily ORDER BY date DESC LIMIT 1"
     ).fetchone()
     if flow_row:
-        funding_bps = flow_row[1]
-        # Fetch failures are stored as NULL (there is no −1 sentinel), so a
-        # plain None check suffices — `> -1` would silently discard
-        # legitimate negative funding rates
-        if funding_bps is not None:
-            lines.append(f"Flows: BTC funding {funding_bps:.2f}bps (EOD-avg)")
-        else:
-            lines.append("Flows: BTC funding N/A (fetch failed)")
+        # Bybit funding RETIRED 2026-09-16 (unreachable from all our networks;
+        # served one line at 22% fill rate) — the stablecoin line below
+        # (DefiLlama) is the surviving flows indicator
+        pass
         # ETF flows (Farside — release dates can lag today → separate query)
         etf_row = conn.execute(
             "SELECT date, btc_etf_musd, eth_etf_musd FROM flows_daily "

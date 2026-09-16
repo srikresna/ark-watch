@@ -172,37 +172,36 @@ def test_harvest_uses_fetch_window_and_falls_back(monkeypatch):
     assert werr and werr.startswith("WINDOW_FALLBACK")  # review ronde-2 P2
 
 
-# --- P1-3: Bybit legs ---------------------------------------------------------
+# --- P1-3: Bybit legs — RETIRED (stablecoin only) ------------------------------
 
 
-def test_funding_eod_stale_feed_refuses(monkeypatch):
-    """A frozen funding feed must NOT stamp its stale average under a fresh
-    date — the gate rejects fixings older than yesterday UTC."""
-    from arkwatch.fetchers import bybit
+def test_stablecoin_harvest_writes_and_gates(conn):
+    """The surviving flows leg: DefiLlama stablecoin → flows_daily +
+    LLAMA:STABLECOIN fetch_log row."""
     from arkwatch.qa.f2_harvest import harvest_flows
 
-    stale_day = (datetime.now(UTC).date() - timedelta(days=4)).isoformat()
-    monkeypatch.setattr(
-        bybit, "fetch_funding_history",
-        lambda s, limit=9: [{"ts": f"{stale_day}T16:00:00Z", "rate": 0.0001}],
-    )
-    monkeypatch.setattr(bybit, "fetch_ticker", lambda s: (_ for _ in ()).throw(OSError("dead")))
-    import sqlite3
+    today = datetime.now(UTC).date().isoformat()
+    monkeypatch_target = "arkwatch.fetchers.bybit.fetch_stablecoin_total"
 
-    c = sqlite3.connect(":memory:", isolation_level=None)
-    c.execute("CREATE TABLE flows_daily (date TEXT PRIMARY KEY, funding_bps REAL,"
-              " funding_eth REAL, oi_btc REAL, oi_eth REAL, stablecoin_usd REAL)")
-    c.execute("CREATE TABLE fetch_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT,"
-              " fetcher TEXT, target TEXT, status TEXT, http_status INTEGER,"
-              " schema_fp TEXT, error TEXT, duration_ms INTEGER, rows INTEGER,"
-              " quota_used INTEGER)")
-    c.execute("CREATE TABLE bybit_positioning (symbol TEXT NOT NULL, date TEXT NOT NULL,"
-              " ls_ratio REAL, taker_buy_ratio REAL, oi REAL, PRIMARY KEY (symbol, date))")
-    out = harvest_flows(c)
-    assert out["funding_btc"] is None  # refused: stale feed, no fallback either
-    err = c.execute("SELECT status, error FROM fetch_log WHERE target='BYBIT:FLOWS'").fetchone()
-    assert err[0] == "ERROR" and "frozen" in err[1]
-    c.close()
+
+    class FakeBybit:
+        @staticmethod
+        def fetch_stablecoin_total():
+            return {"ts": today, "total_usd": 309_123_456_789.0}
+
+    import unittest.mock as _mock
+
+    with _mock.patch(monkeypatch_target, FakeBybit.fetch_stablecoin_total):
+        out = harvest_flows(conn)
+    assert out["stablecoin_usd"] == 309_123_456_789.0
+    row = conn.execute(
+        "SELECT stablecoin_usd FROM flows_daily WHERE date=?", (today,)
+    ).fetchone()
+    assert row[0] == 309_123_456_789.0
+    log = conn.execute(
+        "SELECT status FROM fetch_log WHERE target='LLAMA:STABLECOIN'"
+    ).fetchone()
+    assert log[0] == "OK"
 
 
 def test_flows_upsert_coalesce_protects_prior_values():

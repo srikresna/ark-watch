@@ -137,192 +137,53 @@ def _save_cot(conn, rows: list[dict]) -> int:
 
 
 def harvest_flows(conn) -> dict[str, float | None]:
-    """Funding EOD = average of today's 8-hour funding points; NULL on failure.
+    """Stablecoin supply from DefiLlama (the surviving flows leg).
 
-    A fetch failure must produce NULL, not a sentinel: a sentinel −1 fraction
-    scaled by 10000 becomes −10000bps in flows_daily, passes the watcher's bps
-    filter, and fires a false extreme-funding alert. Legitimate negative
-    funding rates are unaffected.
-
-    AUDIT P1-3 (2026-09-13) hardening: (a) every Bybit/DefiLlama leg error is
-    surfaced as a named fetch_log row (BYBIT:FLOWS) — the funding/OI legs were
-    previously print-only, dead for 4+ days with zero trace; (b) the funding
-    EOD average refuses to write when the feed's last fixing is stale (the
-    BTC feed froze mid-day once while ETH stayed live — without the gate, a
-    recovering run would stamp the stale average under today's date).
+    RETIRED 2026-09-16 (owner decision): Bybit funding/OI/positioning removed —
+    Bybit unreachable from both PC (TCP-intermittent) and server (Indonesian
+    ISP block); Coinglass aggregator paid. The funding data served one brief
+    line + one alert at 22% fill rate over 23 days. Historical funding values
+    remain in flows_daily (append-only) but nothing writes or reads them.
+    DefiLlama STAYS: works from any network, feeds the stablecoin brief line.
     """
     from .fetch_log import log_collection
 
     out: dict[str, float | None] = {}
-    leg_errors: list[str] = []
-
-    def _funding_eod_bps(symbol: str) -> float | None:
-        """Average of YESTERDAY's three 8-hour fixings = the last COMPLETE
-        UTC day's EOD (ronde-7 P1: slicing the max day refused every healthy
-        feed at realistic run times — after 00:00 UTC the newest day has
-        exactly 1 fixing, so the gate fired 'only 1 fixing(s)' daily and the
-        instantaneous ticker fallback got stored under the EOD label).
-        Freshness gate: the newest fixing must still be >= yesterday."""
-        try:
-            hist = bybit.fetch_funding_history(symbol, limit=9)
-            if not hist:
-                return None
-            newest = max(h["ts"] for h in hist)[:10]
-            yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
-            if newest < yesterday:
-                leg_errors.append(f"funding {symbol}: feed frozen at {newest}")
-                return None
-            rates = [h["rate"] for h in hist if h["ts"].startswith(yesterday)]
-            if not rates:
-                # today's fixings exist but yesterday's dropped out of the
-                # window (clock edge) — fall back to the newest day present
-                last_day = newest
-                rates = [h["rate"] for h in hist if h["ts"].startswith(last_day)]
-                if not rates:
-                    return None
-            if len(rates) < 2:
-                leg_errors.append(f"funding {symbol}: only {len(rates)} fixing(s)")
-                return None
-            if len(rates) < 3:
-                leg_errors.append(f"funding {symbol}: partial {len(rates)}/3 fixings")
-            return sum(rates) / len(rates) * 10_000
-        except Exception as ex:
-            leg_errors.append(f"funding {symbol}: {str(ex)[:50]}")
-            return None
-
-    for sym, key in (("BTCUSDT", "btc"), ("ETHUSDT", "eth")):
-        try:
-            t = bybit.fetch_ticker(sym)
-            out[f"oi_{key}"] = t["open_interest"]
-        except Exception as ex:
-            out[f"oi_{key}"] = None
-            leg_errors.append(f"oi {sym}: {str(ex)[:50]}")
-            print(f"  ⚠ Bybit {sym}: {str(ex)[:70]}")
-        fed = _funding_eod_bps(sym)
-        if fed is None:  # Fallback: instantaneous point (degradable)
-            try:
-                fed = bybit.fetch_ticker(sym)["funding_rate"] * 10_000
-            except Exception as ex:
-                leg_errors.append(f"ticker-fallback {sym}: {str(ex)[:50]}")
-                fed = None
-        out[f"funding_{key}"] = fed
-    # DefiLlama stablecoins — freshness-gated (ronde-6 P2-6): a dead feed
-    # silently served its last chart point forever; now the payload ts must
-    # be recent or the leg refuses to write (the funding-gate convention)
+    sc_err: str | None = None
     try:
         s = bybit.fetch_stablecoin_total()
         sc_ts = str(s.get("ts", ""))[:10]
         if sc_ts and sc_ts < (datetime.now(UTC).date() - timedelta(days=3)).isoformat():
-            leg_errors.insert(0, f"stablecoin: stale chart point {sc_ts}")
+            sc_err = f"stablecoin: stale chart point {sc_ts}"
         else:
             out["stablecoin_usd"] = s["total_usd"]
     except Exception as ex:
         out["stablecoin_usd"] = None
-        # inserted FIRST (review ronde-2): it was appended last and the cap
-        # truncated it — a dead DefiLlama was invisible in its own error row
-        leg_errors.insert(0, f"stablecoin: {str(ex)[:50]}")
-    # fetch_log: named legs row (audit P1-3) — ERROR when the Bybit legs
-    # failed, OK when they landed; EMPTY never hides a dead source
-    n_bybit_legs = sum(
-        1 for k in ("funding_btc", "funding_eth", "oi_btc", "oi_eth") if out.get(k) is not None
-    )
+        sc_err = f"stablecoin: {str(ex)[:120]}"
     log_collection(
-        conn, "f2", "BYBIT:FLOWS",
-        {"funding_btc": out.get("funding_btc"), "oi_btc": out.get("oi_btc")},
-        n_bybit_legs,
-        # review ronde-2 (P2): cap raised + stablecoin error FIRST (it was
-        # appended last and the 200-char cap always truncated it away)
-        err="; ".join(leg_errors)[:400] or None,
+        conn, "f2", "LLAMA:STABLECOIN",
+        {"stablecoin_usd": out.get("stablecoin_usd")},
+        1 if out.get("stablecoin_usd") is not None else 0,
+        err=sc_err,
     )
-    # Write ONLY these columns of flows_daily (not a full-row REPLACE): a
-    # REPLACE would NULL out columns already filled by other jobs when this
-    # job retries. COALESCE (audit P1-3): a retry whose legs failed must not
-    # NULL-out values a successful earlier run already wrote — the excluded
-    # value only wins when it is NOT NULL (the bybit_positioning convention)
     today = datetime.now(UTC).date().isoformat()
     conn.execute("BEGIN IMMEDIATE")
     conn.execute(
-        "INSERT INTO flows_daily(date,funding_bps,funding_eth,oi_btc,oi_eth,stablecoin_usd)"
-        " VALUES (?,?,?,?,?,?)"
+        "INSERT INTO flows_daily(date,stablecoin_usd)"
+        " VALUES (?,?)"
         " ON CONFLICT(date) DO UPDATE SET"
-        " funding_bps=COALESCE(excluded.funding_bps, funding_bps),"
-        " funding_eth=COALESCE(excluded.funding_eth, funding_eth),"
-        " oi_btc=COALESCE(excluded.oi_btc, oi_btc),"
-        " oi_eth=COALESCE(excluded.oi_eth, oi_eth),"
         " stablecoin_usd=COALESCE(excluded.stablecoin_usd, stablecoin_usd)",
-        (
-            today,
-            out.get("funding_btc"),
-            out.get("funding_eth"),
-            out.get("oi_btc"),
-            out.get("oi_eth"),
-            out.get("stablecoin_usd"),
-        ),
+        (today, out.get("stablecoin_usd")),
     )
     conn.execute("COMMIT")
-
-    _harvest_positioning(conn)
     return out
 
 
-def _harvest_positioning(conn) -> int:
-    """Bybit positioning extras → bybit_positioning (migration v12).
-
-    Each leg is independently optional: a Bybit outage window stores the
-    legs that answered and leaves the rest NULL for that day (the funding
-    NULL convention — never a sentinel). Pulls the trailing ~30d each run;
-    upsert per (symbol, date), so gaps from dead days self-heal on the next
-    reachable window.
-    """
-    n = 0
-    for sym in ("BTCUSDT", "ETHUSDT"):
-        legs: dict[str, dict[str, float]] = {}
-        # taker-volume leg dropped (retired by Bybit, 404 — D-020); the
-        # column stays NULL until a replacement endpoint is pinned
-        for key, fn in (
-            ("ls", bybit.fetch_account_ratio),
-            ("oi", bybit.fetch_open_interest_history),
-        ):
-            try:
-                rows = fn(sym, limit=30)
-            except Exception as ex:
-                rows = []
-                print(f"  ⚠ Bybit {key} {sym}: {str(ex)[:70]}")
-            for r in rows:
-                legs.setdefault(r["ts"], {})[key] = r.get(
-                    "ls_ratio", r.get("buy_ratio", r.get("oi"))
-                )
-        if not legs:
-            continue
-        payload = [
-            (sym, d, v.get("ls"), v.get("tk"), v.get("oi")) for d, v in sorted(legs.items())
-        ]
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            conn.executemany(
-                "INSERT INTO bybit_positioning(symbol,date,ls_ratio,taker_buy_ratio,oi)"
-                " VALUES (?,?,?,?,?)"
-                " ON CONFLICT(symbol,date) DO UPDATE SET"
-                " ls_ratio=COALESCE(excluded.ls_ratio, ls_ratio),"
-                " taker_buy_ratio=COALESCE(excluded.taker_buy_ratio, taker_buy_ratio),"
-                " oi=COALESCE(excluded.oi, oi)",
-                payload,
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        n += len(payload)
-    if n:
-        print(f"  bybit_positioning: {n} rows upserted")
-    # fetch_log row so health checks can join on it (the LME:CA_STOCKS
-    # convention). n=0 during a Bybit outage window is NOT an error —
-    # log_collection writes status EMPTY (invisible to the OK/ERROR ratio,
-    # the funding-NULL convention).
-    from .fetch_log import log_collection
-
-    log_collection(conn, "bybit", "BYBIT:POSITIONING", None, n)
-    return n
+# Bybit positioning RETIRED 2026-09-16 (owner decision): _harvest_positioning
+# deleted — the bybit_positioning table had zero readers (dead-write since
+# v12 landed). Historical rows remain (append-only); the fetch functions
+# (fetch_account_ratio, fetch_open_interest_history) were removed from
+# bybit.py along with all other Bybit endpoints.
 
 
 def _stale_trade_days(today: str, days: int = 3) -> str:
