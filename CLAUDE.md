@@ -23,6 +23,7 @@ Personal US-macro monitoring system powering the owner's trading. Instruments: m
 
 ## Working style in this repo
 - Verification culture: live-test claims; adversarial-critic important designs; every result lands in the docs (they are the persistent memory of this project)
+- Commits follow Conventional Commits: `feat:` / `fix:` / `chore:` / `docs:` / `refactor:` / `test:` / `perf:` prefix, lowercase imperative subject ≤72 chars, body wraps at 72 — e.g. `fix(qa/calendar): block dead CME stub families at ingest` (owner decision 2026-09-17; history before it is free-form — do not rewrite pushed history)
 - Always consult context7 (MCP) for library/framework/API versions before writing code
 - Always refer to software principles guidelines likes SOLID, DRY, clean code, clean architecture. Write the code don't overenginereed but still focus on the software principles guidelines
 - Do research first before writing a code to make sure your code is up to date and best practices
