@@ -175,6 +175,28 @@ def test_harvest_uses_fetch_window_and_falls_back(monkeypatch):
 # --- P1-3: Bybit legs — RETIRED (stablecoin only) ------------------------------
 
 
+def test_llama_dict_shape_summed(monkeypatch):
+    """2026-09-17: DefiLlama changed totalCirculatingUSD from a scalar to a
+    per-peg dict — float(dict) crashed the f2 harvest on the server. The
+    total is the sum across pegs (the old scalar's definition)."""
+    from arkwatch.fetchers import bybit
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return [
+                {"date": "2026-09-17",
+                 "totalCirculatingUSD": {"peggedUSD": 305_000_000_000.0,
+                                         "peggedEUR": 500_000_000.0}},
+            ]
+
+    monkeypatch.setattr(bybit.requests, "get", lambda *a, **k: R())
+    out = bybit.fetch_stablecoin_total()
+    assert out["total_usd"] == 305_500_000_000.0
+    assert out["ts"] == "2026-09-17"
+
+
 def test_stablecoin_harvest_writes_and_gates(conn):
     """The surviving flows leg: DefiLlama stablecoin → flows_daily +
     LLAMA:STABLECOIN fetch_log row."""

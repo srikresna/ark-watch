@@ -155,6 +155,41 @@ class TestFedWatch:
             f"not the prior month's averaged implied"
         )
 
+    def test_stale_anchor_self_heal(self):
+        """2026-09-17 incident: DFF prints T+1, so the morning after the
+        Sep-16 hike (3.63→3.88) the anchor was still the pre-hike 3.63. The
+        D/n_post extraction amplified the 25bp error ×31/4 → Oct-26 implied
+        5.53%, Dec-09 3.61%, Jan-27 7.02% (live garbage on the server).
+        With anchor_date passed, the just-held meeting re-runs first and the
+        running rate bootstraps the post-hike level from the strip itself."""
+        from datetime import date
+
+        # live strip td=2026-09-15 (server cme_settlements, product 305)
+        settlements = {
+            "SEP 26": 96.2625, "OCT 26": 96.125, "NOV 26": 96.02, "DEC 26": 95.895,
+        }
+        probs = compute(settlements, 3.63, anchor_date=date(2026, 9, 15))
+        # the passed meeting is bootstrap machinery — never returned
+        assert all(p.meeting_date > date(2026, 9, 16) for p in probs)
+        oct_row = next(p for p in probs if p.meeting_date == date(2026, 10, 28))
+        # (3.7375·30 − 3.63·15)/15 = 3.845 running → (3.875·31 − 3.845·27)/4
+        # = 4.0775 — NOT the 5.529 the stale anchor produced
+        assert abs(oct_row.implied_rate - 4.0775) < 0.01
+        assert oct_row.prob_hike > 0.5  # ≈ +23bp priced for Oct
+
+    def test_stale_anchor_without_date_drops_degenerate(self):
+        """Without anchor_date the pre-fix garbage path computes rows beyond
+        ±100bp — the degenerate tripwire must DROP them (honest 'ZQ data
+        unavailable' degradation) instead of serving 5.53% to the brief."""
+        from datetime import date
+
+        settlements = {
+            "SEP 26": 96.2625, "OCT 26": 96.125, "NOV 26": 96.02, "DEC 26": 95.895,
+        }
+        probs = compute(settlements, 3.63)  # no anchor_date → old behavior + tripwire
+        assert all(abs(p.expected_moves) <= 4.0 for p in probs)
+        assert all(p.meeting_date != date(2026, 10, 28) for p in probs)  # the 5.53 row dropped
+
 
 class Test3mAnnualized:
     """3-month annualization verified through the production implementation."""

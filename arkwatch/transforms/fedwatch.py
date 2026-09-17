@@ -55,12 +55,17 @@ def month_code(y: int, m: int) -> str:
 
 
 def compute(
-    settlements: dict[str, float], effr: float, meetings: list[date] | None = None
+    settlements: dict[str, float],
+    effr: float,
+    meetings: list[date] | None = None,
+    anchor_date: date | None = None,
 ) -> list[MeetingProb]:
     """Per-meeting probabilities along the chronological path (running rate).
 
     settlements: {month_code: settle_price}, e.g. {"SEP 26": 96.35, "OCT 26": 96.14}
     effr: current effective fed funds rate (pct, e.g. 3.63)
+    anchor_date: observation date of `effr` (production passes it — see the
+        stale-anchor self-heal below)
 
     The pre-rate for meeting N is the rate in effect at the start of meeting
     N's month — i.e. the post-rate of meeting N-1 (running) — NOT the implied
@@ -69,10 +74,28 @@ def compute(
     Numerical example (Sep-26 cut fully priced, Oct priced as hold): correct
     pre 4.08 → hold 100%; wrong pre 4.205 → "cut 100%" for a meeting the
     market prices as a hold.
+
+    Stale-anchor self-heal (2026-09-17 incident): DFF prints T+1, so between
+    a rate change and the next print `effr` is still the OLD rate. The
+    D/n_post extraction amplifies that anchor error by ~D/n_post (live:
+    ×31/4 → Oct-26 "implied" 5.53% the morning after the Sep-16 hike to
+    3.88). When anchor_date predates a just-held meeting, that meeting is
+    re-run FIRST so the running rate bootstraps the new level from the strip
+    itself (live: (3.7375·30 − 3.63·15)/15 = 3.845 = the post-hike level).
+    The anchor counts as the PRE-rate through the decision day itself — a
+    same-day DFF still prints the old rate because the new target takes
+    effect the following day.
     """
+    today = date.today()
     if meetings is None:
-        meetings = [d for d in FOMC_SCHEDULE if d >= date.today()]
-    meetings = sorted(meetings)
+        loop = [m for m in FOMC_SCHEDULE if m >= today]
+        if anchor_date is not None:
+            loop = [m for m in FOMC_SCHEDULE if anchor_date <= m < today] + loop
+        future_only = True
+    else:
+        loop = list(meetings)
+        future_only = False
+    meetings = sorted(loop)
     implied = {k.strip().upper(): 100.0 - v for k, v in settlements.items() if v is not None}
 
     running = effr  # rate currently in effect
@@ -135,6 +158,24 @@ def compute(
                 expected_moves=round(expected, 2),
             )
         )
+    if future_only:
+        # the bootstrap meetings are machinery — only future meetings are
+        # a probability statement
+        results = [r for r in results if r.meeting_date >= today]
+        # Degenerate tripwire (production path only — explicit `meetings`
+        # callers get the raw math): no FOMC meeting in history moved
+        # >100bp, so a row beyond 4 moves is an artifact (stale anchor, bad
+        # settle), never a probability. Drop it loudly so the brief degrades
+        # to "ZQ data unavailable" instead of printing a 5.53% implied
+        # (2026-09-17 class).
+        sane = [r for r in results if abs(r.expected_moves) <= 4.0]
+        for r in results:
+            if abs(r.expected_moves) > 4.0:
+                print(
+                    f"  ⚠ fedwatch: degenerate row dropped {r.meeting_date} "
+                    f"({r.expected_moves:+.1f} moves, implied {r.implied_rate:.2f})"
+                )
+        return sane
     return results
 
 

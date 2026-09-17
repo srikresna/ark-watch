@@ -484,8 +484,14 @@ def compute_fedwatch(conn) -> list[dict]:
         print("  ⚠ FedWatch-DIY skipped: FRED:DFF empty (without an EFFR anchor the probabilities are misleading)")
         return []
     effr = effr_row[1]
+    # The anchor's OBSERVATION date matters as much as its value: DFF prints
+    # T+1, so the morning after a rate change the anchor is still the old
+    # rate and the D/n_post extraction amplifies the error ~8x (2026-09-17:
+    # Oct-26 implied 5.53% after the Sep-16 hike). anchor_date lets compute()
+    # bootstrap the new level by re-running the just-held meeting.
+    anchor_date = date.fromisoformat(str(effr_row[0])[:10])
 
-    probs = fw.compute(settlements, effr)
+    probs = fw.compute(settlements, effr, anchor_date=anchor_date)
 
     conn.execute("BEGIN IMMEDIATE")
     for p in probs:

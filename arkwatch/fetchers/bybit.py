@@ -27,4 +27,11 @@ def fetch_stablecoin_total() -> dict:
     if not rows:
         raise RuntimeError("llama: empty response")
     latest = rows[-1]
-    return {"ts": str(latest.get("date", ""))[:10], "total_usd": float(latest["totalCirculatingUSD"])}
+    raw = latest.get("totalCirculatingUSD")
+    if isinstance(raw, dict):
+        # 2026-09-17: the field became a per-peg breakdown
+        # {"peggedUSD": N, "peggedEUR": N, ...} — float(dict) crashed the
+        # harvest. The total is the sum across pegs (same definition the
+        # old scalar carried).
+        raw = sum(v for v in raw.values() if isinstance(v, (int, float)))
+    return {"ts": str(latest.get("date", ""))[:10], "total_usd": float(raw)}
