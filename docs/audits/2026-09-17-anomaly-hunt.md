@@ -1,5 +1,32 @@
 # Audit Sistemik Anomali — 2026-09-17
 
+## RONDE 5 (2026-09-18 dini hari) — 13 agen, 411 tool-calls, 11 + kritikus — DITUTUP (0d689b0)
+
+Bar konvergensi tertinggi (maks 4/lensa, risiko teoretis dibantah tanpa ampun). 11 temuan:
+
+| Temuan | Penutup |
+|---|---|
+| P1 job_failed shared-key: halaman coverage Minggu 21:00 akan MENUTUPI kegagalan alfred 22:00 + backup 23:30 (persis kelas yang mau dicegah!) + transient 5xx harian memicu tripwire palsu | `fix(daemon)`: kunci permanen per-job per-hari `job_failed@{cmd}@{date}` |
+| P1 coverage exit-1 tiap Minggu selamanya (27-gap by-design) | `fix(qa/coverage)`: daftar gap = laporan triase, bukan error |
+| P1 surprise_z vintage-locked — rekalibrasi σ tak pernah menular; "ESI rebuild" diam-diam pakai z basi | `fix(surprise)`: recompute semua per run + re-quarantine drift |
+| P1 ghost recession_triangulation@2026-10-01 membayangi baris live | `fix(recession)`: invariant tolak effective_ts masa depan + purge data |
+| P1 reopening label ('9-Year 11-Month') tak terpetakan — headline lelang beku di 08-12 | `fix(fiscal)`: tenor dibulatkan ke atas |
+| P2 n_series=0 konstan di inputs_json pillar | `chore(pillars)`: parts list asli |
+| P2 residu jam 71 baris (gate memakai predikat berbeda dari sweep) | sweep diperluas persis predikat gate |
+| P2 **docs/ tak pernah di-git** — memori persisten proyek zero-durability | `.gitignore` dibuka; 16 dokumen di-commit (scan kunci bersih; dump vendor/PDF tetap untracked) |
+| P2 ruff gate rusak di main (2 pelanggaran dari commit audit) | dipulihkan |
+
+**Ditunda dengan bukti (deferred-pressure lens):** telegram-chunking & brief-edition-history
+DEFERRABLE terkonfirmasi live (semua pesan saat ini single-chunk; send paused); **watcher
+starvation DIPROMOSIKAN P1** — desain bounded (Popen + poll + heartbeat) menunggu jendela siang
+dengan soak sendiri. **Liniase inputs_json lengkap** = antrean chore (10 writer).
+
+**Konvergensi 5 ronde: 31 → 27 → 9 → 25 → 11** (ronde-4 melonjak karena lensa baru menembus
+wilayah baru; ronde-5 kembali menurun dengan bar tertinggi). Replay determinism LENS BERSIH:
+σ/ESI/z byte-identik dua run; liniase regime↔pillar paritas eksak 0,0000 12 tanggal terakhir.
+
+---
+
 ## RONDE 4 DIPERLUAS (2026-09-17 malam) — 19 agen, 641 tool-calls, 25 + 3 kritikus — DITUTUP (b5aba09)
 
 Pemicu: pemilik belum percaya "bersih" — dan BENAR. Wilayah baru: jadwal daemon, outbox,
