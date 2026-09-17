@@ -187,8 +187,10 @@ def test_llama_dict_shape_summed(monkeypatch):
         def json(self):
             return [
                 # BOTH fields changed shape in the same release: the date is
-                # now an epoch int (1789603200 = 2026-09-17T00:00Z)
-                {"date": 1789603200,
+                # now an epoch — live it arrives as a NUMERIC STRING
+                # ("1789603200" = 2026-09-17T00:00Z), so isinstance(int)
+                # misses it
+                {"date": "1789603200",
                  "totalCirculatingUSD": {"peggedUSD": 305_000_000_000.0,
                                          "peggedEUR": 500_000_000.0}},
             ]
