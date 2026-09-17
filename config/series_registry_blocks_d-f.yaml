@@ -79,6 +79,7 @@ series:
   secondary_source: "FMP:initialClaims"
   tolerance: 1000                    # both sources carry the BLS initial print; small
                                     # differences come from weekly-revision timing
+  calendar_family: "INITIAL JOBLESS CLAIMS"
   active: 1
   # Transform: 4wk-MA + slope; part of the weekly ALFRED-revision watch.
 
@@ -97,6 +98,7 @@ series:
   primary_source: "FRED:UNRATE"
   secondary_source: "FMP:unemploymentRate"
   tolerance: 0.1                     # identical BLS initial print; 0.1pp for revision timing
+  calendar_family: "UNEMPLOYMENT RATE"
   active: 1
   # Sahm-rule input; labor state in the brief.
 
@@ -117,6 +119,7 @@ series:
   tolerance: 5                       # cumulative level with large benchmark revisions —
                                     # compare initial print vs initial print; ALFRED
                                     # vintages for revisions
+  calendar_family: "NON FARM PAYROLLS"
   active: 1
   # Transform: Δ3m momentum.
 
@@ -154,6 +157,7 @@ series:
   primary_source: "FRED:INDPRO"
   secondary_source: "FMP:industrialProductionTotalIndex"
   tolerance: 0.5                     # index; Gate-4c verified exact 2026-09-13
+  calendar_family: "INDUSTRIAL PRODUCTION MOM"
   active: 1
   # Hard-activity growth input — factory-sector pulse alongside CFNAI/ADS (cyclical confirmation).
 
@@ -174,6 +178,7 @@ series:
   tolerance: null                     # is a DIFFERENT series definition (live Δ13.6% vs
                                      # RSAFS Jul-26: 660k vs 763.6k $M) — NOT a level
                                      # comparator; direction-only cross-check if ever
+  calendar_family: "RETAIL SALES MOM"
   active: 1
   # Consumer-spend hard data (advance retail) — household-demand pulse for the growth block.
 
@@ -192,6 +197,7 @@ series:
   primary_source: "FRED:HOUST"
   secondary_source: null              # calendar layer (events) carries the cons/actual/z
   tolerance: null                     # MoM surprise; this series is the LEVEL history
+  calendar_family: "HOUSING STARTS"
   active: 1
   # ADDED 2026-09-17 (calendar audit): housing = the most rate-sensitive sector —
   # series-level history (z/percentile) that the events layer alone cannot give.
@@ -211,6 +217,7 @@ series:
   primary_source: "FRED:PERMIT"
   secondary_source: null
   tolerance: null
+  calendar_family: "BUILDING PERMITS"
   active: 1
   # ADDED 2026-09-17 (calendar audit): leading indicator — permits lead starts
   # (authorization precedes construction).
@@ -271,6 +278,7 @@ series:
   primary_source: FRED:UMCSENT
   secondary_source: null              # FMP consumerSentiment carries the same index — future cross-check
   tolerance: null
+  calendar_family: "MICHIGAN CONSUMER SENTIMENT"
   active: 1
   # ADDED 2026-09-17 (anomaly-hunt round 1, Pri-1): the sentiment headline had
   # 120 calendar actuals but no series — the 1y-inflation-expectations leg
@@ -291,6 +299,7 @@ series:
   primary_source: FRED:DGORDER
   secondary_source: null              # calendar durable-goods MoM actuals cross-check the DERIVED MoM
   tolerance: null
+  calendar_family: "DURABLE GOODS ORDERS MOM"
   active: 1
   # ADDED 2026-09-17: capex-cycle read — durables orders lead investment; the
   # MoM print moves markets monthly while the level history was missing.
@@ -310,9 +319,144 @@ series:
   primary_source: FRED:CES0500000003
   secondary_source: null              # calendar AHE MoM/YoY actuals cross-check the DERIVatives
   tolerance: null
+  calendar_family: "AVERAGE HOURLY EARNINGS MOM"
   active: 1
   # ADDED 2026-09-17: the wage leg of the Fed reaction function — AHE prints
   # monthly with NFP but only existed as calendar rows, never as a level series.
+
+- series_id: "CAL:ISM_MFG_PMI"
+  name: "ISM Manufacturing PMI (derived from calendar actuals)"
+  block: D
+  tier: 4                    # computed: events.actual → series (fetchers/caldist)
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "1st-3rd business day of month M, 10:00 ET (reference M-1)"
+  expected_start: "2021-08-01"       # live-verified: 62 actuals from 2021-08
+  sanity_min: 25.0                    # PMI historical floor w/ margin
+  sanity_max: 75.0
+  primary_source: "CAL:events[ISM MANUFACTURING PMI]"
+  secondary_source: null              # the events row IS the ISM press value
+  tolerance: null
+  active: 1
+  calendar_family: "ISM MANUFACTURING PMI"
+  # ADDED 2026-09-17 (round-3 queue): the national diffusion index that moves
+  # NQ/gold every month-start — 62 monthly levels from the calendar layer,
+  # now series-addressable (z/percentile/explore).
+
+- series_id: "CAL:ISM_SVC_PMI"
+  name: "ISM Services PMI (derived from calendar actuals)"
+  block: D
+  tier: 4
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "3rd business day of month M, 10:00 ET (reference M-1)"
+  expected_start: "2021-07-01"       # live-verified: 102 actuals
+  sanity_min: 30.0
+  sanity_max: 80.0
+  primary_source: "CAL:events[ISM SERVICES PMI]"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "ISM SERVICES PMI"
+
+- series_id: "CAL:ISM_MFG_PRICES"
+  name: "ISM Manufacturing Prices Index (derived from calendar actuals)"
+  block: C
+  tier: 4
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with ISM Mfg PMI, 1st-3rd business day, 10:00 ET"
+  expected_start: "2021-08-01"       # live-verified: 61 actuals
+  sanity_min: 20.0
+  sanity_max: 100.0
+  primary_source: "CAL:events[ISM MANUFACTURING PRICES]"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "ISM MANUFACTURING PRICES"
+  # block C (inflation pipeline): the survey-level input-price read that
+  # pairs with PPI/PPI core for the gold book.
+
+- series_id: "CAL:ISM_SVC_PRICES"
+  name: "ISM Services Prices Index (derived from calendar actuals)"
+  block: C
+  tier: 4
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with ISM Services PMI, 3rd business day, 10:00 ET"
+  expected_start: "2021-07-01"       # live-verified: 97 actuals
+  sanity_min: 20.0
+  sanity_max: 100.0
+  primary_source: "CAL:events[ISM SERVICES PRICES]"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "ISM SERVICES PRICES"
+
+- series_id: "CAL:ISM_MFG_EMPLOYMENT"
+  name: "ISM Manufacturing Employment Index (derived from calendar actuals)"
+  block: D
+  tier: 4
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with ISM Mfg PMI, 1st-3rd business day, 10:00 ET"
+  expected_start: "2021-08-01"       # live-verified: 61 actuals
+  sanity_min: 25.0
+  sanity_max: 80.0
+  primary_source: "CAL:events[ISM MANUFACTURING EMPLOYMENT]"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "ISM MANUFACTURING EMPLOYMENT"
+
+- series_id: "CAL:ISM_MFG_NEW_ORDERS"
+  name: "ISM Manufacturing New Orders Index (derived from calendar actuals)"
+  block: D
+  tier: 4
+  unit: "diffusion index"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with ISM Mfg PMI, 1st-3rd business day, 10:00 ET"
+  expected_start: "2021-08-01"       # live-verified: 61 actuals
+  sanity_min: 20.0
+  sanity_max: 85.0
+  primary_source: "CAL:events[ISM MANUFACTURING NEW ORDERS]"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "ISM MANUFACTURING NEW ORDERS"
+
+- series_id: FRED:PI
+  name: "Personal Income (SAAR, billions USD)"
+  block: D
+  tier: 1
+  unit: "billions USD (SAAR)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "BEA Personal Income & Outlays ~30th of the following month, 08:30 ET"
+  expected_start: "1959-01-01"
+  sanity_min: 400.0                    # live min era-consistent (~470 in 1959)
+  sanity_max: 35000.0                  # live 2026-07 = 27,114.8 + growth headroom
+  primary_source: FRED:PI
+  secondary_source: null               # calendar PERSONAL INCOME MOM actuals
+  tolerance: null                      # cross-check the DERIVED MoM, never a level diff
+  active: 1
+  calendar_family: "PERSONAL INCOME MOM"
+  # ADDED 2026-09-17: found by the coverage query itself on its first run
+  # (60 high-importance actuals with no covering series). Household income
+  # level — the consumer-demand leg paired with UMCSENT/RSAFS.
 
 - series_id: FRED:GDPNOW
   name: "GDPNow — real GDP QoQ annualized nowcast"

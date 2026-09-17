@@ -324,6 +324,52 @@ def test_insert_prices_partial_then_final_heals(conn):
     assert insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-17"}]) == 0
 
 
+# --- CAL: derived series (round-3 queue) ---------------------------------------
+
+
+def test_caldist_ref_month_and_dedup(tmp_path):
+    """Calendar-derived series: the release's REFERENCE month comes from the
+    name token (with Jan→Dec-prior-year rollover) or release-month−1; twins
+    dedup via MAX per month."""
+    import sqlite3
+
+    from arkwatch.fetchers import caldist
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    c = sqlite3.connect(dbp)
+    rows = [
+        # token wins: AUG token on a Sep-1 release → 2026-08-01
+        ("ISM MANUFACTURING PMI AUG", "2026-09-01T14:00:00", 54.6),
+        # token-less twin, same release → same month (dedup, MAX arbitrates)
+        ("US ISM MANUFACTURING INDEX", "2026-09-01T14:00:00", 54.6),
+        # Jan release with DEC token → prior year
+        ("ISM MANUFACTURING PMI DEC", "2026-01-03T14:00:00", 49.2),
+        # token-less Jan row → convention m_minus_1 → prior-year Dec too
+        ("ISM MANUFACTURING PMI", "2026-01-03T14:00:00", 49.2),
+    ]
+    for nm, ts, actual in rows:
+        c.execute(
+            "INSERT INTO events(event_uid,ts_utc,release_ts,country,name,normalized_name,"
+            "importance,consensus,consensus_source,actual,actual_source,previous,"
+            "surprise_z,is_curated,indicator_key)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (nm + ts, ts, ts, "US", nm, nm, "high", 50.0, "FMP", actual, "FMP",
+             None, None, 0, "ISM MANUFACTURING PMI"),
+        )
+    c.commit()
+    c.close()
+    out = caldist.family_rows("ISM MANUFACTURING PMI", "m_minus_1", db_path=dbp)
+    assert out == [
+        {"ts": "2025-12-01", "value": 49.2},
+        {"ts": "2026-08-01", "value": 54.6},
+    ]
+    lat = caldist.fetch_latest("CAL:ISM_MFG_PMI")
+    # fetch_latest uses the DEFAULT_DB — reroute via the family directly above;
+    # here just prove the routing table resolves the suffix
+    assert caldist.FAMILIES["ISM_MFG_PMI"][0] == "ISM MANUFACTURING PMI"
+
+
 # --- Round-2 fixes: demote restore, heal scale guard, asof tails ----------------
 
 

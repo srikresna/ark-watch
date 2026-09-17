@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -349,6 +349,11 @@ CREATE TABLE IF NOT EXISTS earnings_calendar (
     15: """-- v15: ETH funding leg (ronde-6 P2-7) — computed every run since the
 -- flows job existed but never stored (flows_daily had only the BTC column).
 ALTER TABLE flows_daily ADD COLUMN funding_eth REAL;
+""",
+    16: """-- v16: calendar_family (round-3 queue) — the events-table family a
+-- series covers, so the HOUST/PERMIT gap class is structurally visible
+-- (qa/coverage.py: calendar families with actuals but no covering series).
+ALTER TABLE series_registry ADD COLUMN calendar_family TEXT;
 """,
 }
 

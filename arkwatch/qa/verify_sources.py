@@ -18,7 +18,20 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 from ..config import load_anchors, load_registry
-from ..fetchers import atl, cboe, cleve, ecb, eodhd, fiscal, fred, misc, nyfed, philly, treasury
+from ..fetchers import (
+    atl,
+    caldist,
+    cboe,
+    cleve,
+    ecb,
+    eodhd,
+    fiscal,
+    fred,
+    misc,
+    nyfed,
+    philly,
+    treasury,
+)
 
 # series_id → fetcher routing
 ROUTES = {
@@ -33,6 +46,7 @@ ROUTES = {
     "ATL:": atl,
     "NYFED:": nyfed,
     "ECB:": ecb,
+    "CAL:": caldist,  # calendar-derived series (events.actual → series; DB read)
 }
 # Fetchers exposing early history (depth gate); others show depth=· until backfilled
 DEPTH_CAPABLE = ("FRED:", "FISCAL:", "CLEVE:", "CBOE:", "ECB:")

@@ -834,6 +834,7 @@
   tolerance: null                # FMP carries YoY%, not the index — cross-validate the
                                  # DERIVED YoY (±0.2pp at the transform layer), never a
                                  # raw level diff
+  calendar_family: "INFLATION RATE YOY"
   active: 1
   # Raw SA index — Inflation pillar C: 3m-ann REACCEL overlay + YoY z; all MoM/YoY/Δ3m derivatives computed from it.
 
@@ -852,6 +853,7 @@
   primary_source: FRED:CPILFESL
   secondary_source: "FMP:coreCPI (carries YoY% — cross-validate the DERIVED YoY, never a raw level diff)"
   tolerance: null
+  calendar_family: "CORE INFLATION RATE YOY"
   active: 1
   # ADDED 2026-09-17 (anomaly-hunt round 1, Pri-1): the Inflation pillar and
   # regime score judged inflation on HEADLINE CPIAUCSL only, while the calendar
@@ -872,6 +874,7 @@
   primary_source: FRED:PPIFIS
   secondary_source: null              # calendar PPI MoM actuals cross-check the DERIVED MoM
   tolerance: null
+  calendar_family: "PPI MOM"
   active: 1
   # ADDED 2026-09-17: wholesale-inflation level — the pipeline read headline
   # CPI cannot give. FD (SA) chosen over PPIACO (NSA legacy aggregate) so the
@@ -892,6 +895,7 @@
   primary_source: FRED:WPSFD49507
   secondary_source: null
   tolerance: null
+  calendar_family: "CORE PPI MOM"
   active: 1
   # ADDED 2026-09-17: core PPI — the sticky-wholesale read (round-1 Pri-1 gap).
 

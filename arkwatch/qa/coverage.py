@@ -13,6 +13,7 @@ from ..config import load_anchors, load_cot_contracts, load_curated_calendar, lo
 from ..qa.verify_sources import ROUTES
 
 REQUIRED = ("unit", "value_format", "freq", "primary_source")
+MIN_ACTUALS = 24  # calendar-gap gate (see the gap section below)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,6 +91,44 @@ def main(argv: list[str] | None = None) -> int:
         f"curated_calendar: {fomc} FOMC meetings (2026+2027) · "
         f"{len(cal.get('release_times') or {})} standard release times"
     )
+
+    # Calendar-family gaps (round-3 queue, 2026-09-17): the HOUST/PERMIT
+    # class — families carrying real actuals while NO series covers them —
+    # was invisible until an accidental question surfaced it. Gate:
+    # >=MIN_ACTUALS actuals AND a high-importance release, so ~120 minor
+    # families (EIA stocks, regional surveys, twin MoM/YoY splits) do not
+    # bury the real gaps on day one.
+    from pathlib import Path
+
+    from .. import db as _db
+
+    db_path = str(Path(__file__).resolve().parents[2] / "data" / "arkwatch.db")
+    _conn = _db.get_conn(db_path)
+    gaps = _conn.execute(
+        """
+        SELECT e.indicator_key, COUNT(DISTINCT substr(e.ts_utc,1,10)),
+               SUM(e.actual IS NOT NULL)
+        FROM events e
+        WHERE e.indicator_key IS NOT NULL
+        GROUP BY e.indicator_key
+        HAVING SUM(e.actual IS NOT NULL) >= ?
+           AND MAX(e.importance) = 'high'
+           AND NOT EXISTS (SELECT 1 FROM series_registry r
+                           WHERE r.calendar_family = e.indicator_key AND r.active = 1)
+        ORDER BY 3 DESC
+        """,
+        (MIN_ACTUALS,),
+    ).fetchall()
+    _conn.close()
+    print(
+        f"calendar families: {len(gaps)} GAP(s) ≥{MIN_ACTUALS} actuals without a"
+        " covering series (register the series or a CAL: derived series"
+        " with calendar_family=<key> to close)"
+    )
+    for k, releases, n_actual in gaps:
+        print(f"  ✗ {k:44s} releases={releases:<4} actuals={n_actual}")
+    if gaps:
+        errors.append(f"{len(gaps)} calendar families without a covering series")
 
     print(f"=== lint: {len(errors)} errors ===")
     for e in errors:
