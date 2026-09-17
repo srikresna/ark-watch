@@ -55,13 +55,30 @@ _STRIP_TAIL = re.compile(
 )
 
 # Cross-source aliases for the same (post-strip) indicator; looked up AFTER
-# the "US " prefix is stripped — include both forms where needed
+# the "US " prefix is stripped — include both forms where needed.
+# 2026-09-17 anomaly audit: FMP RENAMED families (CPI→Inflation Rate,
+# ISM Non-Manufacturing→ISM Services, Markit→S&P Global) strand the old
+# names' rows forever (different indicator_key → the fill-if-NULL heal can
+# never reach them) and double-count one release inside ESI under two keys.
 _ALIASES = {
     "CONSUMER SENTIMENT": "MICHIGAN CONSUMER SENTIMENT",
     "US CONSUMER SENTIMENT": "MICHIGAN CONSUMER SENTIMENT",
     "US CHICAGO PMI": "CHICAGO PMI",
     "JOBLESS CLAIMS": "INITIAL JOBLESS CLAIMS",
     "US JOBLESS CLAIMS": "INITIAL JOBLESS CLAIMS",
+    # FMP renames — canonical = the NEW names (they are the ones still
+    # receiving actuals; spelling = normalized forms live-verified in DB)
+    "CPI YOY": "INFLATION RATE YOY",
+    "CPI MOM": "INFLATION RATE MOM",
+    "CORE CPI YOY": "CORE INFLATION RATE YOY",
+    "CORE CPI MOM": "CORE INFLATION RATE MOM",
+    "ISM NON MANUFACTURING PMI": "ISM SERVICES PMI",
+    "ISM NON MANUFACTURING PRICES": "ISM SERVICES PRICES",
+    "ISM NON MANUFACTURING EMPLOYMENT": "ISM SERVICES EMPLOYMENT",
+    "ISM NON MANUFACTURING NEW ORDERS": "ISM SERVICES NEW ORDERS",
+    "ISM NON MANUFACTURING BUSINESS ACTIVITY": "ISM SERVICES BUSINESS ACTIVITY",
+    "MARKIT SERVICES PMI": "S P GLOBAL SERVICES PMI",
+    "BUDGET BALANCE": "MONTHLY BUDGET STATEMENT",
 }
 
 
@@ -88,7 +105,10 @@ def _std_time_et(name_norm: str):
 
 def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict], dict]:
     now = datetime.now(UTC)
-    from_d = from_d or (now - timedelta(days=3)).strftime("%Y-%m-%d")
+    # trailing window 10d (2026-09-17 audit: the old 3d heal window could not
+    # survive a daemon outage — a 63h PC outage + T+1/T+2 vendor actual lag
+    # stranded 113 (key,date) pairs with no actual from any source)
+    from_d = from_d or (now - timedelta(days=10)).strftime("%Y-%m-%d")
     to_d = to_d or (now + timedelta(days=14)).strftime("%Y-%m-%d")
     fetched: dict[str, list[dict]] = {}
     for src, fn in (
@@ -206,6 +226,67 @@ DEAD_SUBCOMPONENT_PREFIXES = (
     "PHILLY FED PRICES PAID",
 )
 
+# CME calendar stub families that NEVER carry consensus or actuals
+# (live-verified 2026-09-17 against every CME-sourced row in events:
+# act=0 AND cons=0 for each family below, while their data-carrying twins
+# live under different names — e.g. EIA crude actuals arrive via FMP's
+# 'EIA CRUDE OIL STOCKS CHANGE'). Blocking kills the radar phantoms
+# ('US EIA PETROLEUM STATUS REPORT' weekly high-importance rows promising
+# outcomes that never land) and the never-healable empty-row churn.
+# Families with INTERMITTENT actuals (US BAKER HUGHES RIG COUNT, US JOBLESS
+# CLAIMS, US MBA MORTGAGE APPLICATIONS, US CONSUMER SENTIMENT, …) are
+# deliberately absent — the valueless-importance demote below handles them.
+DEAD_CME_PREFIXES = (
+    "US MARKET REFLECTIONS",
+    "US TREASURY BUYBACK ANNOUNCEMENT",
+    "US TREASURY STATEMENT",
+    "US API WEEKLY OIL STOCKS",
+    "US CROP PROGRESS",
+    "US CROP PRODUCTION",
+    "US EIA NATURAL GAS REPORT",
+    "US EIA PETROLEUM STATUS REPORT",
+    "US EXPORT INSPECTIONS",
+    "US EXPORT SALES",
+    "US FED BALANCE SHEET",
+    "US EMPLOYMENT SITUATION",
+    "US CONSUMER CREDIT",
+    "US COTTON SYSTEM",
+    "US BANK RESERVE SETTLEMENT",
+    "US FATS AMP OILS",
+    "US GRAIN CRUSHINGS",
+    "US USDA SUPPLY DEMAND",
+    "US USDA",
+    "US JACKSON HOLE SYMPOSIUM",
+    # treasury auctions/announcements (bill/note/bond, all tenors)
+    "US 2 WEEK BILL",
+    "US 3 MONTH BILL",
+    "US 4 MONTH BILL",
+    "US 4 WEEK BILL",
+    "US 6 MONTH BILL",
+    "US 6 WEEK BILL",
+    "US 8 WEEK BILL",
+    "US 8 WEEK",
+    "US 13 WEEK",
+    "US 17 WEEK",
+    "US 26 WEEK",
+    "US 52 WEEK",
+    "US 2 YEAR NOTE",
+    "US 3 YEAR NOTE",
+    "US 5 YEAR NOTE",
+    "US 7 YEAR NOTE",
+    "US 10 YEAR NOTE",
+    "US 20 YEAR BOND",
+    "US 30 YEAR BOND",
+)
+DEAD_CME_SUFFIXES = (" SPEAKS", " SPEECH")
+
+
+def _dead_stub(normalized_name: str) -> bool:
+    """Never-carry-data event rows (dead vendor families)."""
+    return normalized_name.startswith(DEAD_CME_PREFIXES) or normalized_name.endswith(
+        DEAD_CME_SUFFIXES
+    )
+
 
 def save(db_path: str, events: list[dict]) -> int:
     conn = db.get_conn(db_path, allow_init=True)
@@ -215,6 +296,34 @@ def save(db_path: str, events: list[dict]) -> int:
             e["normalized_name"].startswith(p) for p in DEAD_SUBCOMPONENT_PREFIXES
         ):
             continue  # dead family — never carries numbers, pure ingest noise
+        if _dead_stub(e["normalized_name"]):
+            continue  # CME stub — schedule marker only; its data twin (if
+            # any) arrives under a different name from a value-carrying source
+        # hour-plausibility gate (2026-09-17 audit: 195 historical US rows at
+        # 05:30Z/07:00Z = 01:30/03:00 ET — no US institution publishes then;
+        # FMP tz-slips). 00:00 is date-only by convention and bypasses. A
+        # failed row degrades to date-only + importance low instead of being
+        # dropped (the date may still be right; the time is what's fake).
+        _h = e["ts_utc"][11:13]
+        if _h and _h != "00" and int(_h) < 8:
+            e = {**e, "ts_utc": f"{e['ts_utc'][:10]}T00:00:00"}
+            if e["importance"] in ("high", "medium"):
+                e = {**e, "importance": "low"}
+        # valueless-demote (2026-09-17 audit): a US-prefixed row with NEITHER
+        # consensus NOR actual is a CME/TV schedule stub — its data twin (if
+        # any) lives under another name from a value-carrying source. While
+        # empty it must not sit on the radar as high/medium promising an
+        # outcome this row can never deliver (live: 'US EIA PETROLEUM STATUS
+        # REPORT' weekly phantoms). Families that DO carry values keep their
+        # importance on the very save that delivers the numbers — the demote
+        # only applies while the row itself is empty.
+        if (
+            e["consensus"] is None
+            and e["actual"] is None
+            and e["normalized_name"].startswith("US ")
+            and e["importance"] in ("high", "medium")
+        ):
+            e = {**e, "importance": "low"}
 
         uid = event_uid(e["normalized_name"], e["ts_utc"])
         rows.append(
@@ -260,6 +369,22 @@ def save(db_path: str, events: list[dict]) -> int:
             "WHERE event_uid=?1 AND actual IS NULL "
             "AND (?2 IS NOT NULL AND events.consensus IS NOT ?2)",
             [(r[0], r[7], r[8]) for r in rows],
+        )
+        # Sibling heal (2026-09-17 audit): a TV twin of a release whose FMP
+        # row carries the actual stays actual-NULL forever when the twin's
+        # own source never refills it (live: the 09-04 NFP TV rows stranded
+        # while the FMP twin had actual=162). When an incoming row carries
+        # an actual, fill same indicator_key + same-date siblings that are
+        # still NULL — idempotent, one statement.
+        conn.executemany(
+            "UPDATE events SET actual=?2, actual_source=?3 "
+            "WHERE indicator_key=?4 AND substr(ts_utc,1,10)=substr(?5,1,10) "
+            "AND actual IS NULL AND event_uid<>?6",
+            [
+                (r[0], r[9], r[10], r[14], r[1], r[0])
+                for r in rows
+                if r[9] is not None
+            ],
         )
         conn.execute("COMMIT")
     except Exception:

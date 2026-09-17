@@ -311,6 +311,115 @@ def test_insert_prices_partial_then_final_heals(conn):
     assert insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-17"}]) == 0
 
 
+# --- Calendar audit batch 2026-09-17: aliases, stub gate, hour gate, sibling heal
+
+
+def test_indicator_key_fmp_renames_merge():
+    """FMP renamed families (CPI→Inflation Rate, ISM Non-Mfg→ISM Services,
+    Markit→S&P Global, Budget→Monthly Budget Statement) must hash to ONE
+    indicator_key — split keys strand the old names' rows (the fill-if-NULL
+    heal can never reach them) and double-count releases inside ESI."""
+    from arkwatch.qa.calendar import indicator_key
+
+    assert indicator_key("CPI YOY AUG") == indicator_key("INFLATION RATE YOY AUG")
+    assert indicator_key("CORE CPI MOM AUG") == indicator_key("CORE INFLATION RATE MOM AUG")
+    assert indicator_key("ISM NON MANUFACTURING PMI AUG") == indicator_key("ISM SERVICES PMI AUG")
+    assert indicator_key("MARKIT SERVICES PMI SEP") == indicator_key("S P GLOBAL SERVICES PMI SEP")
+    assert indicator_key("BUDGET BALANCE AUG") == indicator_key("MONTHLY BUDGET STATEMENT AUG")
+    # substance qualifiers stay distinct indicators
+    assert indicator_key("CPI YOY AUG") != indicator_key("INFLATION RATE MOM AUG")
+
+
+def test_calendar_hour_gate_and_demote(tmp_path):
+    """US events at implausible hours (05:30Z = 01:30 ET) degrade to
+    date-only + low; valueless US-prefixed stubs demote while empty but
+    still land; dead CME stubs are dropped entirely."""
+    import sqlite3
+
+    from arkwatch.qa.calendar import save
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    save(
+        dbp,
+        [
+            {  # impossible hour → date-only + low
+                "normalized_name": "SOME FMP SLIPPED TZ RELEASE", "ts_utc": "2026-09-18T05:30:00",
+                "name": "x", "importance": "high", "consensus": 1.0, "actual": None,
+                "previous": None, "source": "FMP",
+            },
+            {  # valueless US-stub → demoted to low, still stored
+                "normalized_name": "US BAKER HUGHES RIG COUNT", "ts_utc": "2026-09-18T17:00:00",
+                "name": "x", "importance": "high", "consensus": None, "actual": None,
+                "previous": None, "source": "CME",
+            },
+            {  # dead CME stub family → dropped
+                "normalized_name": "US EIA PETROLEUM STATUS REPORT", "ts_utc": "2026-09-18T15:30:00",
+                "name": "x", "importance": "high", "consensus": None, "actual": None,
+                "previous": None, "source": "CME",
+            },
+        ],
+    )
+    c = sqlite3.connect(dbp)
+    r1 = c.execute(
+        "SELECT substr(ts_utc,12,5), importance FROM events"
+        " WHERE normalized_name LIKE 'SOME FMP%'").fetchone()
+    assert r1 == ("00:00", "low")
+    r2 = c.execute(
+        "SELECT importance FROM events WHERE normalized_name='US BAKER HUGHES RIG COUNT'").fetchone()
+    assert r2 == ("low",)
+    assert c.execute(
+        "SELECT COUNT(*) FROM events WHERE normalized_name LIKE 'US EIA PETROLEUM%'").fetchone()[0] == 0
+    c.close()
+
+
+def test_calendar_sibling_heal_fills_twin(tmp_path):
+    """The NFP 09-04 class: the FMP twin carries the actual, the TV twin
+    stays NULL forever because its own source never refills. save() must
+    fill same indicator_key + same-date siblings when an actual arrives."""
+    import sqlite3
+
+    from arkwatch.qa.calendar import save
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    # first ingest: TV twin, no actual yet (different name, SAME indicator_key
+    # family via the existing JOBLESS CLAIMS alias path)
+    save(dbp, [
+        {"normalized_name": "INITIAL JOBLESS CLAIMS SEP 12", "ts_utc": "2026-09-17T12:30:00",
+         "name": "x", "importance": "high", "consensus": 208.0, "actual": None,
+         "previous": 206.0, "source": "TV"},
+    ])
+    # second ingest: FMP twin arrives WITH the actual
+    save(dbp, [
+        {"normalized_name": "INITIAL JOBLESS CLAIMS SEP 12", "ts_utc": "2026-09-17T12:30:00",
+         "name": "x", "importance": "high", "consensus": 208.0, "actual": 209.0,
+         "previous": 206.0, "source": "FMP"},
+    ])
+    # and a NAME-twin sibling (alias family, e.g. the US-prefixed CME spelling)
+    save(dbp, [
+        {"normalized_name": "US JOBLESS CLAIMS", "ts_utc": "2026-09-17T12:30:00",
+         "name": "x", "importance": "low", "consensus": None, "actual": None,
+         "previous": None, "source": "CME"},
+    ])
+    save(dbp, [  # re-deliver the FMP actual (idempotent path)
+        {"normalized_name": "INITIAL JOBLESS CLAIMS SEP 12", "ts_utc": "2026-09-17T12:30:00",
+         "name": "x", "importance": "high", "consensus": 208.0, "actual": 209.0,
+         "previous": 206.0, "source": "FMP"},
+    ])
+    c = sqlite3.connect(dbp)
+    for uidless in c.execute(
+        "SELECT normalized_name, actual FROM events ORDER BY normalized_name"
+    ).fetchall():
+        print("  row:", uidless)
+    # BOTH spellings (same indicator_key, same date) carry the actual now
+    vals = dict(c.execute(
+        "SELECT normalized_name, actual FROM events").fetchall())
+    assert vals["INITIAL JOBLESS CLAIMS SEP 12"] == 209.0
+    assert vals["US JOBLESS CLAIMS"] == 209.0  # healed via the sibling path
+    c.close()
+
+
 # --- Calendar ingest: dead sub-component families ------------------------------
 
 
