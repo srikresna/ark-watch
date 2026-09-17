@@ -76,11 +76,25 @@ def _common_trade_date(conn: sqlite3.Connection, pids: list[int]) -> str | None:
     return max(common) if common else None
 
 
-def _get_spot(conn: sqlite3.Connection) -> float | None:
-    row = conn.execute(
-        "SELECT close FROM instrument_prices WHERE symbol='EURUSD' AND source='EODHD' "
-        "ORDER BY ts DESC LIMIT 1"
-    ).fetchone()
+def _get_spot(conn: sqlite3.Connection, td: str | None = None) -> float | None:
+    """EURUSD close ON OR BEFORE the settlements trade_date.
+
+    Round-2 P0 (2026-09-17): ORDER BY ts DESC mixed a FORMING intraday bar
+    (swept 06:16 WIB) with T-1 futures settlements — the brief printed
+    +278.1bp on a day the same-day basis was ~5bp. Pinning the spot to the
+    settlements' trade_date keeps both legs on the same calendar day; a
+    forming bar is never eligible."""
+    if td:
+        row = conn.execute(
+            "SELECT close FROM instrument_prices WHERE symbol='EURUSD'"
+            " AND source='EODHD' AND ts <= ? ORDER BY ts DESC LIMIT 1",
+            (td,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT close FROM instrument_prices WHERE symbol='EURUSD' AND source='EODHD' "
+            "ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
     # A silent 1.0 fallback would produce a garbage basis that still gets
     # printed; return None and let the caller skip instead.
     return row[0] if row else None
@@ -145,7 +159,7 @@ def compute_xccy(conn: sqlite3.Connection) -> list[XccyRow]:
     sr3 = _get_settlement(conn, SR3_PID, td)
     esr = _get_settlement(conn, ESR_PID, td)
     eur = _get_settlement(conn, EUR_PID, td)
-    spot = _get_spot(conn)
+    spot = _get_spot(conn, td)
     if not spot:
         return []
 

@@ -148,8 +148,10 @@ def _event_consensus(conn: sqlite3.Connection, date_iso: str, sid: str) -> float
     mon_abbr = obs.strftime("%b").upper()  # 'AUG'
     if sid == "FRED:ICSA":
         # weekly: the name carries the DAY ('...AUG 22') = the observation;
-        # without the day, distance ordering picks LAST week (T-2 < T+5)
-        period_token = f"{incl} {mon_abbr} {obs.day}"
+        # without the day, distance ordering picks LAST week (T-2 < T+5).
+        # ZERO-PADDED 02d: FMP writes 'SEP 05' — an unpadded 'SEP 5' token
+        # never matches single-digit week-endings (round-2: silent join fail)
+        period_token = f"{incl} {mon_abbr} {obs.day:02d}"
     else:
         period_token = f"{incl} {mon_abbr}"
     q = (
@@ -734,7 +736,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     # order) — the brief showed a 19-day-stale probability as current.
     # The date = MAX(date) subquery pins the newest snapshot.
     fw_rows = conn.execute(
-        "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate "
+        "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate, date "
         "FROM fedwatch_snapshots WHERE source='diy' AND meeting_date >= ? "
         "AND date=(SELECT MAX(date) FROM fedwatch_snapshots WHERE source='diy')"
         " ORDER BY meeting_date LIMIT 1",
@@ -756,7 +758,8 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                                 'implied_rate': fw_rows[4],
                             },
                         )
-                    ]
+                    ],
+                    asof=fw_rows[5],
                 )
             }"
         )
@@ -783,17 +786,22 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             with contextlib.suppress(ValueError):
                 meta = json.loads(eb_rows[5] or "{}")
                 diag = meta.get("diag")
-                # ronde-7 P2: rows[0] is the FIRST unknown meeting (often a
-                # passed date) — pair the meta row to the MEETING the query
-                # selected (impl date match), falling back to rows[0]
+                # ROUND-2 fix: the >= first-match painted the DECIDED Sep-10
+                # meeting's delta onto the displayed Oct-29 row (a passed
+                # meeting satisfies meet >= impl too). Pair by EXACT
+                # implementation date of the displayed meeting.
+                from ..transforms.ecbwatch import implementation_date as _impl_date
+
                 meet_iso = eb_rows[0]
+                impl_sel = _impl_date(
+                    datetime.fromisoformat(meet_iso).date()
+                ).isoformat()
                 rows_meta = meta.get("rows") or [{}]
                 first = next(
-                    (r for r in rows_meta if r.get("impl", "")[:10] and meet_iso >= r["impl"][:10]),
+                    (r for r in rows_meta if (r.get("impl") or "")[:10] == impl_sel),
                     rows_meta[0],
                 )
-                # exact/delta belong to the displayed meeting — approximate
-                # by the row whose impl date is the latest <= meeting_date
+                # exact/delta belong to the displayed meeting
                 exact = first.get("exact")
                 delta_bp = float(first.get("delta_bp") or 0.0)
             p = ECBMeetingProb(
@@ -830,28 +838,35 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         pass
 
     # CVOL — CME implied vol; consumed here so the daily harvest is not a
-    # dead write
+    # dead write. ROUND-2 fix: symbols publish on different trade dates —
+    # pinning the GLOBAL MAX silently dropped symbols and rendered stale vol
+    # unmarked. Per-symbol latest within a bounded 4d lookback + the asof.
     cvol_row = conn.execute(
-        "SELECT symbol, cvol FROM cvol_snapshots "
-        "WHERE trade_date=(SELECT MAX(trade_date) FROM cvol_snapshots) "
-        "AND symbol IN ('GCVL','SIVL','HGVL','POVL') ORDER BY symbol"
+        "SELECT symbol, cvol, trade_date FROM cvol_snapshots c "
+        "WHERE symbol IN ('GCVL','SIVL','HGVL','POVL') "
+        "AND trade_date=(SELECT MAX(trade_date) FROM cvol_snapshots c2"
+        " WHERE c2.symbol=c.symbol AND c2.trade_date >= date('now','-4 day'))"
+        " ORDER BY symbol"
     ).fetchall()
     if cvol_row:
         nm = {"GCVL": "Au", "SIVL": "Ag", "HGVL": "Cu", "POVL": "Pt"}
-        parts = [f"{nm.get(s, s)} {v:.1f}" for s, v in cvol_row]
+        parts = [f"{nm.get(s, s)} {v:.1f}" for s, v, _td in cvol_row]
         # Treasury YIELD vol (varian VY, satuan bp) — rates-turmoil read for
         # the metals book; one compact segment after the price-vols
         yrow = conn.execute(
-            "SELECT symbol, cvol FROM cvol_snapshots "
-            "WHERE trade_date=(SELECT MAX(trade_date) FROM cvol_snapshots) "
-            "AND symbol IN ('TUVY','FVVY','TYVY','USVY')"
+            "SELECT symbol, cvol, trade_date FROM cvol_snapshots c "
+            "WHERE symbol IN ('TUVY','FVVY','TYVY','USVY') "
+            "AND trade_date=(SELECT MAX(trade_date) FROM cvol_snapshots c2"
+            " WHERE c2.symbol=c.symbol AND c2.trade_date >= date('now','-4 day'))"
         ).fetchall()
         ynm = {"TUVY": "y2", "FVVY": "y5", "TYVY": "y10", "USVY": "y30"}
         # chronological order y2→y30 (tenor, not alphabetical symbol)
         yrow.sort(key=lambda r: list(ynm).index(r[0]) if r[0] in ynm else 99)
         if yrow:
-            parts.append(" · ".join(f"{ynm.get(s, s)} {v:.0f}" for s, v in yrow))
-        lines.append(f"Vol (CVOL): {' · '.join(parts)}")
+            parts.append(" · ".join(f"{ynm.get(s, s)} {v:.0f}" for s, v, _td in yrow))
+        asof = max((r[2] for r in cvol_row + yrow), default=None)
+        tail = f" (td {asof[5:]})" if asof else ""
+        lines.append(f"Vol (CVOL): {' · '.join(parts)}{tail}")
 
     # Inflation EXPECTATIONS — Cleveland model vs market (paket B): the Exp
     # line decomposes the breakeven into expectation + risk premium, and

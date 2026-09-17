@@ -179,8 +179,12 @@ def compute(
     return results
 
 
-def format_brief(probs: list[MeetingProb]) -> str:
-    """Format the brief line for the next FOMC meeting."""
+def format_brief(probs: list[MeetingProb], asof: str | None = None) -> str:
+    """Format the brief line for the next FOMC meeting.
+
+    asof = the snapshot's ZQ trade date (round-2: the line rendered the
+    pre-FOMC-decision strip as CURRENT policy the morning after the hike —
+    the reader cannot know the pricing vintage without the date)."""
     if not probs:
         has_future = any(d >= date.today() for d in FOMC_SCHEDULE)
         if has_future:
@@ -193,7 +197,7 @@ def format_brief(probs: list[MeetingProb]) -> str:
         action = f"hike {p.prob_hike:.0%}"
     else:
         action = f"hold {p.prob_hold:.0%}"
-    tail = ""
+    tail = f" (ZQ {asof[5:]})" if asof else ""
     if max(FOMC_SCHEDULE) < date.today() + timedelta(days=90):
-        tail = " ⚠ vendored schedule <90 days"
+        tail += " ⚠ vendored schedule <90 days"
     return f"{action} ({p.meeting_date.strftime('%b')} → {p.implied_rate:.2f}%){tail}"

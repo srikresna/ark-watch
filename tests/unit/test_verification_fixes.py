@@ -177,8 +177,10 @@ def test_harvest_uses_fetch_window_and_falls_back(monkeypatch):
 
 def test_llama_dict_shape_summed(monkeypatch):
     """2026-09-17: DefiLlama changed totalCirculatingUSD from a scalar to a
-    per-peg dict — float(dict) crashed the f2 harvest on the server. The
-    total is the sum across pegs (the old scalar's definition)."""
+    per-peg dict — float(dict) crashed the f2 harvest. ROUND-2 CORRECTION:
+    the old scalar carried ONLY the USD-pegged total (live evidence: the
+    peggedUSD value matches the last stored scalar to the cent) — summing
+    all pegs changed the series DEFINITION mid-stream. Keep peggedUSD."""
     from arkwatch.fetchers import bybit
 
     class R:
@@ -197,7 +199,7 @@ def test_llama_dict_shape_summed(monkeypatch):
 
     monkeypatch.setattr(bybit.requests, "get", lambda *a, **k: R())
     out = bybit.fetch_stablecoin_total()
-    assert out["total_usd"] == 305_500_000_000.0
+    assert out["total_usd"] == 305_000_000_000.0  # peggedUSD, NOT the 305.5B sum
     assert out["ts"] == "2026-09-17"  # epoch → ISO, not "1789603200"
 
 
@@ -309,6 +311,83 @@ def test_insert_prices_partial_then_final_heals(conn):
     ).fetchone()[0] == 7668.5
     # fully-empty rows are dropped at build time
     assert insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-17"}]) == 0
+
+
+# --- Round-2 fixes: demote restore, heal scale guard, asof tails ----------------
+
+
+def test_demote_restores_when_values_arrive(tmp_path):
+    """ROUND-2 P1 regression: the valueless-demote was PERMANENT — a row born
+    empty pre-release (normal cadence) got importance='low' and no code path
+    ever restored it, so vendor-high US rows vanished from the radar after
+    their actual landed. The ON CONFLICT path must restore importance from
+    the value-carrying incoming row (never demoted, so trustworthy)."""
+    import sqlite3
+
+    from arkwatch.qa.calendar import save
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    ev = {
+        "normalized_name": "US JOBLESS CLAIMS", "ts_utc": "2026-09-24T12:30:00",
+        "name": "x", "importance": "high", "previous": None, "source": "CME",
+    }
+    # born empty pre-release → demoted
+    save(dbp, [{**ev, "consensus": None, "actual": None}])
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT importance FROM events").fetchone()[0] == "low"
+    c.close()
+    # the same uid arrives WITH values (undemoted, vendor-high) → restore
+    save(dbp, [{**ev, "consensus": 208.0, "actual": 206.0}])
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT importance, actual FROM events").fetchone() == ("high", 206.0)
+    c.close()
+
+
+def test_sibling_heal_scale_guard(tmp_path):
+    """ROUND-2 P1: the heal was unit-blind — one indicator_key family can hold
+    a CME %MoM twin and an FMP level twin; healing across a >10x scale gap
+    poisons sigma/ESI (live: one EXISTING HOME contamination)."""
+    import sqlite3
+
+    from arkwatch.qa.calendar import save
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    # target twin: LEVEL scale (consensus ~1.4 million), empty
+    save(dbp, [{
+        "normalized_name": "US EXISTING HOME SALES", "ts_utc": "2026-09-20T14:00:00",
+        "name": "x", "importance": "low", "consensus": 1_400_000.0, "actual": None,
+        "previous": None, "source": "CME",
+    }])
+    # healer twin: %MoM scale (actual -1.5) — 6 orders of magnitude off
+    save(dbp, [{
+        "normalized_name": "EXISTING HOME SALES", "ts_utc": "2026-09-20T14:00:00",
+        "name": "x", "importance": "high", "consensus": -1.0, "actual": -1.5,
+        "previous": None, "source": "FMP",
+    }])
+    c = sqlite3.connect(dbp)
+    vals = dict(c.execute("SELECT normalized_name, actual FROM events").fetchall())
+    assert vals["EXISTING HOME SALES"] == -1.5  # healer keeps its own
+    # the level twin must NOT receive the -1.5 (out of the 0.1x..10x band)
+    assert vals["US EXISTING HOME SALES"] is None
+    c.close()
+
+
+def test_fedwatch_format_brief_asof():
+    """ROUND-2: the line rendered the pre-decision strip as current policy —
+    the pricing vintage must ride along."""
+    from datetime import date
+
+    from arkwatch.transforms.fedwatch import format_brief
+
+    p = type(
+        "P", (),
+        {"meeting_date": date(2026, 10, 28), "prob_ease": 0.0,
+         "prob_hold": 0.1, "prob_hike": 0.9, "implied_rate": 4.08},
+    )
+    txt = format_brief([p], asof="2026-09-15")
+    assert "(ZQ 09-15)" in txt
 
 
 # --- Calendar audit batch 2026-09-17: aliases, stub gate, hour gate, sibling heal

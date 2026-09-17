@@ -176,9 +176,9 @@ golden_anchors:
 
   - series_id: RSAFS
     anchor_date: "2026-07-01"
-    expected: 763602
-    tolerance: 50        # $ millions; minor monthly revisions
-    provenance: "live-test verified 2026-08-28, FRED RSAFS"
+    expected: 764462
+    tolerance: 100       # $ millions; monthly revisions with each retail-sales cycle
+    provenance: "recalibrated 2026-09-17 (round-2 audit): June level revised 763,602 to 764,462 with the September retail-sales cycle; FRED live"
 
   - series_id: GDPNOW
     anchor_date: "2026-04-01"

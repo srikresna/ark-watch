@@ -193,6 +193,14 @@ def compute_sigma(conn, as_of: str | None = None) -> dict:
             " VALUES (?,?,?,?,?,?)",
             (key, now[:10], sigma, n, f"{WINDOW_YEARS}y-winsor{WINSOR_SIGMA:g}MAD", low_conf),
         )
+    # ROUND-2: drop this as_of's ghost keys — families removed by re-keying/
+    # stub-cleanup otherwise keep stale σ rows forever and the indicator
+    # count overstates the living population (live: 12 ghosts vs 184 alive)
+    conn.execute(
+        "DELETE FROM indicator_stats WHERE as_of=? AND indicator NOT IN"
+        " (SELECT DISTINCT indicator_key FROM events WHERE indicator_key IS NOT NULL)",
+        (now[:10],),
+    )
     conn.execute("COMMIT")
     return {"n_indicators": len(by_key), "low_conf": n_lc}
 

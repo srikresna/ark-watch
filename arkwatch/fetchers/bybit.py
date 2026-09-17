@@ -29,11 +29,18 @@ def fetch_stablecoin_total() -> dict:
     latest = rows[-1]
     raw = latest.get("totalCirculatingUSD")
     if isinstance(raw, dict):
-        # 2026-09-17: the field became a per-peg breakdown
-        # {"peggedUSD": N, "peggedEUR": N, ...} — float(dict) crashed the
-        # harvest. The total is the sum across pegs (same definition the
-        # old scalar carried).
-        raw = sum(v for v in raw.values() if isinstance(v, (int, float)))
+        # 2026-09-17 schema change — ROUND-2 CORRECTION: the old scalar
+        # carried ONLY the USD-pegged total (live evidence:
+        # totalCirculating.peggedUSD 309,298,108,635.74 == the stored 09-16
+        # scalar to the cent). Summing ALL pegs silently changed the series
+        # DEFINITION mid-stream (a level jump on the brief line). Keep the
+        # definition: peggedUSD first, chained fallbacks after.
+        v = raw.get("peggedUSD")
+        if v is None:
+            v = (latest.get("totalCirculating") or {}).get("peggedUSD")
+        if v is None:
+            v = sum(x for x in raw.values() if isinstance(x, (int, float)))
+        raw = v
     raw_date = latest.get("date")
     ts = str(raw_date or "")[:10]
     if len(ts) == 10 and ts.isdigit():

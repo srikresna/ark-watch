@@ -360,15 +360,18 @@ def save(db_path: str, events: list[dict]) -> int:
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(event_uid) DO UPDATE SET "
             "  actual=excluded.actual, actual_source=excluded.actual_source, "
-            "  ts_utc=excluded.ts_utc, release_ts=excluded.release_ts "
+            "  ts_utc=excluded.ts_utc, release_ts=excluded.release_ts, "
+            "  importance=CASE WHEN excluded.importance<>'low' THEN excluded.importance"
+            "                   ELSE events.importance END "
             " WHERE events.actual IS NULL AND excluded.actual IS NOT NULL",
             rows,
         )
         conn.executemany(
-            "UPDATE events SET consensus=?2, consensus_source=?3 "
+            "UPDATE events SET consensus=?2, consensus_source=?3, "
+            "  importance=CASE WHEN ?4<>'low' AND ?4 IS NOT NULL THEN ?4 ELSE importance END "
             "WHERE event_uid=?1 AND actual IS NULL "
             "AND (?2 IS NOT NULL AND events.consensus IS NOT ?2)",
-            [(r[0], r[7], r[8]) for r in rows],
+            [(r[0], r[7], r[8], r[6]) for r in rows],
         )
         # Sibling heal (2026-09-17 audit): a TV twin of a release whose FMP
         # row carries the actual stays actual-NULL forever when the twin's
@@ -376,10 +379,17 @@ def save(db_path: str, events: list[dict]) -> int:
         # while the FMP twin had actual=162). When an incoming row carries
         # an actual, fill same indicator_key + same-date siblings that are
         # still NULL — idempotent, one statement.
+        # ROUND-2 scale guard: one key family can hold genuinely different
+        # units (a CME %MoM twin vs the FMP level family) — a heal across a
+        # >10x scale gap poisons sigma/ESI (live: one EXISTING HOME row).
+        # Only heal within a plausible 0.1x..10x band of the target's own
+        # consensus (a consensus-less target falls back to the family gate).
         conn.executemany(
             "UPDATE events SET actual=?2, actual_source=?3 "
             "WHERE indicator_key=?4 AND substr(ts_utc,1,10)=substr(?5,1,10) "
-            "AND actual IS NULL AND event_uid<>?6",
+            "AND actual IS NULL AND event_uid<>?6 "
+            "AND (consensus IS NULL OR (ABS(?2) >= 0.1*ABS(consensus)"
+            "     AND ABS(?2) <= 10*ABS(consensus)))",
             [
                 (r[0], r[9], r[10], r[14], r[1], r[0])
                 for r in rows
