@@ -788,18 +788,38 @@ def main(argv: list[str] | None = None) -> int:
         # ROUND-2: the archive carries OFFICIAL per-date tonnes (since 2004)
         # — write the last 10 rows each run: holes from outage days (09-09/
         # 14/15) and the 08-31 fallback-phantom self-heal with REAL values.
+        # ROUND-3: loop var is arch_row — 'a' shadowed the argparse Namespace
+        # and crashed every f2 run (AttributeError at a.lme_years); also
+        # thread the archive through so fetch_gld_tonnes does NOT re-download
+        # the ~5,700-row XLSX (SPDR is a no-fallback CDN — request frugality).
         arch = spdr.fetch_gld_archive()
         n_gld = 0
-        for a in arch[-10:]:
-            if a["tonnes"] is None:
+        for arch_row in arch[-10:]:
+            if arch_row["tonnes"] is None:
                 continue  # 2004-era head rows without the tonnes column
+            # ROUND-3: skip weekend rows — the archive carries misprinted
+            # Sat/Sun tonnage (live: 09-12/13 = 1006.2t V-shaped phantom vs
+            # the 09-11/09-14 bookends 1047.4t)
+            from datetime import date as _d
+
+            if _d.fromisoformat(arch_row["ts"]).weekday() >= 5:
+                continue
             conn.execute(
                 "INSERT INTO flows_daily(date,gld_tonnes) VALUES (?,?) "
                 "ON CONFLICT(date) DO UPDATE SET gld_tonnes=excluded.gld_tonnes",
-                (a["ts"], round(a["tonnes"], 1)),
+                (arch_row["ts"], round(arch_row["tonnes"], 1)),
             )
             n_gld += 1
-        gld = spdr.fetch_gld_tonnes()
+        # ROUND-3 P0: purge stored tonnage BEYOND the archive frontier —
+        # stale approx-fallback rows dated 'today' (live: 09-17=1006.2 while
+        # the archive's true latest is 09-16=1052.0) rendered as current.
+        frontier = max(r["ts"] for r in arch if r["tonnes"] is not None)
+        purged = conn.execute(
+            "UPDATE flows_daily SET gld_tonnes=NULL WHERE date > ?", (frontier,)
+        ).rowcount
+        if purged:
+            print(f"  GLD: purged {purged} post-frontier phantom row(s)")
+        gld = spdr.fetch_gld_tonnes(arch=arch)
         approx_mark = " (approx)" if gld.get("approx") else ""
         print(
             f"  GLD: {gld['tonnes']}t{approx_mark} ({gld['ts']}) + {n_gld}d archive window"

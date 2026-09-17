@@ -231,37 +231,44 @@ def verify(
         else:
             anchor_map.setdefault(("FRED:" + sid, d), a)
 
-    targets = [e for e in reg if any(e["series_id"].startswith(p) for p in ROUTES)]
+    # ROUND-3: admit routeless series that carry BOTH bounds — the DB-backed
+    # fallback below gates them (the old filter excluded them before the
+    # loop could ever reach the fallback: dead code, LME: stayed ungated)
+    targets = [
+        e
+        for e in reg
+        if any(e["series_id"].startswith(p) for p in ROUTES)
+        or (e.get("sanity_min") is not None and e.get("sanity_max") is not None)
+    ]
     if block:
         targets = [e for e in targets if e["block"] == block.upper()]
     if limit:
         targets = targets[:limit]
 
     rep = Report(checked=len(targets))
+    _db_conn = None  # lazily opened ONCE for the routeless fallback below
     for e in targets:
         prefix = next((p for p in ROUTES if e["series_id"].startswith(p)), None)
         if prefix is None:
-            # ROUND-2 DB-backed fallback: no fetcher route, but the series IS
-            # harvested into raw_observations by another job (live: LME:
-            # CA_STOCKS via the f2 XLSX path) — gate the STORED latest value
-            # against registry bounds so every bounded series is checked by
-            # SOMEONE, route or not. Depth/anchor stay '·' (no fetcher to
-            # probe them through).
+            # ROUND-2 DB-backed fallback (ROUND-3: reachable now — the target
+            # filter admits bounded routeless series; conn opened once):
+            # gate the STORED latest value against registry bounds so every
+            # bounded series is checked by SOMEONE. Depth/anchor stay '·'.
             smin, smax = e.get("sanity_min"), e.get("sanity_max")
             if smin is not None and smax is not None:
                 from pathlib import Path
 
                 from .. import db as _db
 
-                _conn = _db.get_conn(
-                    str(Path(__file__).resolve().parents[2] / "data" / "arkwatch.db")
-                )
-                row = _conn.execute(
+                if _db_conn is None:
+                    _db_conn = _db.get_conn(
+                        str(Path(__file__).resolve().parents[2] / "data" / "arkwatch.db")
+                    )
+                row = _db_conn.execute(
                     "SELECT ts, value FROM raw_observations WHERE series_id=?"
                     " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1",
                     (e["series_id"],),
                 ).fetchone()
-                _conn.close()
                 r = Row(series_id=e["series_id"])
                 if row and row[1] is not None:
                     r.sanity = "✓" if smin <= row[1] <= smax else (

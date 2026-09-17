@@ -178,13 +178,17 @@ def compute_sigma(conn, as_of: str | None = None) -> dict:
         mad = sorted(abs(d - med) for d in diffs)
         mad = mad[n // 2] if n % 2 else (mad[n // 2 - 1] + mad[n // 2]) / 2
         sigma_robust = 1.4826 * mad
+        # ROUND-3: EXCLUDE unit-contaminants (>10 MAD from the median) from
+        # the population instead of winsor-clipping them — a clipped
+        # contaminant still inflates sigma (live: NEW HOME SALES 1.69x from
+        # %MoM-vs-level pairs) and damps every live z into ESI
         if sigma_robust > 0:
-            lo, hi = (med - WINSOR_SIGMA * sigma_robust, med + WINSOR_SIGMA * sigma_robust)
-            clipped = [min(max(d, lo), hi) for d in diffs]
+            kept = [d for d in diffs if abs(d - med) <= 10 * sigma_robust]
         else:
-            clipped = list(diffs)
-        mean_c = sum(clipped) / n
-        sigma = math.sqrt(sum((d - mean_c) ** 2 for d in clipped) / max(n - 1, 1))
+            kept = list(diffs)
+        n_k = len(kept) or 1
+        mean_c = sum(kept) / n_k
+        sigma = math.sqrt(sum((d - mean_c) ** 2 for d in kept) / max(n_k - 1, 1))
         low_conf = 1 if n < MIN_OBS else 0
         n_lc += low_conf
         conn.execute(

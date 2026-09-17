@@ -95,14 +95,16 @@ def _cooldown_active(conn, alert_type: str, *, permanent: bool = False) -> bool:
     re-announce the same weekly figure every cooldown window for the
     snapshot's whole freshness life (14d)."""
     if permanent:
-        # ROUND-2 backward-compat: also count the ROOT (pre-@ key) form —
-        # historical rows delivered before the per-snapshot scheme must
-        # still suppress, without requiring data rewrites of old rows
-        root = alert_type.split("@", 1)[0]
+        # ROUND-3: the ROUND-2 root-key backward-compat is REVERTED — counting
+        # the root form suppressed NEW snapshots forever (any historical bare
+        # row permanently silenced every future @-key of that trigger, live:
+        # soma_roll_off/gold_ry/copper). Transition coverage is handled by a
+        # one-time data migration suffixing bare keys with their snapshot
+        # date instead (see docs/audits 2026-09-17).
         row = conn.execute(
-            "SELECT COUNT(*) FROM alert_deliveries WHERE (cooldown_key=? OR cooldown_key=?) "
+            "SELECT COUNT(*) FROM alert_deliveries WHERE cooldown_key=? "
             "AND status IN ('pending','sending','sent')",
-            (alert_type, root),
+            (alert_type,),
         ).fetchone()
         return row[0] > 0
     cooldown_h = _dynamic_cooldown_hours(conn)

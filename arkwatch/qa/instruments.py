@@ -142,11 +142,14 @@ def _cross_validate(conn, db_path: str) -> int:
     the bad row once the vendor serves the final."""
     wedges: list[str] = []
     for spot, fut in (("XAUUSD", "GC1"), ("XAGUSD", "SI1"), ("XPTUSD", "PL1")):
+        # ROUND-3: upper bound < today — a still-FORMING intraday bar diverges
+        # from its futures leg by construction (false positive on first run)
         rows = conn.execute(
             "SELECT a.ts, a.close, b.close FROM instrument_prices a"
             " JOIN instrument_prices b ON b.symbol=? AND b.source='YAHOO' AND b.ts=a.ts"
             " WHERE a.symbol=? AND a.source='EODHD' AND a.close IS NOT NULL"
             " AND b.close IS NOT NULL AND a.ts >= date('now','-4 day')"
+            " AND a.ts < date('now')"
             " ORDER BY a.ts DESC LIMIT 4",
             (fut, spot),
         ).fetchall()
@@ -161,6 +164,7 @@ def _cross_validate(conn, db_path: str) -> int:
             " JOIN instrument_prices b ON b.symbol=a.symbol AND b.source='YAHOO' AND b.ts=a.ts"
             " WHERE a.symbol=? AND a.source='EODHD' AND a.close IS NOT NULL"
             " AND b.close IS NOT NULL AND a.ts >= date('now','-4 day')"
+            " AND a.ts < date('now')"
             " ORDER BY a.ts DESC LIMIT 4",
             (sym,),
         ).fetchall()

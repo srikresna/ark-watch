@@ -28,8 +28,16 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
     for code in codes:
         try:
             rows = cme.fetch_settlements(code)
+            # ROUND-3: snapshot the frontier BEFORE the save — reading it
+            # after meant db_max >= fetched_max always and the gap walk was
+            # unreachable dead code
+            pid = cme.PRODUCTS[code]
+            db_max_pre = conn.execute(
+                "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=?",
+                (pid,),
+            ).fetchone()[0]
             n = _save_settlements(conn, rows)
-            n += _reconcile_gaps(conn, code, rows)
+            n += _reconcile_gaps(conn, code, rows, db_max_pre)
             out[code] = n
         except Exception as ex:
             out[code] = -1
@@ -37,7 +45,7 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
     return out
 
 
-def _reconcile_gaps(conn, code: str, rows: list[dict]) -> int:
+def _reconcile_gaps(conn, code: str, rows: list[dict], db_max_pre: str | None = None) -> int:
     """ROUND-2 fix: permanent trade-date holes. CME retention is ~5 trading
     days — a missed harvest day is gone forever unless this pass explicitly
     re-fetches it (mechanism proven live by the 09-14 walkback recovery).
@@ -51,9 +59,13 @@ def _reconcile_gaps(conn, code: str, rows: list[dict]) -> int:
         return 0
     pid = cme.PRODUCTS[code]
     fetched_max = max(r["trade_date"] for r in rows)
-    db_max = conn.execute(
-        "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=?", (pid,)
-    ).fetchone()[0]
+    # ROUND-3: callers pass the PRE-save frontier; only read the DB when the
+    # caller did not (backward-compatible for direct calls)
+    db_max = db_max_pre
+    if db_max is None:
+        db_max = conn.execute(
+            "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=?", (pid,)
+        ).fetchone()[0]
     if not db_max or db_max >= fetched_max:
         return 0
     d0, d1 = _date.fromisoformat(db_max), _date.fromisoformat(fetched_max)
@@ -157,12 +169,12 @@ def harvest_voi(conn, asset_classes: list[int] | None = None) -> tuple[int, str 
     for ac_id in ids:
         for ent in entries:
             try:
-                exists = conn.execute(
-                    "SELECT 1 FROM voi_daily WHERE trade_date=? AND report_type=? LIMIT 1",
-                    (ent["trade_date"], ent["report_type"]),
-                ).fetchone()
-                if exists:
-                    continue
+                # ROUND-3 regression fix: NO global (trade_date, report_type)
+                # pre-check — it keyed on date+type only, so after the FIRST
+                # asset class stored a date, every other class (FX/Equity/
+                # IR/Energy/Metals) skipped forever. The PK's INSERT OR
+                # IGNORE is the dedup; entries are bounded (~10) by CME
+                # retention, so re-fetching a stored entry is one cheap POST.
                 rows = cme.fetch_voi(
                     ac_id, td_raw=ent["td_raw"], report_type=ent["report_type"]
                 )

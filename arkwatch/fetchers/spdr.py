@@ -74,15 +74,19 @@ def fetch_gld_archive() -> list[dict]:
     return out
 
 
-def fetch_gld_tonnes() -> dict:
+def fetch_gld_tonnes(arch: list[dict] | None = None) -> dict:
     """Latest GLD holdings — the OFFICIAL archive tonnes when the column is
     filled (the norm); the shares×oz/share approximation only as a
     degradable fallback when the tonnes cell is empty (approx=True —
-    renderers must mark it and f2 must NOT write it as a real value)."""
+    renderers must mark it and f2 must NOT write it as a real value).
+    arch: pass an already-fetched fetch_gld_archive() to avoid a second
+    full-download of the ~5,700-row XLSX (ROUND-3: f2 was downloading 2x)."""
     from ..units import oz_to_tonnes
 
-    rows = [r for r in fetch_gld_archive() if r["tonnes"] is not None]
-    last = rows[-1] if rows else fetch_gld_archive()[-1]
+    if arch is None:
+        arch = fetch_gld_archive()
+    rows = [r for r in arch if r["tonnes"] is not None]
+    last = rows[-1] if rows else arch[-1]
     if last["tonnes"] is not None:
         return {
             "ts": last["ts"],
