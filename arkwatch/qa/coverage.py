@@ -131,8 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     for k, releases, n_actual in gaps:
         print(f"  ✗ {k:44s} releases={releases:<4} actuals={n_actual}")
-    if gaps:
-        errors.append(f"{len(gaps)} calendar families without a covering series")
+    # ROUND-5: the gap list is a TRIAGE REPORT, not a lint error — the 27
+    # known families include by-design members (policy events, NSA twins)
+    # that will never be closed by a series, so exit-1 here would page
+    # 'job failed' every Sunday forever (and mask same-night failures via
+    # the shared key). Visibility stays via this printout + the daemon's
+    # ✓ stdout tail; exit-1 remains reserved for genuine lint breakage.
 
     print(f"=== lint: {len(errors)} errors ===")
     for e in errors:

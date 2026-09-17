@@ -136,6 +136,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     curve = reader.values("FRED:T10Y3M")
     dff_m = momentum(dff_vals, 20) if len(dff_vals) > 20 else None
     out["A"] = {
+        "parts": ["FRED:DFF", "FRED:T10Y3M"],
         "label": "Policy",
         "state": state_direction(dff_m, 0.05),
         "detail": f"DFF {_pct(dff_vals[-1] if dff_vals else None)}%",
@@ -154,6 +155,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     else:
         ry_state = "INSUFFICIENT"
     out["B"] = {
+        "parts": ["FRED:DFII10"],
         "label": "RealYield",
         "state": ry_state,
         "detail": f"DFII10 {_pct(dfii[-1] if dfii else None)}% ({ry_m * 100:.0f}bps/20d)"
@@ -197,6 +199,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     else:
         c_state, c_detail = "INSUFFICIENT", "N/A"
     out["C"] = {
+        "parts": ["FRED:CPIAUCSL"],
         "label": "Inflation",
         "state": c_state,
         "detail": c_detail,
@@ -221,6 +224,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         d_state = "DECELERATING"
     gdpnow_v = reader.latest("FRED:GDPNOW")
     out["D"] = {
+        "parts": ["FRED:ICSA", "FRED:GDPNOW"],
         "label": "Growth",
         "state": d_state,
         "detail": (
@@ -239,6 +243,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     else:
         e_state = "INSUFFICIENT"
     out["E"] = {
+        "parts": ["FRED:WALCL"],
         "label": "Liquidity",
         "state": e_state,
         "detail": f"BS ${walcl[-1] / 1_000_000:.2f}T" if walcl else "N/A",
@@ -263,6 +268,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     else:
         f_state = "INSUFFICIENT"
     out["F"] = {
+        "parts": ["FRED:BAMLH0A0HYM2"],
         "label": "Stress",
         "state": f_state,
         "detail": f"HY p{hy_pct:.0f}" if hy_pct is not None else "N/A",

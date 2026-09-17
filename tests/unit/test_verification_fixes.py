@@ -364,9 +364,8 @@ def test_caldist_ref_month_and_dedup(tmp_path):
         {"ts": "2025-12-01", "value": 49.2},
         {"ts": "2026-08-01", "value": 54.6},
     ]
-    lat = caldist.fetch_latest("CAL:ISM_MFG_PMI")
-    # fetch_latest uses the DEFAULT_DB — reroute via the family directly above;
-    # here just prove the routing table resolves the suffix
+    # fetch_latest reads DEFAULT_DB — not usable against the temp db; the
+    # family_rows proof above is the contract, this pins the routing table
     assert caldist.FAMILIES["ISM_MFG_PMI"][0] == "ISM MANUFACTURING PMI"
 
 

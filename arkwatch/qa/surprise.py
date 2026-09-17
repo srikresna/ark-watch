@@ -212,10 +212,12 @@ def compute_sigma(conn, as_of: str | None = None) -> dict:
 def update_surprise_z(conn) -> int:
     """Fill surprise_z for paired events (using the latest σ per key).
 
-    Historical FMP rows with MIXED UNITS (thousands vs %) produce z ≈ +112;
-    genuine macro surprises rarely exceed 8σ → |z|>10 is almost certainly
-    data corruption → quarantined (NULL), not used. Distrusted numbers must
-    never reach the brief.
+    ROUND-5: recompute EVERY paired event each run (the vintage-locked
+    `AND surprise_z IS NULL` fill meant sigma recalibrations never
+    propagated — z stayed frozen at first-compute vintage while ESI
+    'rebuilds' silently reused stale z). |z|>10 rows are quarantined to
+    NULL (mixed units / corruption — distrusted numbers never reach the
+    brief), and previously-filled rows that NOW exceed 10 are re-NULLed.
     """
     # Dedup by as_of: with multi-day stats rows, a plain dict comprehension
     # would keep whichever row was scanned last; MAX(as_of) is explicit
@@ -233,14 +235,26 @@ def update_surprise_z(conn) -> int:
     for key, sigma in sigma_by_key.items():
         if not sigma or sigma <= 0:
             continue
+        # ROUND-5: no `AND surprise_z IS NULL` — every paired event is
+        # recomputed against the CURRENT sigma, so recalibrations
+        # propagate; rows that now exceed the |z|>10 quarantine band are
+        # re-NULLed in the same statement
         cur = conn.execute(
             "UPDATE events SET surprise_z = (actual - consensus) / ? "
-            "WHERE indicator_key=? AND surprise_z IS NULL "
+            "WHERE indicator_key=? "
             "AND actual IS NOT NULL AND consensus IS NOT NULL "
             "AND ABS((actual - consensus) / ?) <= 10",
             (sigma, key, sigma),
         )
         n += cur.rowcount
+        # ROUND-5: re-quarantine drift — previously-filled rows that the
+        # CURRENT sigma now puts beyond |z|>10 go back to NULL
+        conn.execute(
+            "UPDATE events SET surprise_z = NULL WHERE indicator_key=? "
+            "AND surprise_z IS NOT NULL "
+            "AND ABS((actual - consensus) / ?) > 10",
+            (key, sigma),
+        )
         q = conn.execute(
             "SELECT COUNT(*) FROM events WHERE indicator_key=? "
             "AND surprise_z IS NULL AND actual IS NOT NULL "

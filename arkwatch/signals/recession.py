@@ -106,6 +106,12 @@ def store_recession_signals(conn: sqlite3.Connection) -> int:
     if all(snap[k] is None for k in ("model_pct", "anxious_pct", "sahm")):
         return 0
     ts = snap["effective_ts"]
+    # ROUND-5: an effective_ts in the FUTURE (a leg's quarter label/forecast
+    # horizon mislabeled as effective) would shadow the live row as 'latest'
+    # in every MAX(ts) reader (live: a 2026-10-01 ghost from pre-fix code)
+    if ts > datetime.now(UTC).date().isoformat():
+        print(f"  ⚠ recession_triangulation: effective_ts {ts} is in the future — skipped")
+        return 0
     # state: how many of the three independent gauges are elevated
     elevated = 0
     if snap["model_pct"] is not None and snap["model_pct"] >= ELEVATION_PCT:

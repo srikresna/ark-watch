@@ -136,13 +136,30 @@ def _match_term(term: str | None, sec_type: str | None) -> str | None:
     Exact normalized match first; then a prefix pass for compound live shapes
     ('4-Week Bill' as a single term string). Prefixes are unambiguous within
     the set that matters ('2-Year' never prefixes '20-Year': '2year' vs
-    '20year' diverge at the 2nd character)."""
+    '20year' diverge at the 2nd character).
+
+    ROUND-5: benchmark REOPENINGS carry remaining-maturity shapes like
+    '9-Year 11-Month' — canonicalized by rounding the tenor UP to the next
+    integer year ('9-Year 11-Month' → 10-Year, '29-Year 3-Month' → 30-Year,
+    '4-Year 10-Month' → 5-Year). Without this the auction-demand headline
+    froze at the last original-issue date (live: stuck 08-12 while the same
+    10-Year bucket auctioned 09-09 under the reopening label)."""
+    import re as _re
+
     tn, sn = _norm(term), _norm(sec_type)
     if not tn:
         return None
     for nt, ns, canon in _NORMED_TERMS:
         if tn == nt and sn == ns:
             return canon
+    # reopening remaining-maturity: '9-Year 11-Month' (normalized
+    # '9year11month') → year 9 + 1 → 10-Year. Months round the tenor UP.
+    m = _re.fullmatch(r"(\d+)year(?:\d+month)?", tn)
+    if m and sn and "bill" not in sn:
+        yrs = int(m.group(1)) + (1 if "month" in tn else 0)
+        for nt, ns, canon in _NORMED_TERMS:
+            if nt == f"{yrs}year" and ns == sn:
+                return canon
     for nt, ns, canon in _NORMED_TERMS:
         if tn.startswith(nt) and sn == ns:
             return canon

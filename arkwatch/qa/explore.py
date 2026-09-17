@@ -172,6 +172,7 @@ def explore_signal(conn: sqlite3.Connection, signal_id: str, trace: bool = False
                 ).fetchone()
                 if row:
                     print(f"    {sid:<28} {row[1]:>12,.4f}  ({row[0][:10]})")
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

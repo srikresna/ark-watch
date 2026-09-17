@@ -135,8 +135,15 @@ def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
 def _alert_job_failed(cmd: str, detail: str) -> None:
     """ROUND-4: job failures lived only in the log file — the nightly backup
     hard-failed for two nights with zero visibility while the on-disk backup
-    rotted. Route failures through the watcher's outbox (its cooldown dedup
-    suppresses the retry echo; one alert per failure episode)."""
+    rotted. Route failures through the watcher's outbox.
+
+    ROUND-5: the key is PER-JOB PER-DAY permanent — the round-4 shared
+    windowed key meant (a) a second failing job within 6h was silently
+    eaten (Sunday coverage 21:00 would mask alfred 22:00 + backup 23:30 —
+    the exact class this routing exists to surface), (b) near-daily
+    transient 5xx pages crossed the spam tripwire falsely. Dated-per-job:
+    retry echoes suppressed, next-day episodes re-page, jobs never mask
+    each other, tripwire counts stay 1/key/day."""
     try:
         from . import db as _db
         from .qa.watcher import _fire
@@ -148,6 +155,7 @@ def _alert_job_failed(cmd: str, detail: str) -> None:
             f"Daemon job '{cmd}' failed: {detail[:110]}",
             "A scheduled job failed (see logs/daemon-*.log + fetch_log for detail)",
             f"Run `python -m arkwatch {cmd}` on the server to diagnose",
+            cooldown_key=f"job_failed@{cmd}@{datetime.now(UTC).date().isoformat()}",
         )
         conn.close()
     except Exception as ex:  # the alert must never break the loop
