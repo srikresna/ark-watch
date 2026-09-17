@@ -273,6 +273,56 @@ def test_ads_colon_date_normalized():
         assert _dt.strptime(s, fmt).date().isoformat() == "2026-09-05"
 
 
+# --- Calendar ingest: dead sub-component families ------------------------------
+
+
+def test_calendar_blocks_dead_philly_subcomponents(tmp_path):
+    """2026-09-17 calendar audit: the 5 PHILLY FED sub-component families
+    stopped carrying consensus AND actuals after 2023-08 — ingest created
+    fully-empty rows forever (10/day on release days). save() must drop them
+    while the HEALTHY headline family still lands."""
+    import sqlite3
+
+    from arkwatch.qa.calendar import save
+
+    dbp = str(tmp_path / "t.db")
+    db.get_conn(dbp, allow_init=True).close()
+    n = save(
+        dbp,
+        [
+            {
+                "normalized_name": "PHILLY FED PRICES PAID SEP",
+                "ts_utc": "2026-09-17T19:30:00",
+                "name": "Philly Fed Prices Paid",
+                "importance": "low",
+                "consensus": None,
+                "actual": None,
+                "previous": None,
+                "source": "TEST",
+            },
+            {
+                "normalized_name": "PHILADELPHIA FED MANUFACTURING INDEX SEP",
+                "ts_utc": "2026-09-17T19:30:00",
+                "name": "Philadelphia Fed Manufacturing Index",
+                "importance": "high",
+                "consensus": 30.5,
+                "actual": None,
+                "previous": 47.4,
+                "source": "TEST",
+            },
+        ],
+    )
+    assert n == 1  # only the headline landed
+    c = sqlite3.connect(dbp)
+    assert c.execute(
+        "SELECT COUNT(*) FROM events WHERE normalized_name LIKE 'PHILLY FED%'"
+    ).fetchone()[0] == 0
+    assert c.execute(
+        "SELECT consensus FROM events WHERE normalized_name LIKE 'PHILADELPHIA%'"
+    ).fetchone()[0] == 30.5
+    c.close()
+
+
 # --- P2: copper monthly-cadence gate ------------------------------------------
 
 

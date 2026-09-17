@@ -193,10 +193,29 @@ def event_uid(normalized_name: str, ts_utc: str) -> str:
     return hashlib.sha1(f"{normalized_name}|{ts_utc[:10]}|US".encode()).hexdigest()[:16]
 
 
+# Sub-component event families whose vendor feed is DEAD: no consensus AND no
+# actual since 2023-08 (live-verified 2026-09-17: today's rows arrive fully
+# empty — cons=None actual=None). The HEADLINE ("PHILADELPHIA FED
+# MANUFACTURING INDEX") is healthy and stays; the sub-components live as real
+# FRED series instead (GACDFSA/PPCDFSA…066MSFRBPHI, block D, since 1968).
+DEAD_SUBCOMPONENT_PREFIXES = (
+    "PHILLY FED BUSINESS CONDITIONS",
+    "PHILLY FED CAPEX INDEX",
+    "PHILLY FED EMPLOYMENT",
+    "PHILLY FED NEW ORDERS",
+    "PHILLY FED PRICES PAID",
+)
+
+
 def save(db_path: str, events: list[dict]) -> int:
     conn = db.get_conn(db_path, allow_init=True)
     rows = []
     for e in events:
+        if any(
+            e["normalized_name"].startswith(p) for p in DEAD_SUBCOMPONENT_PREFIXES
+        ):
+            continue  # dead family — never carries numbers, pure ingest noise
+
         uid = event_uid(e["normalized_name"], e["ts_utc"])
         rows.append(
             (

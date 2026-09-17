@@ -177,6 +177,85 @@ series:
   active: 1
   # Consumer-spend hard data (advance retail) — household-demand pulse for the growth block.
 
+- series_id: FRED:HOUST
+  name: "New Private Housing Units Started (SAAR, thousands)"
+  block: D
+  tier: 1
+  unit: "thousand units (SAAR)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±17th of the following month 08:30 ET (Census 'New Residential Construction', joint with Permits)"
+  expected_start: "1959-01-01"
+  sanity_min: 400                     # historical min ≈ 478 (2009-04); margin
+  sanity_max: 2600                    # historical max ≈ 2,494 (1972-01); margin
+  primary_source: "FRED:HOUST"
+  secondary_source: null              # calendar layer (events) carries the cons/actual/z
+  tolerance: null                     # MoM surprise; this series is the LEVEL history
+  active: 1
+  # ADDED 2026-09-17 (calendar audit): housing = the most rate-sensitive sector —
+  # series-level history (z/percentile) that the events layer alone cannot give.
+
+- series_id: FRED:PERMIT
+  name: "New Private Housing Units Authorized by Building Permits (SAAR, thousands)"
+  block: D
+  tier: 1
+  unit: "thousand units (SAAR)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "±17th of the following month 08:30 ET (Census 'New Residential Construction', joint with Starts)"
+  expected_start: "1960-01-01"
+  sanity_min: 450                     # historical min ≈ 513 (2009); margin
+  sanity_max: 2600                    # historical max ≈ 2,400s (early 1970s); margin
+  primary_source: "FRED:PERMIT"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17 (calendar audit): leading indicator — permits lead starts
+  # (authorization precedes construction).
+
+- series_id: FRED:GACDFSA066MSFRBPHI
+  name: "Philly Fed Mfg Survey — General Activity (diffusion index, SA)"
+  block: D
+  tier: 1
+  unit: "diffusion index (SA)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "3rd Thursday 08:30 ET (Philadelphia Fed MBO survey)"
+  expected_start: "1968-05-01"
+  sanity_min: -70                     # diffusion floor w/ margin (live Aug-26: +47.4)
+  sanity_max: 90
+  primary_source: "FRED:GACDFSA066MSFRBPHI"
+  secondary_source: null              # calendar layer (FMP) carries cons/actual/z for
+  tolerance: null                     # the headline release; this is the series history
+  active: 1
+  # ADDED 2026-09-17 (calendar audit): FRED redistributes the MBO survey since
+  # 1968 — 58y of history vs the 5y calendar actuals. Aug-26 actual 47.4 matched
+  # the events row exactly (live-verified).
+
+- series_id: FRED:PPCDFSA066MSFRBPHI
+  name: "Philly Fed Mfg Survey — Prices Paid (diffusion index, SA)"
+  block: D
+  tier: 1
+  unit: "diffusion index (SA)"
+  value_format: fraction
+  freq: M
+  ts_convention: month_start
+  release_schedule: "3rd Thursday 08:30 ET (Philadelphia Fed MBO survey)"
+  expected_start: "1968-05-01"
+  sanity_min: -70
+  sanity_max: 90
+  primary_source: "FRED:PPCDFSA066MSFRBPHI"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17 (calendar audit): REPLACES the dead calendar sub-feed —
+  # the vendor stopped carrying sub-component actuals after 2023-08 (20 rows,
+  # then fully-empty ingest). Prices Paid = the input-price/inflation-pipeline
+  # read the hawkish-narrative watch needs.
+
 - series_id: FRED:GDPNOW
   name: "GDPNow — real GDP QoQ annualized nowcast"
   block: D
