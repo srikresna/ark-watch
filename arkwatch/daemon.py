@@ -189,7 +189,7 @@ def run_loop():
     logger.info("=== daemon start ===")
     last_run: dict[str, str] = {}
     next_retry: dict[str, float] = {}  # cmd → monotonic retry time (non-blocking)
-    cycle = 0
+    log_day = datetime.now(UTC).date()
     last_watch = 0.0
     try:
         while True:
@@ -223,9 +223,12 @@ def run_loop():
                 last_watch = time.monotonic()
                 _run_job("watch", "Alert watcher")
 
-            # Rotate logs daily
-            cycle += 1
-            if cycle % 2880 == 0:
+            # Rotate logs at the UTC date change (the filename convention is
+            # UTC). CYCLE-counting drifted: a daemon started at 20:18 rotated
+            # at 20:18 daily, so yesterday's filename kept receiving today's
+            # runs (live: daemon-20260916.log carried all of 09-17).
+            if datetime.now(UTC).date() != log_day:
+                log_day = datetime.now(UTC).date()
                 _setup_logging()
             time.sleep(30)
     finally:

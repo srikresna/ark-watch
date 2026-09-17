@@ -305,11 +305,13 @@ def check_all(conn) -> list[str]:
                 f"VIX {vix[1]:.1f} > VXV {vxv[1]:.1f} (ratio {ratio:.2f})",
                 "Historically: acute short-term stress",
                 "Reduce US100 sizing; no new longs until ratio < 1.0",
+                cooldown_key=f"vix_backwardation@{vix[0][:10]}",
             ):
                 fired.append("vix_backwardation")
 
     # 2. HY extreme percentile (<p10 or >p90 — thresholds in params_signals.yaml)
     hy = recent_values(conn, "FRED:BAMLH0A0HYM2", 756)  # 3y window
+    hy_lv = latest_value(conn, "FRED:BAMLH0A0HYM2")
     if len(hy) > 100:
         cur = hy[-1]
         pct = sum(1 for v in hy if v <= cur) / len(hy) * 100
@@ -320,6 +322,7 @@ def check_all(conn) -> list[str]:
                 f"HY OAS {cur:.2f}% = percentile {pct:.0f} (very tight)",
                 "Very tight spreads = complacency; risk of repricing",
                 "Beware mean-reversion; do not chase risk-on",
+                cooldown_key=f"hy_extreme@{hy_lv[0][:10] if hy_lv else '?'}",
             ):
                 fired.append("hy_extreme_low")
         elif pct > HY_EXTREME_PCT_HIGH:
@@ -329,6 +332,7 @@ def check_all(conn) -> list[str]:
                 f"HY OAS {cur:.2f}% = percentile {pct:.0f} (very wide)",
                 "High credit stress; historical contrarian-buy zone",
                 "Watch for a contrarian entry if it stabilizes",
+                cooldown_key=f"hy_extreme@{hy_lv[0][:10] if hy_lv else '?'}",
             ):
                 fired.append("hy_extreme_high")
 
@@ -336,6 +340,12 @@ def check_all(conn) -> list[str]:
     # shared threshold for brief + alert (signals/cot_signals)
     from ..signals.cot_signals import COT_CROWDED_Z, _cot_zscore
 
+    # shared per-report anchor: COT is WEEKLY — a windowed 6h cooldown
+    # re-announced the same report 4×/day all week once the daemon went
+    # 24/7 on the server (live: cot_broad_divergence 06:06 AND 12:07 WIB
+    # from the same 09-11 report). Per-snapshot keys = one announcement
+    # per report, ever (the SOMA pattern).
+    latest_cot = conn.execute("SELECT MAX(report_date) FROM cot_raw").fetchone()[0]
     for code, name in [("088691", "Gold"), ("084691", "Silver"), ("085692", "Copper")]:
         z = _cot_zscore(conn, code)
         if z is not None and abs(z) > COT_CROWDED_Z:
@@ -346,6 +356,7 @@ def check_all(conn) -> list[str]:
                 f"{name} MM z={z:+.1f} CROWDED {direction}",
                 "Positioning extreme vs 3y history",
                 f"{'Do not chase' if z > 0 else 'Beware a squeeze'}",
+                cooldown_key=f"cot_crowded_{name.lower()}@{latest_cot}",
             ):
                 fired.append(f"cot_crowded_{name.lower()}")
 
@@ -354,6 +365,7 @@ def check_all(conn) -> list[str]:
     # a full net-liq would merge WALCL−RRP−TGA once 3-series weekly
     # alignment is ready)
     walcl = recent_values(conn, "FRED:WALCL", 10)
+    walcl_lv = latest_value(conn, "FRED:WALCL")
     if len(walcl) >= 5:
         delta = walcl[-1] - walcl[-5]
         prev_delta = walcl[-5] - walcl[-9] if len(walcl) >= 9 else None
@@ -365,6 +377,9 @@ def check_all(conn) -> list[str]:
                 f"Fed BS ΔWoM: {delta / 1000:+.0f}B (from {prev_delta / 1000:+.0f}B)",
                 f"Reversal to {direction} (liquidity proxy)",
                 "This is a liquidity-regime signal; adjust BTC/index risk",
+                cooldown_key=(
+                    f"net_liq_reversal@{walcl_lv[0][:10] if walcl_lv else '?'}"
+                ),
             ):
                 fired.append("net_liq_reversal")
 
@@ -389,6 +404,7 @@ def check_all(conn) -> list[str]:
                         f"ESI {esi_prev:+.2f} → {esi_now:+.2f}",
                         f"Economic data momentum turned {new_dir} (90d decay)",
                         "Data momentum = the regime's prevailing wind; guard against a contra-data bias",
+                        cooldown_key=f"surprise_flip@{esi_rows[0][0]}",
                     ):
                         fired.append("surprise_flip")
     except Exception:
@@ -608,6 +624,7 @@ def check_all(conn) -> list[str]:
 
     # 6. Gold↔RY divergence (simple form: RY up & gold up)
     ry = recent_values(conn, "FRED:DFII10", 60)
+    ry_lv = latest_value(conn, "FRED:DFII10")
     gold = conn.execute(
         "SELECT close FROM instrument_prices WHERE symbol='XAUUSD' AND source='EODHD' "
         "ORDER BY ts DESC LIMIT 60"
@@ -622,11 +639,12 @@ def check_all(conn) -> list[str]:
                 f"Gold +{gold_m:.0f} BUT DFII10 +{ry_m * 100:.0f}bps (20d)",
                 "Divergence: gold rising despite rising real yields = structural bid (CB?)",
                 "Watch PBoC/CB buying in the flows data",
+                cooldown_key=f"gold_ry_divergence@{ry_lv[0][:10] if ry_lv else '?'}",
             ):
                 fired.append("gold_ry_divergence")
 
     # 7. COT Lev-vs-AM divergence (broad across financials = strong signal)
-    latest_cot = conn.execute("SELECT MAX(report_date) FROM cot_raw").fetchone()[0]
+    # (latest_cot is fetched before trigger 3 — shared per-report anchor)
     if latest_cot:
         diverge_count = 0
         for code in ("099741", "133741", "13874+", "209742"):
@@ -652,6 +670,7 @@ def check_all(conn) -> list[str]:
                 f"{diverge_count}/4 financials: Lev vs AM in opposite directions",
                 "A broad fast-money vs real-money split — resolution = volatility",
                 "Watch for the breaking direction; reduce leverage until it is clear",
+                cooldown_key=f"cot_broad_divergence@{latest_cot}",
             ):
                 fired.append("cot_broad_divergence")
 
@@ -679,6 +698,7 @@ def check_all(conn) -> list[str]:
                     f"{name} {cat.upper()} net={net:+,} Δ{chg:+,}/w (COVERING)",
                     f"Large {cat.upper()} position being unwound rapidly",
                     "Momentum fade — watch for a reversal",
+                    cooldown_key=f"cot_covering_{name.lower()}@{latest_cot}",
                 ):
                     fired.append(f"cot_covering_{name.lower()}")
             elif net < -50000 and chg > 10000:
@@ -688,6 +708,7 @@ def check_all(conn) -> list[str]:
                     f"{name} {cat.upper()} net={net:+,} Δ{chg:+,}/w (SHORT COVERING)",
                     "Large short being covered = squeeze potential",
                     "Beware a sustained rally",
+                    cooldown_key=f"cot_short_cover_{name.lower()}@{latest_cot}",
                 ):
                     fired.append(f"cot_short_cover_{name.lower()}")
 
@@ -778,6 +799,7 @@ def check_all(conn) -> list[str]:
                 f"LME Cu stocks {lvl:,.0f}t ({d20_txt} streak {streak}w, data {cu_age}d old)",
                 f"Physical tightness: {curve_txt}; percentile {pct:.0f} of 3y{ow_txt}",
                 "XCUUSD squeeze-watch: avoid fresh shorts; check COT top-4 HG",
+                cooldown_key=f"copper_stocks_drain@{cu_ts[:10]}",
             ):
                 fired.append("copper_stocks_drain")
 

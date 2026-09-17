@@ -205,7 +205,7 @@ def test_production_strip_regression():
 
 def test_format_brief_next_meeting_only():
     rows, diag = ew.compute(_PROD_STRIP, estr=2.189, estr_asof=date(2026, 9, 9), dfr=2.25)
-    txt = ew.format_brief(rows, diag, asof="2026-09-09")
+    txt = ew.format_brief(rows, diag, asof="2026-09-09", today=date(2026, 9, 9))
     # next meeting (Sep-10), never the far-future 'exact' row (Dec-2027)
     assert txt.startswith("ECBWatch hike")
     assert "Sep-10" in txt and "DFR 2.46%" in txt
@@ -221,14 +221,30 @@ def test_format_brief_exact_has_no_approx_marker():
         estr=2.00, estr_asof=date(2026, 10, 1),
         decisions=[date(2026, 12, 17)],
     )
-    txt = ew.format_brief(rows, diag)
+    txt = ew.format_brief(rows, diag, today=date(2026, 10, 1))
     assert "≈" not in txt and "+10bp" in txt
 
 
 def test_format_brief_degraded_tail():
     rows, diag = ew.compute(_PROD_STRIP, estr=2.189, estr_asof=date(2026, 9, 9), dfr=2.25)
     diag = dict(diag, flags=diag["flags"] + ["degraded"], rms_bp=4.1)
-    assert "⚠ fit 4.1bp" in ew.format_brief(rows, diag)
+    assert "⚠ fit 4.1bp" in ew.format_brief(rows, diag, today=date(2026, 9, 9))
+
+
+def test_format_brief_skips_decided_meeting():
+    """2026-09-17 incident: during the €STR fixing lag (decision Thu →
+    implementation Wed → first reflecting fixing) a just-decided meeting is
+    still an unknown in the solve, and rows[0] displayed the DECIDED Sep-10
+    hike as a forward 'hike ≈93%' call. Display must show the next UNDECIDED
+    meeting; the decided one still anchors the cumulative DFR level."""
+    rows, diag = ew.compute(_PROD_STRIP, estr=2.189, estr_asof=date(2026, 9, 15), dfr=2.25)
+    # solve-side sanity: Sep-10 IS in the rows (impl 09-16 > anchor 09-15)…
+    assert rows[0].meeting_date == date(2026, 9, 10)
+    # …but the brief (clock = 09-17) must skip it
+    txt = ew.format_brief(rows, diag, asof="2026-09-15", today=date(2026, 9, 17))
+    assert txt is not None
+    assert "Sep-10" not in txt
+    assert "Oct-29" in txt
 
 
 def test_outlier_settlement_dropped():

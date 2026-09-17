@@ -341,10 +341,17 @@ def compute(
 
 
 def format_brief(rows: list[ECBMeetingProb], diag: dict | None = None,
-                 asof: str | None = None) -> str | None:
+                 asof: str | None = None, today: date | None = None) -> str | None:
     """'ECBWatch hike ≈85% (Sep-10, +21bp → DFR 2.46%, ESR 09-09)' — the
-    NEXT meeting only (rows[0]; later rows ride the rank-deficient
-    within-quarter split and are never surfaced).
+    NEXT meeting only; later rows ride the rank-deficient within-quarter
+    split and are never surfaced.
+
+    Decided meetings (decision day < today) stay in the SOLVE as the level
+    bootstrap but never display: during the €STR fixing lag (decision →
+    implementation Wednesday → first reflecting fixing) a just-decided
+    meeting still counts as an unknown, and rows[0] showed a decided Sep-10
+    hike as a forward 'hike ≈93%' on 09-17. `today` is injectable so tests
+    pin their own clock (no time-bomb fixtures).
 
     Honesty markers (review round-1): '≈' when the meeting shares its
     reference quarter (min-norm split, noise_amp recorded in raw_json);
@@ -352,7 +359,10 @@ def format_brief(rows: list[ECBMeetingProb], diag: dict | None = None,
     move); the ESR strip date — decision-day prints are T−1-close pricing."""
     if not rows:
         return None
-    r = rows[0]
+    t = today or date.today()
+    r = next((x for x in rows if x.meeting_date >= t), None)
+    if r is None:
+        return None
     if r.prob_hike >= max(r.prob_ease, r.prob_hold):
         act, p = "hike", r.prob_hike
     elif r.prob_ease >= r.prob_hold:
