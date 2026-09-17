@@ -205,23 +205,34 @@ def test_llama_dict_shape_summed(monkeypatch):
 
 def test_stablecoin_harvest_writes_and_gates(conn):
     """The surviving flows leg: DefiLlama stablecoin → flows_daily +
-    LLAMA:STABLECOIN fetch_log row."""
+    LLAMA:STABLECOIN fetch_log row. ROUND-2: the harvest now writes a 7-day
+    WINDOW (hole self-heal) — mock fetch_stablecoin_window."""
     from arkwatch.qa.f2_harvest import harvest_flows
 
     today = datetime.now(UTC).date().isoformat()
-    monkeypatch_target = "arkwatch.fetchers.bybit.fetch_stablecoin_total"
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
 
     class FakeBybit:
         @staticmethod
-        def fetch_stablecoin_total():
-            return {"ts": today, "total_usd": 309_123_456_789.0}
+        def fetch_stablecoin_window(n=7):
+            return [
+                {"ts": yesterday, "total_usd": 309_100_000_000.0},
+                {"ts": today, "total_usd": 309_123_456_789.0},
+            ]
 
     import unittest.mock as _mock
 
-    with _mock.patch(monkeypatch_target, FakeBybit.fetch_stablecoin_total):
+    with _mock.patch(
+        "arkwatch.fetchers.bybit.fetch_stablecoin_window", FakeBybit.fetch_stablecoin_window
+    ):
         out = harvest_flows(conn)
     assert out["stablecoin_usd"] == 309_123_456_789.0
+    # BOTH window rows landed (the hole-heal contract)
+    row = conn.execute(
+        "SELECT stablecoin_usd FROM flows_daily WHERE date=?", (yesterday,)
+    ).fetchone()
+    assert row[0] == 309_100_000_000.0
     row = conn.execute(
         "SELECT stablecoin_usd FROM flows_daily WHERE date=?", (today,)
     ).fetchone()

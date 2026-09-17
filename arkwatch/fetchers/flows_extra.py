@@ -316,8 +316,22 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
     s = session if session is not None else creq.Session(impersonate="chrome")
     r = s.get(url, timeout=(10, 60))
     # Unpublished months are a soft-404: HTTP 200 with an HTML body.
-    # Genuine XLSX starts with the PK magic bytes.
+    # Genuine XLSX starts with the PK magic bytes. ROUND-2: an unpublished
+    # CURRENT month is a legit early-month state ([]) — but a non-XLSX body
+    # for a month that MUST already be in the archive (any past month) means
+    # the path moved or the block changed: a silent [] froze the copper feed
+    # for 20 days with fetch_log reading EMPTY-not-ERROR. Raise named.
     if r.status_code != 200 or r.content[:2] != b"PK":
+        now = datetime.now(UTC)
+        past = (year, month) < (now.year, now.month)
+        # current-month grace: the file legitimately appears in the first
+        # days of a month — a non-XLSX body past day 7 is a path problem
+        # (live: September-2026 soft-404'd for 17 straight days as EMPTY)
+        if past or (now.year, now.month) == (year, month) and now.day > 7:
+            raise RuntimeError(
+                f"LME soft-404: stocks-{_LME_MONTHS[month - 1]}-{year}.xlsx"
+                f" serves HTTP {r.status_code} non-XLSX — path moved/blocked"
+            )
         return []
     wb = load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -336,7 +350,10 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
                 break
             hdr_i = None  # header row without a CA column -> keep looking
     if hdr_i is None or ca_col is None:
-        return []
+        raise RuntimeError(
+            f"LME format drift: stocks-{_LME_MONTHS[month - 1]}-{year}.xlsx"
+            f" has no BusinessDate/Stock Date + CA header"
+        )
     out = []
     for row in rows[hdr_i + 1 :]:
         if len(row) <= ca_col:

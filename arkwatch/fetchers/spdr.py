@@ -30,19 +30,18 @@ def _fetch_shares_fmp(symbol: str) -> int | None:
     return None
 
 
-def fetch_gld_tonnes() -> dict:
-    """GLD holdings from sheet 'US GLD Historical Archive', column 'Ounces of Gold
-    per Share' (sheet 1 is a Disclaimer, sheet 2 is the data).
+def fetch_gld_archive() -> list[dict]:
+    """Full GLD archive rows: [{ts, oz_per_share, total_oz, tonnes}] ascending.
 
-    Total tonnes = shares_outstanding x oz_per_share / 32,150.7466.
-    The share count must be fetched live: ETF creations/redemptions change
-    it, so a hardcoded value would structurally freeze the flow signal
-    (delta tonnes would never reflect flows). Falls back to 291M with
-    approx=True when the live count is unavailable.
-    """
+    ROUND-2 DISCOVERY (2026-09-17): the archive carries the OFFICIAL
+    'Tonnes of Gold' column (col 10) per trading date since 2004 — live
+    through yesterday (5,489/5,694 rows filled; the 205 unfilled are the
+    2004-era head). This replaces the shares×oz/share approximation for
+    BOTH the current print and historical backfill (holes 09-09/14/15 and
+    the 08-31 fallback-phantom heal with real values)."""
+    from datetime import datetime as _dt
+
     from openpyxl import load_workbook
-
-    from ..units import oz_to_tonnes
 
     s = creq.Session(impersonate="chrome")
     r = s.get(
@@ -51,34 +50,58 @@ def fetch_gld_tonnes() -> dict:
     if r.status_code != 200 or r.content[:2] != b"PK":
         raise RuntimeError(f"GLD: HTTP {r.status_code} / not XLSX")
     wb = load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
-    # data lives in the "Historical" sheet; the first sheet is a Disclaimer
     sheet_name = [sn for sn in wb.sheetnames if "Historical" in sn]
     if not sheet_name:
         raise RuntimeError(f"GLD: Historical sheet not found in {wb.sheetnames}")
     ws = wb[sheet_name[0]]
-    rows = list(ws.iter_rows(values_only=True))
-    # header = row 0; columns: [Date, Closing Price, Ounces per Share, NAV, ...]
-    last = None
-    for row in reversed(rows):
-        if row and len(row) >= 3 and isinstance(row[2], (int, float)):
-            last = row
-            break
-    if last is None:
-        raise RuntimeError("GLD: no numeric data rows")
-    date_str = str(last[0]) if last[0] else ""
-    oz_per_share = float(last[2])
+    out: list[dict] = []
+    for row in list(ws.iter_rows(values_only=True))[1:]:
+        if not row or not row[0]:
+            continue
+        d = str(row[0])
+        try:
+            ts = _dt.strptime(d, "%d-%b-%Y").date().isoformat()
+        except ValueError:
+            continue
+        oz = row[2] if len(row) > 2 and isinstance(row[2], (int, float)) else None
+        total_oz = row[8] if len(row) > 8 and isinstance(row[8], (int, float)) else None
+        tonnes = row[9] if len(row) > 9 and isinstance(row[9], (int, float)) else None
+        if oz is None and tonnes is None:
+            continue
+        out.append({"ts": ts, "oz_per_share": oz, "total_oz": total_oz, "tonnes": tonnes})
+    if not out:
+        raise RuntimeError("GLD: no archive rows parsed")
+    return out
 
+
+def fetch_gld_tonnes() -> dict:
+    """Latest GLD holdings — the OFFICIAL archive tonnes when the column is
+    filled (the norm); the shares×oz/share approximation only as a
+    degradable fallback when the tonnes cell is empty (approx=True —
+    renderers must mark it and f2 must NOT write it as a real value)."""
+    from ..units import oz_to_tonnes
+
+    rows = [r for r in fetch_gld_archive() if r["tonnes"] is not None]
+    last = rows[-1] if rows else fetch_gld_archive()[-1]
+    if last["tonnes"] is not None:
+        return {
+            "ts": last["ts"],
+            "oz_per_share": last["oz_per_share"],
+            "tonnes": round(last["tonnes"], 1),
+            "approx": False,
+        }
+    # fallback path (tonnes cell empty on the newest row)
     shares = _fetch_shares_fmp("GLD")
     approx = shares is None
     if approx:
-        shares = 291_000_000  # fallback constant; only ever used with approx=True
-    tonnes = oz_to_tonnes(oz_per_share * shares)
+        shares = 291_000_000
+    tonnes = oz_to_tonnes((last["oz_per_share"] or 0.0) * shares)
     return {
-        "ts": date_str,
-        "oz_per_share": oz_per_share,
-        "tonnes_approx": round(tonnes, 1),
+        "ts": last["ts"],
+        "oz_per_share": last["oz_per_share"],
+        "tonnes": round(tonnes, 1),
         "shares_assumed_m": shares / 1e6,
-        "approx": approx,  # True = fallback share count (renderers must mark "(approx)")
+        "approx": approx,
     }
 
 

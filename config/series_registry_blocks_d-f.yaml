@@ -226,7 +226,7 @@ series:
   release_schedule: "3rd Thursday 08:30 ET (Philadelphia Fed MBO survey)"
   expected_start: "1968-05-01"
   sanity_min: -70                     # diffusion floor w/ margin (live Aug-26: +47.4)
-  sanity_max: 90
+  sanity_max: 95                      # stored history peak ~93 (1973) — bound must bracket it
   primary_source: "FRED:GACDFSA066MSFRBPHI"
   secondary_source: null              # calendar layer (FMP) carries cons/actual/z for
   tolerance: null                     # the headline release; this is the series history
@@ -1668,7 +1668,15 @@ series:
   secondary_source: null             # NY Fed CMDI is not on FRED — EODHD is the only
                                     # automated route
   tolerance: null
-  active: 1
+  active: 0
+  # DEACTIVATED 2026-09-17 (round-2 audit): PHANTOM FEED — the EODHD
+  # window-fetcher logs OK with rows=0 ('unsupported series CMDI' swallowed
+  # as WINDOW_FALLBACK); 1 obs stored vs 1,129 expected. The endpoint needs
+  # paginated page[offset] handling that was never implemented. Reactivate
+  # only after implementing the pagination + a 2004→now backfill; until
+  # then long credit history rides on BAML OAS + FRED (the ICE-license 3y
+  # window is documented). Empty-fetch logging as EMPTY (not OK) lives in
+  # the harvest path.
   # Credit distress is LEADING — companion to the lagging BAML spreads; 21+ years of
   # history (1,129 weeks); the IG-vs-HY divergence is informative.
   # Pagination via page[offset]/page[limit] (default 20 rows/page).

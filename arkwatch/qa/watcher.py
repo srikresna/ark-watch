@@ -36,7 +36,8 @@ except Exception:
 VIX_BACKWARDATION_RATIO = float(_PS.get("vix_backwardation_ratio", 1.0))
 HY_EXTREME_PCT_LOW = int(_PS.get("hy_extreme_pct_low", 10))
 HY_EXTREME_PCT_HIGH = int(_PS.get("hy_extreme_pct_high", 90))
-FUNDING_EXTREME_BPS = int(_PS.get("funding_extreme_bps", 5))
+# funding_extreme_bps orphan load REMOVED 2026-09-17 (round-2: Bybit retired,
+# no consumer; the yaml key stays for provenance)
 COPPER_DRAIN_20D_PCT = float(_PS.get("copper_drain_20d_pct", -0.15))
 COPPER_DRAIN_STREAK_WEEKS = int(_PS.get("copper_drain_streak_weeks", 5))
 SOMA_ROLL_OFF_7D_ALERT_B = float(_PS.get("soma_roll_off_7d_alert_b", 65))
@@ -52,6 +53,12 @@ ECB_HIGH_CONVICT_DAYS = int(_PS.get("ecb_high_conviction_days", 7))
 COOLDOWN_HOURS_DEFAULT = int(_PS.get("cooldown_hours_default", 6))
 COOLDOWN_HOURS_STRESS = int(_PS.get("cooldown_hours_stress", 1))
 VIX_STRESS_LEVEL = int(_PS.get("vix_stress_level", 25))
+VIX_Z_STRESS = float(_PS.get("vix_z_stress", 1.0))
+ESI_FLIP_MIN_ABS = float(_PS.get("esi_flip_min_abs", 0.25))
+GOLD_RY_DIV_MIN_BP = float(_PS.get("gold_ry_div_min_bp", 5.0))  # DFII10 pct-points×100
+COT_BROAD_DIV_MIN = int(_PS.get("cot_broad_div_min", 3))
+COT_COVERING_NET_MIN = int(_PS.get("cot_covering_net_min", 50000))
+COT_COVERING_CHG_MIN = int(_PS.get("cot_covering_chg_min", 10000))
 
 
 def _dynamic_cooldown_hours(conn) -> int:
@@ -74,7 +81,7 @@ def _dynamic_cooldown_hours(conn) -> int:
     if len(vals) >= 40:
         mean = sum(vals) / len(vals)
         std = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
-        if std > 0 and (vals[0] - mean) / std > 1:
+        if std > 0 and (vals[0] - mean) / std > VIX_Z_STRESS:
             return COOLDOWN_HOURS_STRESS
     return COOLDOWN_HOURS_DEFAULT  # normal
 
@@ -88,10 +95,14 @@ def _cooldown_active(conn, alert_type: str, *, permanent: bool = False) -> bool:
     re-announce the same weekly figure every cooldown window for the
     snapshot's whole freshness life (14d)."""
     if permanent:
+        # ROUND-2 backward-compat: also count the ROOT (pre-@ key) form —
+        # historical rows delivered before the per-snapshot scheme must
+        # still suppress, without requiring data rewrites of old rows
+        root = alert_type.split("@", 1)[0]
         row = conn.execute(
-            "SELECT COUNT(*) FROM alert_deliveries WHERE cooldown_key=? "
+            "SELECT COUNT(*) FROM alert_deliveries WHERE (cooldown_key=? OR cooldown_key=?) "
             "AND status IN ('pending','sending','sent')",
-            (alert_type,),
+            (alert_type, root),
         ).fetchone()
         return row[0] > 0
     cooldown_h = _dynamic_cooldown_hours(conn)
@@ -396,7 +407,7 @@ def check_all(conn) -> list[str]:
         if esi_now is not None and len(esi_rows) >= 2:
             esi_prev = esi_rows[1][1]
             if esi_prev is not None and ((esi_prev <= 0 < esi_now) or (esi_prev >= 0 > esi_now)):
-                if abs(esi_now) >= 0.25 and abs(esi_prev) >= 0.25:
+                if abs(esi_now) >= ESI_FLIP_MIN_ABS and abs(esi_prev) >= ESI_FLIP_MIN_ABS:
                     new_dir = "positive" if esi_now > 0 else "negative"
                     if _fire(
                         conn,
@@ -632,7 +643,7 @@ def check_all(conn) -> list[str]:
     if len(ry) >= 20 and len(gold) >= 20:
         ry_m = ry[-1] - ry[-20]
         gold_m = gold[-1][0] - gold[-20][0]
-        if ry_m > 0.05 and gold_m > 0:
+        if ry_m > GOLD_RY_DIV_MIN_BP / 100 and gold_m > 0:
             if _fire(
                 conn,
                 "gold_ry_divergence",
@@ -663,7 +674,7 @@ def check_all(conn) -> list[str]:
                 am_net = (am[0] or 0) - (am[1] or 0)
                 if (lev_net > 0) != (am_net > 0):
                     diverge_count += 1
-        if diverge_count >= 3:  # 3+ financials aligned = strong signal
+        if diverge_count >= COT_BROAD_DIV_MIN:  # 3+ financials aligned = strong signal
             if _fire(
                 conn,
                 "cot_broad_divergence",
@@ -691,7 +702,7 @@ def check_all(conn) -> list[str]:
             net = row[2] - (row[3] or 0)
             chg = (row[0] or 0) - (row[1] or 0)
             # Covering = a large position shrinking fast
-            if net > 50000 and chg < -10000:
+            if net > COT_COVERING_NET_MIN and chg < -COT_COVERING_CHG_MIN:
                 if _fire(
                     conn,
                     f"cot_covering_{name.lower()}",
@@ -701,7 +712,7 @@ def check_all(conn) -> list[str]:
                     cooldown_key=f"cot_covering_{name.lower()}@{latest_cot}",
                 ):
                     fired.append(f"cot_covering_{name.lower()}")
-            elif net < -50000 and chg > 10000:
+            elif net < -COT_COVERING_NET_MIN and chg > COT_COVERING_CHG_MIN:
                 if _fire(
                     conn,
                     f"cot_short_cover_{name.lower()}",
@@ -865,6 +876,34 @@ def check_all(conn) -> list[str]:
                         cooldown_key=f"ecb_conviction@{ecb_dates[0]}",
                     ):
                         fired.append("ecb_high_conviction")
+
+    # Alert-spam tripwire (round-2): the Telegram channel is the only active
+    # delivery path — a dedup regression here spam-burned the user for 17
+    # days before anyone noticed. Any cooldown_key delivered >2x within 7d
+    # means the suppression machinery itself is broken: announce THAT.
+    try:
+        spam = conn.execute(
+            "SELECT cooldown_key, COUNT(*) c FROM alert_deliveries"
+            " WHERE triggered_at > ? AND status IN ('pending','sending','sent')"
+            " GROUP BY cooldown_key HAVING c > 2 ORDER BY c DESC LIMIT 3",
+            ((datetime.now(UTC) - timedelta(days=7)).isoformat(),),
+        ).fetchall()
+        if spam:
+            txt = "; ".join(f"{k} ×{c}" for k, c in spam)
+            if _fire(
+                conn,
+                "alert_spam_tripwire",
+                f"Suppression regression suspected: {txt}",
+                "A cooldown_key delivered >2x in 7d — the dedup machinery itself is failing",
+                "Check watcher cooldown keys + alert_deliveries before trusting any alert cadence",
+                # PERMANENT per offender: the historical rows stay in the 7d
+                # window for days — a windowed cooldown would re-announce the
+                # same known episode 4x/day. One announcement per key, ever.
+                cooldown_key=f"alert_spam_tripwire@{spam[0][0]}",
+            ):
+                fired.append("alert_spam_tripwire")
+    except Exception as ex:
+        print(f"⚠ spam tripwire skipped: {str(ex)[:100]}")
 
     return fired
 

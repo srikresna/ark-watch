@@ -241,7 +241,39 @@ def verify(
     for e in targets:
         prefix = next((p for p in ROUTES if e["series_id"].startswith(p)), None)
         if prefix is None:
-            continue  # no fetcher for this prefix — skipped
+            # ROUND-2 DB-backed fallback: no fetcher route, but the series IS
+            # harvested into raw_observations by another job (live: LME:
+            # CA_STOCKS via the f2 XLSX path) — gate the STORED latest value
+            # against registry bounds so every bounded series is checked by
+            # SOMEONE, route or not. Depth/anchor stay '·' (no fetcher to
+            # probe them through).
+            smin, smax = e.get("sanity_min"), e.get("sanity_max")
+            if smin is not None and smax is not None:
+                from pathlib import Path
+
+                from .. import db as _db
+
+                _conn = _db.get_conn(
+                    str(Path(__file__).resolve().parents[2] / "data" / "arkwatch.db")
+                )
+                row = _conn.execute(
+                    "SELECT ts, value FROM raw_observations WHERE series_id=?"
+                    " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1",
+                    (e["series_id"],),
+                ).fetchone()
+                _conn.close()
+                r = Row(series_id=e["series_id"])
+                if row and row[1] is not None:
+                    r.sanity = "✓" if smin <= row[1] <= smax else (
+                        f"✗ {_fmt(row[1], e.get('value_format'))}"
+                    )
+                    if not (smin <= row[1] <= smax):
+                        r.note = f"db-fallback sanity[{smin},{smax}] @ {row[0]}"
+                else:
+                    r.sanity = "✗"
+                    r.note = "db-fallback: no stored realtime obs"
+                rep.rows.append(r)
+            continue
         mod = ROUTES[prefix]
         # Fetch-id resolution: native_id > primary_source (mnemonic) > series_id
         fetch_ref = e.get("native_id") or e.get("primary_source") or e["series_id"]

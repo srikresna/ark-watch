@@ -118,6 +118,16 @@ def run_cot_gate(conn) -> tuple[int, int]:
             " AND report_date=? AND report_type='disagg' LIMIT 1",
             (code, report_date),
         ).fetchone()
+        if not ours and (oi_ours is None or oi_ours[0] is None):
+            # ROUND-2 fix: TFF-only contracts (the 9 financials) have no
+            # disagg rows — the gate silently skipped them. OI comparison via
+            # futures-only TFF rows; nonrep stays disagg-only (legacy-vs-TFF
+            # reportable groupings differ, Σrept identities are invalid).
+            oi_ours = conn.execute(
+                "SELECT open_interest_all FROM cot_raw WHERE contract_code=?"
+                " AND report_date=? AND report_type='tff' LIMIT 1",
+                (code, report_date),
+            ).fetchone()
 
         def _chk(label: str, ours_v, fmp_v, code=code):
             nonlocal mismatches

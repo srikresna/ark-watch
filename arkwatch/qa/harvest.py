@@ -164,6 +164,11 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
         # quota_used = 1 call for PAID sources (FMP/EODHD), 0 for free
         # institutional ones; approximates the daily call count
         quota = 1 if prefix in ("FMP:", "EODHD:") else 0
+        # ROUND-2: a fetch that returns NOTHING is EMPTY, not OK. Note the
+        # predicate is the FETCHED row count, not inserted rows — an
+        # idempotent re-run legitimately inserts 0 new rows (healthy).
+        if status == "OK" and not rows:
+            status = "EMPTY"
         conn.execute(
             "INSERT INTO fetch_log(ts,fetcher,target,status,error,duration_ms,rows,"
             "schema_fp,quota_used) VALUES (?,?,?,?,?,?,?,?,?)",

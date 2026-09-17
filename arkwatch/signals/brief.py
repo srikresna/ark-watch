@@ -47,11 +47,14 @@ def overnight_changes(conn: sqlite3.Connection, n: int = 6) -> list[str]:
     'overnight' only when the release itself is new (D: ≤2 days, W: ≤8, M: ≤45).
     """
     # (sid, label, fmt, scale, max_age_days)
+    # ROUND-2: GDPNow REMOVED — its quarter-start ts can never pass a
+    # meaningful daily age gate (a 10d gate rendered cross-quarter deltas
+    # like 5.1−1.5 = "+3.6pp vs Q2 FINAL" with the WRONG consensus event).
+    # Nowcast coverage lives on the CLEVE:NOWCAST series + its own lines.
     WATCH = [
         ("FRED:DFII10", "Real Yield 10Y", "{:.2f}%", 1, 2),
         ("FRED:DGS10", "10Y Yield", "{:.2f}%", 1, 2),
         ("FRED:ICSA", "Claims", "{:.0f}K", 1e-3, 8),
-        ("FRED:GDPNOW", "GDPNow", "{:.1f}%", 1, 10),
         ("FRED:DTWEXBGS", "Dollar Idx", "{:.1f}", 1, 2),
         ("FRED:VIXCLS", "VIX", "{:.1f}", 1, 2),
         ("FRED:BAMLH0A0HYM2", "HY OAS", "{:.1f}%", 1, 2),
@@ -460,6 +463,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             "133741": "BTC",
             "13874+": "SPX",
             "209742": "NQ-Emini",
+            "146021": "ETH",
         }
         lines.append(f"Positioning (COT {latest_cot}):")
 
@@ -514,8 +518,14 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                         f"{max(c4l, c4s):.0f}% of {side} OI"
                     )
 
-        # financials (TFF): Lev vs AM divergence + dealer
-        for code in ("099741", "133741", "13874+", "209742"):
+        # financials (TFF): Lev vs AM divergence + dealer. ROUND-2 fix: all
+        # 9 TFF contracts render — the old 4-contract loop left Yen/Pound/
+        # AUD/DXY/ETH positioning invisible (live: AUD CROWDED_LONG 3 weeks
+        # running never surfaced while the harvest paid for it).
+        for code in (
+            "099741", "097741", "096742", "232741", "098662",
+            "133741", "146021", "13874+", "209742",
+        ):
             rows = conn.execute(
                 "SELECT category, long, short, change_long, change_short "
                 "FROM cot_raw "
@@ -553,10 +563,20 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
 
     # Saturday variant: full 13 contracts + VOI
     if is_saturday:
+        # ROUND-2: prefer the newest FINAL restatement (published T+1 with
+        # corrected OI); Preliminary only when no Final exists at all —
+        # otherwise the two report types double-render as separate days
+        voi_td = conn.execute(
+            "SELECT COALESCE((SELECT MAX(trade_date) FROM voi_daily WHERE report_type='Final'),"
+            " (SELECT MAX(trade_date) FROM voi_daily))"
+        ).fetchone()[0]
         voi_rows = conn.execute(
             "SELECT product_id, volume, oi, oi_diff FROM voi_daily "
-            "WHERE trade_date = (SELECT MAX(trade_date) FROM voi_daily) "
-            "ORDER BY oi DESC LIMIT 5"
+            "WHERE trade_date = ? "
+            "AND report_type = (SELECT report_type FROM voi_daily WHERE trade_date=?"
+            " ORDER BY CASE WHEN report_type='Final' THEN 0 ELSE 1 END LIMIT 1)"
+            " ORDER BY oi DESC LIMIT 5",
+            (voi_td, voi_td),
         ).fetchall()
         if voi_rows:
             lines.append("VOI (volume/OI per product):")
@@ -610,19 +630,32 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                 age = (datetime.now(UTC).date() - datetime.fromisoformat(etf_row[0]).date()).days
                 stale = " ⚠stale" if age > 4 else ""
                 lines.append(f"  ETF flows ({etf_row[0][5:]}): {' · '.join(etf_parts)}{stale}")
-        if flow_row[5]:
-            # '(approx)' marker for the shares-fallback path. Without
-            # MAX(period) the flag query reads an arbitrary row from the
-            # daily history and the marker can flip.
+        # ROUND-2: per-column latest non-NULL rows — the overall latest
+        # flows_daily row is often partial (GLD/SLV legs land at different
+        # hours), which silently vanished these lines; mirror the etf_row
+        # pattern with an age marker.
+        gld_row = conn.execute(
+            "SELECT date, gld_tonnes FROM flows_daily WHERE gld_tonnes IS NOT NULL"
+            " ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if gld_row:
             gld_approx = conn.execute(
                 "SELECT value FROM flows_periodic WHERE kind='gld_shares_approx' "
                 "AND period=(SELECT MAX(period) FROM flows_periodic "
                 "            WHERE kind='gld_shares_approx')"
             ).fetchone()
             mark = " (approx)" if gld_approx and gld_approx[0] else ""
-            lines.append(f"  GLD {flow_row[5]:,.0f}t{mark}")
-        if flow_row[2] and flow_row[2] > 0:
-            lines.append(f"  Stablecoin ${flow_row[2] / 1e9:.0f}B")
+            gld_age = (datetime.now(UTC).date() - datetime.fromisoformat(gld_row[0]).date()).days
+            gld_stale = " ⚠stale" if gld_age > 4 else ""
+            lines.append(f"  GLD {gld_row[1]:,.0f}t{mark}{gld_stale}")
+        sc_row = conn.execute(
+            "SELECT date, stablecoin_usd FROM flows_daily WHERE stablecoin_usd > 0"
+            " ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if sc_row:
+            sc_age = (datetime.now(UTC).date() - datetime.fromisoformat(sc_row[0]).date()).days
+            sc_stale = " ⚠stale" if sc_age > 4 else ""
+            lines.append(f"  Stablecoin ${sc_row[1] / 1e9:.0f}B{sc_stale}")
         # periodic flows — latest period per kind only (without MAX(period)
         # the brief would print the entire monthly history)
         per = conn.execute(

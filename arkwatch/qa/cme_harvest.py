@@ -29,11 +29,58 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
         try:
             rows = cme.fetch_settlements(code)
             n = _save_settlements(conn, rows)
+            n += _reconcile_gaps(conn, code, rows)
             out[code] = n
         except Exception as ex:
             out[code] = -1
             print(f"  ✗ settlements {code}: {str(ex)[:100]}")
     return out
+
+
+def _reconcile_gaps(conn, code: str, rows: list[dict]) -> int:
+    """ROUND-2 fix: permanent trade-date holes. CME retention is ~5 trading
+    days — a missed harvest day is gone forever unless this pass explicitly
+    re-fetches it (mechanism proven live by the 09-14 walkback recovery).
+    Only dates that ACTUALLY land the requested trade_date are saved (the
+    fetcher walks back on 404/holidays — a filtered landed==iso check keeps
+    the prior trading day from double-writing)."""
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    if not rows:
+        return 0
+    pid = cme.PRODUCTS[code]
+    fetched_max = max(r["trade_date"] for r in rows)
+    db_max = conn.execute(
+        "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=?", (pid,)
+    ).fetchone()[0]
+    if not db_max or db_max >= fetched_max:
+        return 0
+    d0, d1 = _date.fromisoformat(db_max), _date.fromisoformat(fetched_max)
+    n = 0
+    cur = d0
+    while cur < d1:
+        cur += _td(days=1)
+        if cur.weekday() >= 5:
+            continue
+        iso = cur.isoformat()
+        if conn.execute(
+            "SELECT 1 FROM cme_settlements WHERE product_id=? AND trade_date=? LIMIT 1",
+            (pid, iso),
+        ).fetchone():
+            continue
+        try:
+            gap_rows = cme.fetch_settlements(
+                code, trade_date=datetime(cur.year, cur.month, cur.day, tzinfo=UTC)
+            )
+            landed = [r for r in gap_rows if r["trade_date"] == iso]
+            if landed:
+                n += _save_settlements(conn, landed)
+        except Exception as ex:
+            print(f"  ⚠ gap-fill {code} {iso}: {str(ex)[:70]}")
+    if n:
+        print(f"  ↻ {code}: gap-filled {n} rows {db_max}→{fetched_max}")
+    return n
 
 
 def _save_settlements(conn, rows: list[dict]) -> int:
@@ -97,38 +144,55 @@ def harvest_cvol_from(conn, rows: list[dict]) -> int:
 
 
 def harvest_voi(conn, asset_classes: list[int] | None = None) -> tuple[int, str | None]:
+    """ROUND-2 fix: iterate EVERY TradeDates entry (Preliminary + Final
+    restatements — the old harvest read only entry [0], so Final restated
+    OI never landed); per (trade_date, report_type) not yet stored."""
     ids = asset_classes or list(cme.VOI_ASSET_CLASSES.keys())
     total = 0
     voi_err: str | None = None
+    try:
+        entries = cme.fetch_voi_dates()
+    except Exception as ex:
+        return 0, str(ex)[:140]
     for ac_id in ids:
-        try:
-            rows = cme.fetch_voi(ac_id)
-            payload = [
-                (
-                    r["trade_date"],
-                    r["product_id"],
-                    r.get("report_type", "Preliminary"),
-                    r["volume"],
-                    r["oi"],
-                    r["oi_diff"],
-                )
-                for r in rows
-            ]
-            conn.execute("BEGIN IMMEDIATE")
+        for ent in entries:
             try:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO voi_daily(trade_date,product_id,report_type,volume,oi,oi_diff)"
-                    " VALUES (?,?,?,?,?,?)",
-                    payload,
+                exists = conn.execute(
+                    "SELECT 1 FROM voi_daily WHERE trade_date=? AND report_type=? LIMIT 1",
+                    (ent["trade_date"], ent["report_type"]),
+                ).fetchone()
+                if exists:
+                    continue
+                rows = cme.fetch_voi(
+                    ac_id, td_raw=ent["td_raw"], report_type=ent["report_type"]
                 )
-                conn.execute("COMMIT")
-                total += len(payload)
-            except Exception:
-                conn.execute("ROLLBACK")
-                continue
-        except Exception as ex:
-            voi_err = str(ex)[:140]
-            print(f"  ✗ VOI class {ac_id}: {str(ex)[:90]}")
+                payload = [
+                    (
+                        r["trade_date"],
+                        r["product_id"],
+                        r.get("report_type", "Preliminary"),
+                        r["volume"],
+                        r["oi"],
+                        r["oi_diff"],
+                    )
+                    for r in rows
+                ]
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO voi_daily"
+                        "(trade_date,product_id,report_type,volume,oi,oi_diff)"
+                        " VALUES (?,?,?,?,?,?)",
+                        payload,
+                    )
+                    conn.execute("COMMIT")
+                    total += len(payload)
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    continue
+            except Exception as ex:
+                voi_err = str(ex)[:140]
+                print(f"  ✗ VOI class {ac_id}: {str(ex)[:90]}")
     return total, voi_err
 
 
@@ -272,8 +336,16 @@ def main(argv: list[str] | None = None) -> int:
     from .fetch_log import log_collection
 
     n_prod_fail = sum(1 for v in s.values() if v < 0)
-    s_err = None if n_prod_fail == 0 else f"{n_prod_fail}/{len(s)} products failed"
-    log_collection(conn, "cme", "CME:settlements", None, len(s), err=s_err)
+    s_err = None
+    if n_prod_fail:
+        failed = [k for k, v in s.items() if v < 0]
+        s_err = f"{n_prod_fail}/{len(s)} failed: {','.join(failed[:6])}"
+    # ROUND-2: rows = ACTUAL inserted/gap-filled rows (the old len(s) logged
+    # '14' forever — a dead product was indistinguishable from a healthy one)
+    log_collection(
+        conn, "cme", "CME:settlements", None,
+        sum(v for v in s.values() if v > 0), err=s_err,
+    )
     if not a.skip_options:
         n_opt_fail = sum(1 for v in o.values() if v < 0)
         if n_opt_fail:

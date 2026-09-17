@@ -133,6 +133,53 @@ def backfill(
     return out
 
 
+def _cross_validate(conn, db_path: str) -> int:
+    """Post-write wedge check (ROUND-2: XPTUSD stored a +5.45% wrong-cut
+    close vs its futures leg with no detector). A wedge >2% spot-vs-futures
+    (normal carry <1%) or >0.75% between dual-source twins (different EOD
+    cutoffs) is almost certainly a vendor wrong-cut — name it in fetch_log
+    so the morning health check surfaces it; the healing upsert replaces
+    the bad row once the vendor serves the final."""
+    wedges: list[str] = []
+    for spot, fut in (("XAUUSD", "GC1"), ("XAGUSD", "SI1"), ("XPTUSD", "PL1")):
+        rows = conn.execute(
+            "SELECT a.ts, a.close, b.close FROM instrument_prices a"
+            " JOIN instrument_prices b ON b.symbol=? AND b.source='YAHOO' AND b.ts=a.ts"
+            " WHERE a.symbol=? AND a.source='EODHD' AND a.close IS NOT NULL"
+            " AND b.close IS NOT NULL AND a.ts >= date('now','-4 day')"
+            " ORDER BY a.ts DESC LIMIT 4",
+            (fut, spot),
+        ).fetchall()
+        for ts, s_close, f_close in rows:
+            if f_close:
+                w = abs(s_close / f_close - 1)
+                if w > 0.02:
+                    wedges.append(f"{spot}/{fut} {ts} {w:.2%}")
+    for sym in ("BTCUSD", "ETHUSD", "VIX", "US500", "US30", "US100", "DXY"):
+        rows = conn.execute(
+            "SELECT a.ts, a.close, b.close FROM instrument_prices a"
+            " JOIN instrument_prices b ON b.symbol=a.symbol AND b.source='YAHOO' AND b.ts=a.ts"
+            " WHERE a.symbol=? AND a.source='EODHD' AND a.close IS NOT NULL"
+            " AND b.close IS NOT NULL AND a.ts >= date('now','-4 day')"
+            " ORDER BY a.ts DESC LIMIT 4",
+            (sym,),
+        ).fetchall()
+        for ts, e_close, y_close in rows:
+            if y_close:
+                w = abs(e_close / y_close - 1)
+                if w > 0.0075:
+                    wedges.append(f"{sym} EODHD/YAHOO {ts} {w:.2%}")
+    if wedges:
+        from .fetch_log import log_collection
+
+        log_collection(
+            conn, "instruments", "INSTRUMENTS:XVAL", None, 0,
+            err=f"{len(wedges)} wedge(s): " + "; ".join(wedges[:4])[:160],
+        )
+        print(f"  ⚠ xval: {len(wedges)} wedge(s): {'; '.join(wedges[:4])}")
+    return len(wedges)
+
+
 def sweep(db_path: str = str(DEFAULT_DB)) -> dict[str, int]:
     """Daily sweep: only the last 7 days per symbol (lightweight)."""
     import os
@@ -159,6 +206,7 @@ def sweep(db_path: str = str(DEFAULT_DB)) -> dict[str, int]:
                 )
             except Exception:
                 out[f"{sym}|YAHOO"] = -1
+    _cross_validate(conn, db_path)
     conn.close()
     return out
 

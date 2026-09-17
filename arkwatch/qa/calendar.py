@@ -49,7 +49,7 @@ def norm(name: str) -> str:
 # different indicators.
 _STRIP_TAIL = re.compile(
     r"(\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\s+\d{1,2})?(\s+\d{4})?)+$"
-    r"|\s+(FINAL|PRELIMINARY|PRELIM|ADVANCE|SECOND|THIRD)(\s+ESTIMATE)?$"
+    r"|\s+(FINAL|PRELIMINARY|PRELIM|PREL|ADVANCE|SECOND|THIRD)(\s+ESTIMATE)?$"
     r"|\s+Q[1-4](\s+\d{4})?$"
     r"|\s+\d{4}$"
 )
@@ -79,6 +79,12 @@ _ALIASES = {
     "ISM NON MANUFACTURING BUSINESS ACTIVITY": "ISM SERVICES BUSINESS ACTIVITY",
     "MARKIT SERVICES PMI": "S P GLOBAL SERVICES PMI",
     "BUDGET BALANCE": "MONTHLY BUDGET STATEMENT",
+    # ROUND-2: headline-name twins never merged into their value-carrying
+    # families — orphan keys (n=1, sigma=0) never receive surprise_z while
+    # the same release moves markets (units verified: CME 'US RETAIL SALES'
+    # 09-16 actual 1.2 == RETAIL SALES MOM; diffusion index == diffusion PMI)
+    "RETAIL SALES": "RETAIL SALES MOM",
+    "ISM MANUFACTURING INDEX": "ISM MANUFACTURING PMI",
 }
 
 

@@ -18,37 +18,50 @@ import requests
 LLAMA = "https://stablecoins.llama.fi"
 
 
-def fetch_stablecoin_total() -> dict:
-    """Total stablecoin circulating USD (single call, full history)."""
+def _llama_rows() -> list[dict]:
+    """The full stablecoin chart, normalized (shared by latest + window)."""
     r = requests.get(f"{LLAMA}/stablecoincharts/all", timeout=(10, 60))
     if r.status_code != 200:
         raise RuntimeError(f"llama: HTTP {r.status_code}")
     rows = r.json()
     if not rows:
         raise RuntimeError("llama: empty response")
-    latest = rows[-1]
-    raw = latest.get("totalCirculatingUSD")
+    return rows
+
+
+def _norm(row: dict) -> tuple[str, float]:
+    """One chart row → (iso_date, usd_total). 2026-09-17 schema change
+    (twice in one day): totalCirculatingUSD became a per-peg dict — the OLD
+    scalar carried ONLY the USD-pegged total (peggedUSD matches the last
+    stored scalar to the cent), and `date` became an epoch (int or numeric
+    STRING live)."""
+    from datetime import UTC, datetime
+
+    raw = row.get("totalCirculatingUSD")
     if isinstance(raw, dict):
-        # 2026-09-17 schema change — ROUND-2 CORRECTION: the old scalar
-        # carried ONLY the USD-pegged total (live evidence:
-        # totalCirculating.peggedUSD 309,298,108,635.74 == the stored 09-16
-        # scalar to the cent). Summing ALL pegs silently changed the series
-        # DEFINITION mid-stream (a level jump on the brief line). Keep the
-        # definition: peggedUSD first, chained fallbacks after.
         v = raw.get("peggedUSD")
         if v is None:
-            v = (latest.get("totalCirculating") or {}).get("peggedUSD")
+            v = (row.get("totalCirculating") or {}).get("peggedUSD")
         if v is None:
             v = sum(x for x in raw.values() if isinstance(x, (int, float)))
         raw = v
-    raw_date = latest.get("date")
-    ts = str(raw_date or "")[:10]
+    ts = str(row.get("date") or "")[:10]
     if len(ts) == 10 and ts.isdigit():
-        # same schema change: `date` became an epoch (int or numeric string —
-        # live it arrives as a string). str()[:10] fed the stale gate
-        # "1789603200", which lexically sorts BEFORE every ISO date and
-        # fails the gate forever. Convert to ISO like the old shape.
-        from datetime import UTC, datetime
-
         ts = datetime.fromtimestamp(int(ts), tz=UTC).date().isoformat()
-    return {"ts": ts, "total_usd": float(raw)}
+    return ts, float(raw)
+
+
+def fetch_stablecoin_total() -> dict:
+    """Total stablecoin circulating USD (USD-pegged definition — see _norm)."""
+    ts, usd = _norm(_llama_rows()[-1])
+    return {"ts": ts, "total_usd": usd}
+
+
+def fetch_stablecoin_window(n: int = 7) -> list[dict]:
+    """The last n chart points [{ts, total_usd}] — the harvest writes the
+    window each run so outage-day holes heal (round-2: 09-09/14/15 stayed
+    NULL for days because only the latest point was ever written)."""
+    return [
+        {"ts": ts, "total_usd": usd}
+        for ts, usd in (_norm(r) for r in _llama_rows()[-n:])
+    ]

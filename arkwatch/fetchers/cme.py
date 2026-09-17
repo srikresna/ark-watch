@@ -198,21 +198,40 @@ def fetch_cvol() -> list[dict]:
     return out
 
 
-def fetch_voi(asset_class_id: int = 8) -> list[dict]:
-    """Volume/OI per product for one asset class. Products live in the nested voiProductsTOList key."""
+def fetch_voi_dates() -> list[dict]:
+    """The TradeDates listing: [{trade_date, td_raw, report_type}, …] —
+    Preliminary AND Final restatement entries (round-2: harvest only ever
+    read entry [0], so Final restatements were never captured)."""
     s = _session()
     r0 = s.get(f"{BASE}/CmeWS/mvc/VoiTotals/V2/TradeDates", timeout=(10, 30))
     if r0.status_code != 200:
         raise CmeError(f"VOI TradeDates: HTTP {r0.status_code}")
     dates = r0.json().get("voiTradeDateTOList", [])
-    if not dates:
+    out = []
+    for e in dates:
+        td_raw = e.get("tradeDate", "")
+        if not td_raw:
+            continue
+        td_iso = f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
+        out.append({"trade_date": td_iso, "td_raw": td_raw,
+                    "report_type": e.get("reportType", "Preliminary")})
+    if not out:
         raise CmeError("VOI: no dates available")
-    latest = dates[0]
-    td_raw = latest.get("tradeDate", "")  # compact YYYYMMDD
-    if not td_raw:
-        raise CmeError("VOI: tradeDate empty")
-    td_iso = f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
-    report_type = latest.get("reportType", "Preliminary")
+    return out
+
+
+def fetch_voi(asset_class_id: int = 8, td_raw: str | None = None,
+              report_type: str | None = None) -> list[dict]:
+    """Volume/OI per product for one asset class, for the LATEST date entry
+    (or an explicit one from fetch_voi_dates). Products live in the nested
+    voiProductsTOList key."""
+    s = _session()
+    if td_raw is None:
+        latest = fetch_voi_dates()[0]
+        td_raw = latest["td_raw"]
+        report_type = latest["report_type"]
+    if report_type is None:
+        report_type = "Preliminary"
 
     r = s.post(
         f"{BASE}/CmeWS/mvc/VoiTotals/V2/AssetClass/{asset_class_id}",
@@ -221,6 +240,9 @@ def fetch_voi(asset_class_id: int = 8) -> list[dict]:
     )
     if r.status_code != 200:
         raise CmeError(f"VOI assetClass {asset_class_id}: HTTP {r.status_code}")
+    td_iso = (
+        f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
+    )
     products = r.json().get("voiProductsTOList", [])
     out = []
     for row in products:

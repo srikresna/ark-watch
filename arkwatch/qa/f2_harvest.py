@@ -151,31 +151,35 @@ def harvest_flows(conn) -> dict[str, float | None]:
     out: dict[str, float | None] = {}
     sc_err: str | None = None
     try:
-        s = bybit.fetch_stablecoin_total()
-        sc_ts = str(s.get("ts", ""))[:10]
-        if sc_ts and sc_ts < (datetime.now(UTC).date() - timedelta(days=3)).isoformat():
+        # ROUND-2: write the last-7-day WINDOW each run — the full chart is
+        # downloaded anyway, and outage-day holes (09-09/14/15) stayed NULL
+        # for days when only the latest point was ever written.
+        win = bybit.fetch_stablecoin_window(7)
+        conn.execute("BEGIN IMMEDIATE")
+        for p in win:
+            conn.execute(
+                "INSERT INTO flows_daily(date,stablecoin_usd)"
+                " VALUES (?,?)"
+                " ON CONFLICT(date) DO UPDATE SET"
+                " stablecoin_usd=COALESCE(excluded.stablecoin_usd, stablecoin_usd)",
+                (p["ts"], p["total_usd"]),
+            )
+        conn.execute("COMMIT")
+        latest = win[-1]
+        sc_ts = latest["ts"]
+        if sc_ts < (datetime.now(UTC).date() - timedelta(days=3)).isoformat():
             sc_err = f"stablecoin: stale chart point {sc_ts}"
         else:
-            out["stablecoin_usd"] = s["total_usd"]
+            out["stablecoin_usd"] = latest["total_usd"]
     except Exception as ex:
         out["stablecoin_usd"] = None
         sc_err = f"stablecoin: {str(ex)[:120]}"
     log_collection(
         conn, "f2", "LLAMA:STABLECOIN",
         {"stablecoin_usd": out.get("stablecoin_usd")},
-        1 if out.get("stablecoin_usd") is not None else 0,
+        7 if out.get("stablecoin_usd") is not None else 0,
         err=sc_err,
     )
-    today = datetime.now(UTC).date().isoformat()
-    conn.execute("BEGIN IMMEDIATE")
-    conn.execute(
-        "INSERT INTO flows_daily(date,stablecoin_usd)"
-        " VALUES (?,?)"
-        " ON CONFLICT(date) DO UPDATE SET"
-        " stablecoin_usd=COALESCE(excluded.stablecoin_usd, stablecoin_usd)",
-        (today, out.get("stablecoin_usd")),
-    )
-    conn.execute("COMMIT")
     return out
 
 
@@ -263,7 +267,11 @@ def _harvest_cnn_fg(conn) -> None:
                 conn.execute(
                     "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
                     " VALUES (?,?,?, 'raw',1,?)"
-                    " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value",
+                    # ROUND-2: update value_raw too — the first-capture raw
+                    # froze while value refreshed, breaking the
+                    # value == value_raw × factor recompute invariant
+                    " ON CONFLICT(period,kind) DO UPDATE SET"
+                    " value_raw=excluded.value_raw, value=excluded.value",
                     (p["ts"], kind, p["value"], p["value"]),
                 )
                 n_hist += 1
@@ -773,12 +781,28 @@ def main(argv: list[str] | None = None) -> int:
     _harvest_cnn_fg(conn)
 
     print("=== GLD / SLV Flows ===")
+    from .fetch_log import log_collection as _lc_gld
+
+    gld_err: str | None = None
     try:
+        # ROUND-2: the archive carries OFFICIAL per-date tonnes (since 2004)
+        # — write the last 10 rows each run: holes from outage days (09-09/
+        # 14/15) and the 08-31 fallback-phantom self-heal with REAL values.
+        arch = spdr.fetch_gld_archive()
+        n_gld = 0
+        for a in arch[-10:]:
+            if a["tonnes"] is None:
+                continue  # 2004-era head rows without the tonnes column
+            conn.execute(
+                "INSERT INTO flows_daily(date,gld_tonnes) VALUES (?,?) "
+                "ON CONFLICT(date) DO UPDATE SET gld_tonnes=excluded.gld_tonnes",
+                (a["ts"], round(a["tonnes"], 1)),
+            )
+            n_gld += 1
         gld = spdr.fetch_gld_tonnes()
         approx_mark = " (approx)" if gld.get("approx") else ""
         print(
-            f"  GLD: {gld['oz_per_share']:.6f} oz/share → ~{gld['tonnes_approx']}t "
-            f"{approx_mark} ({gld['ts']}, shares≈{gld['shares_assumed_m']:.0f}M)"
+            f"  GLD: {gld['tonnes']}t{approx_mark} ({gld['ts']}) + {n_gld}d archive window"
         )
         today = datetime.now(UTC).date().isoformat()
         conn.execute(
@@ -787,14 +811,22 @@ def main(argv: list[str] | None = None) -> int:
             " ON CONFLICT(period,kind) DO UPDATE SET value=excluded.value",
             (today, 1.0 if gld.get("approx") else 0.0),
         )
-        conn.execute(
-            "INSERT INTO flows_daily(date,gld_tonnes) VALUES (?,?) "
-            "ON CONFLICT(date) DO UPDATE SET gld_tonnes=excluded.gld_tonnes",
-            (today, gld["tonnes_approx"]),
-        )
+        # an approx (shares-fallback) tonnage must NEVER be written as a
+        # real value — that is how the 830.1t phantom landed on 08-31
+        if not gld.get("approx"):
+            conn.execute(
+                "INSERT INTO flows_daily(date,gld_tonnes) VALUES (?,?) "
+                "ON CONFLICT(date) DO UPDATE SET gld_tonnes=excluded.gld_tonnes",
+                (gld["ts"], gld["tonnes"]),
+            )
         conn.commit()
+        # stale gate: the archive always carries yesterday-or-today
+        if gld["ts"] < (datetime.now(UTC).date() - timedelta(days=4)).isoformat():
+            gld_err = f"stale archive date {gld['ts']}"
     except Exception as ex:
+        gld_err = str(ex)[:140]
         print(f"  ⚠ GLD: {str(ex)[:90]}")
+    _lc_gld(conn, "f2", "SPDR:GLD", None, 10 if not gld_err else 0, err=gld_err)
     try:
         slv = spdr.fetch_slv_shares()
         print(f"  SLV: {slv['shares']:,} shares ({slv['ts']})")
@@ -806,8 +838,10 @@ def main(argv: list[str] | None = None) -> int:
             (slv["ts"], slv["shares"]),
         )
         conn.commit()
+        _lc_gld(conn, "f2", "FMP:SLV", {"shares": slv["shares"]}, 1)
     except Exception as ex:
         print(f"  ⚠ SLV: {str(ex)[:90]}")
+        _lc_gld(conn, "f2", "FMP:SLV", None, 0, err=str(ex)[:140])
 
     # Farside ETF + PBoC + LBMA + TIC — each with fetch_log + stale gate
     _harvest_flows_extra(conn)

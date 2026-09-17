@@ -162,6 +162,16 @@ fd_auction_weak_pct: 10           # headline 10Y (5Y fallback) auction b/c perce
 cooldown_hours_default: 6
 cooldown_hours_stress: 1        # when VIX > vix_stress_level (or z-VIX 60d > 1)
 vix_stress_level: 25
+vix_z_stress: 1.0               # z-VIX(60d) above this also = stress cadence
+
+# --- Trigger thresholds promoted from watcher.py hardcodes (round-2 2026-09-17) -----
+# [RISET: the audit found 5 triggers reading hardcoded literals + 1 orphaned
+#  key — thresholds belong HERE (single source, same file the brief reads).]
+esi_flip_min_abs: 0.25          # |ESI| on both sides — noise gate around zero
+gold_ry_div_min_bp: 5.0         # DFII10 Δ20d in bp (registry units: pct-points ×100)
+cot_broad_div_min: 3            # of 4 financials Lev-vs-AM opposite
+cot_covering_net_min: 50000     # large-position floor for covering/short-cover alerts
+cot_covering_chg_min: 10000     # weekly net-change magnitude for covering alerts
 
 # --- ECBWatch (D-006 ESTRWatch; qa/watcher.py) ---------------------------------------
 # [RISET: day-1 placeholder 2026-09-10 — trigger probabilitas kebijakan pertama

@@ -21,7 +21,7 @@
 #
 # CONC_TOP4 (squeeze tell — HG/GC): threshold on conc_gross_le_4_tdr_long
 # (Disagg; unit = % of gross OI). Only set for Disagg contracts; TFF
-# availability of the conc column is unverified → null until checked.
+# conc column verified live 2026-09-17 (100pct populated on tff rows).
 # =====================================================================
 
 contracts:
@@ -113,7 +113,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "For USDJPY & FX majors."
 
 - code: "096742"
@@ -125,7 +125,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "GBPUSD + the GBP-crosses leg."
 
 - code: "232741"
@@ -137,7 +137,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "Asia risk proxy."
 
 - code: "098662"
@@ -149,7 +149,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "Dollar positioning itself (ICE, not CME — the contract still lives in CFTC Socrata)."
 
 - code: "133741"
@@ -161,7 +161,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "Positioning counterpart for BTC flows (flows)."
 
 - code: "13874+"
@@ -173,7 +173,7 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "Code contains '+' → URL-ENCODE in Socrata queries (same for '20974+')."
 
 - code: "209742"
@@ -187,5 +187,5 @@ contracts:
   z_window_minggu: 156        # 3-year window
   min_obs: 150                # minimum weeks of history before z is valid
   crowded_z: 1.5              # |z| > 1.5 = crowded state
-  conc_top4_flag_threshold: null    # TFF — conc column unverified
+  conc_top4_flag_threshold: null    # TFF — conc verified live 2026-09-17 (100pct of tff rows populated); threshold unwired — set when squeeze-flagging TFF contracts is wanted
   notes: "DATA-SPEC §7 — official name 'NASDAQ MINI'; full-size 209741 DEAD since 2015 — do NOT use; micro 209747 optional."

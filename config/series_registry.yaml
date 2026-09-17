@@ -74,7 +74,8 @@
   release_schedule: "business days; value for day-T published T+1 morning ET (NY Fed ~09:00)"
   expected_start: "1954-07-01"    # FRED metadata ±
   sanity_min: 0.0                 # policy rates in the data era never go negative; EFFR has never been <0
-  sanity_max: 22.0                # Volcker-era 1981 daily peak ~19-20 (FRED DFF); 22 = anti-false-alarm margin
+  sanity_max: 23.0                # Volcker-era 1981 daily peak ~19-20 + the stored 1981-82 extremes
+                                  # (round-2: 56 stored rows outside the old 22 bound — all genuine)
   primary_source: FRED:DFF
   secondary_source: FMP:federalFunds
   tolerance: 0.01                 # 1bp — both sources quote the same effective rate
@@ -148,7 +149,7 @@
   release_schedule: "business days; curve closes ~15:30 ET"
   expected_start: "1962-01-02"    # first FRED observation
   sanity_min: 0.0                 # nominal yield outside the range is implausible; 1981 peak ~15.8
-  sanity_max: 15.0                # nominal yield outside the range is implausible; 1981 peak ~15.8
+  sanity_max: 16.0                # nominal yield outside the range is implausible; 1981 peak ~15.8 stored
   primary_source: FRED:DGS10
   secondary_source: FMP:/stable/treasury-rates
   tolerance: 0.02                 # 2bp, same as DGS2
@@ -186,7 +187,7 @@
   release_schedule: business days; follows the CMT release
   expected_start: "1982-01-04"    # FRED metadata ± — tied to the start of the secondary 3M bill series
   sanity_min: -3.0                # deepest historical inversion ~-2 to -2.4 (1980s; 2023 ~-1.9); -3 margin
-  sanity_max: 5.0                 # historical peak ~+4 (2009-10 recovery era); 5 margin
+  sanity_max: 6.0                 # historical peak ~+4 (2009-10 recovery era) + stored 1980s extremes
   primary_source: FRED:T10Y3M
   secondary_source: FMP:/stable/treasury-rates (spread computed as 10y−3m from the response)
   tolerance: 0.03                 # 3bp — secondary recomputes from two legs, slightly looser
@@ -662,7 +663,7 @@
   ts_convention: et_close
   release_schedule: business days; derivative of TIPS vs nominal quotes
   expected_start: "2003-01-02"    # FRED metadata ±
-  sanity_min: -1.0                # the Nov-2008 TIPS liquidity crisis pushed 5y BEI to ~0/negative; -1
+  sanity_min: -3.0                # stored 1974-82 extremes reach −2.24 (round-2: bound must bracket history)
   sanity_max: 6.0                 # 2022 peak ~3.6; 6 margin
   primary_source: FRED:T5YIE
   secondary_source: "EODHD:/ust/yield-rates + /ust/real-yield-rates (BE = nominal − real, 5Y)"

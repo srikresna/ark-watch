@@ -82,6 +82,19 @@ def backfill_fred(conn, entries, *, dry: bool = False) -> dict[str, int]:
             out[e["series_id"]] = len(rows)
         else:
             out[e["series_id"]] = db.insert_observations(conn, rows)
+            # ROUND-2: one-shot full-history loads were invisible to every
+            # fetch_log-based health join (the 4 new 2026-09-17 series showed
+            # ZERO fetch_log rows while holding 700-800 obs each)
+            try:
+                from .fetch_log import log_collection
+
+                log_collection(
+                    conn, "backfill", e["series_id"],
+                    {"ts": rows[-1][1], "value": rows[-1][2]} if rows else None,
+                    out[e["series_id"]],
+                )
+            except Exception:
+                pass  # logging must never break the load
     return out
 
 
