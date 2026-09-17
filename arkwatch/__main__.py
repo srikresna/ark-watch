@@ -120,14 +120,27 @@ def main() -> int:
     if cmd == "export":
         import csv
         import sqlite3
+        from pathlib import Path
 
-        if len(sys.argv) < 4:
-            print("usage: arkwatch export <BLOCK> <file.csv> [db]")
+        # ROUND-4: the docs' `export block F --csv` shape crashed with a
+        # traceback AND left a 0-byte file literally named '--csv' — argv
+        # starting with '--' is a flag, never an output path; refuse it.
+        args = [a for a in sys.argv[2:]]
+        csv_flag = "--csv" in args
+        if csv_flag:
+            args.remove("--csv")
+        pos = [a for a in args if not a.startswith("--")]
+        if len(pos) < 2:
+            print("usage: arkwatch export <BLOCK> <file.csv> [db] [--csv]")
+            print("  (--csv is accepted for doc compatibility; the .csv path is required)")
             return 2
-        block = sys.argv[2].upper()
-        out_csv = sys.argv[3]
-        dbp = sys.argv[4] if len(sys.argv) > 4 else _DEFAULT_DB
-        conn = sqlite3.connect(dbp)
+        block = pos[0].upper()
+        out_csv = pos[1]
+        dbp = pos[2] if len(pos) > 2 else _DEFAULT_DB
+        if not Path(dbp).exists():
+            print(f"✗ db not found: {dbp}")
+            return 2
+        conn = sqlite3.connect(f"file:{dbp}?mode=rw", uri=True)
         rows = conn.execute(
             "SELECT r.series_id, r.ts, r.value, r.vintage_ts FROM raw_observations r "
             "JOIN series_registry g ON g.series_id = r.series_id "

@@ -64,6 +64,15 @@ def explore_series(conn: sqlite3.Connection, sid: str):
     # Profile
     reg = load_registry(active_only=False)
     entry = next((e for e in reg if e["series_id"] == sid), None)
+    if entry is None:
+        # ROUND-4: an unregistered id printed a bare header and exited 0 —
+        # indistinguishable from an empty-but-registered series
+        print("  ✗ NOT IN REGISTRY — never registered, or the id is misspelled/")
+        print("    inactive. No observations are being collected for it.")
+        near = [e["series_id"] for e in reg if sid.upper() in e["series_id"].upper()][:5]
+        if near:
+            print(f"  similar: {', '.join(near)}")
+        return 1
     if entry:
         print(f"  name      : {entry.get('name')}")
         print(f"  block     : {entry.get('block')}")
@@ -93,9 +102,24 @@ def explore_series(conn: sqlite3.Connection, sid: str):
         print("\n  last fetch_log entries:")
         for log in logs:
             print(f"    {log[0]}  {log[1]}  rows={log[2]}  {log[3] or ''}")
+    return 0
+
+
+# documented alias → stored signal_id (ROUND-4: docs say REGIME_SCORE /
+# INFL_STATE but the stored ids are lowercase/compound — a case/alias miss
+# printed the REGIME fallback while looking like the requested signal)
+_SIGNAL_ALIASES = {
+    "REGIME_SCORE": "regime_score",
+    "INFL_STATE": "pillar_c",
+    "ESI": "esi",
+}
 
 
 def explore_signal(conn: sqlite3.Connection, signal_id: str, trace: bool = False):
+    resolved = _SIGNAL_ALIASES.get(signal_id.upper(), signal_id)
+    if resolved != signal_id:
+        print(f"  (alias: {signal_id} → {resolved})")
+    signal_id = resolved
     print(f"=== SIGNAL: {signal_id} ===")
     rows = conn.execute(
         "SELECT ts, value, state, inputs_json FROM computed_signals "
@@ -103,8 +127,18 @@ def explore_signal(conn: sqlite3.Connection, signal_id: str, trace: bool = False
         (signal_id,),
     ).fetchall()
     if not rows:
+        # case-insensitive last resort
+        ci = conn.execute(
+            "SELECT DISTINCT signal_id FROM computed_signals"
+            " WHERE signal_id=? COLLATE NOCASE LIMIT 1",
+            (signal_id,),
+        ).fetchone()
+        if ci and ci[0] != signal_id:
+            print(f"  (case: {signal_id} → {ci[0]})")
+            return explore_signal(conn, ci[0], trace)
         print(f"  (no computed_signals for {signal_id})")
-        # Fallback: compute fresh
+        # Fallback: compute fresh — id-aware: only the regime/pillar family
+        # makes sense here; anything else has no fresh-compute path
         from ..signals.compute import compute_pillars, compute_regime_score
 
         pillars = compute_pillars(conn)
@@ -113,7 +147,7 @@ def explore_signal(conn: sqlite3.Connection, signal_id: str, trace: bool = False
         for blk in "ABCDEF":
             p = pillars.get(blk, {})
             print(f"    {blk} {p.get('label', ''):<14} z={p.get('z', 'N/A')}")
-        return
+        return None
     for r in rows:
         print(f"  {r[0]}  value={r[1]}  state={r[2]}")
         if r[3]:

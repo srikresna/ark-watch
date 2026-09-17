@@ -65,7 +65,7 @@ def family_rows(indicator_key: str, convention: str = "m_minus_1",
     try:
         rows = conn.execute(
             "SELECT normalized_name, substr(ts_utc,1,10) d, actual FROM events"
-            " WHERE indicator_key=? AND actual IS NOT NULL AND consensus IS NOT NULL"
+            " WHERE indicator_key=? AND actual IS NOT NULL"
             " ORDER BY ts_utc",
             (indicator_key,),
         ).fetchall()
@@ -76,6 +76,9 @@ def family_rows(indicator_key: str, convention: str = "m_minus_1",
         rm = _ref_month(name_norm, d, convention)
         if rm is None or actual is None:
             continue
+        # ROUND-4: the consensus IS NOT NULL filter is GONE — TV/EODHD twins
+        # carry actuals without consensus (10 ISM rows today); with the
+        # filter, a consensus-less FMP twin would silently drop a month.
         # MAX = deterministic twin dedup (identical after sibling-heal; MAX
         # only arbitrates if a stale twin somehow differs)
         cur = by_month.get(rm)
@@ -99,10 +102,16 @@ def fetch_latest(series_id: str) -> dict:
 
 
 def fetch_window(series_id: str, days: int = 10) -> list[dict]:
-    """Points inside the trailing window (the harvest's gap-heal contract)."""
+    """Points inside the trailing window (the harvest's gap-heal contract).
+
+    ROUND-4: the effective window is max(days, 62) — reference-month ts means
+    the newest monthly point is 32-62d old, so a literal 10d trailing window
+    could NEVER contain it and every run silently degraded to fetch_latest
+    (a missed middle month would then be permanently unhealable)."""
     from datetime import UTC, datetime, timedelta
 
-    cutoff = (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+    days_eff = max(days, 62)
+    cutoff = (datetime.now(UTC).date() - timedelta(days=days_eff)).isoformat()
     fam = FAMILIES.get(series_id.split(":", 1)[1] if ":" in series_id else series_id)
     if fam is None:
         raise CalDistError(f"caldist: unrouted series {series_id}")

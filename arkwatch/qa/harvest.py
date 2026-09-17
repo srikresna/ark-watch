@@ -26,6 +26,23 @@ DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.
 # changes. Implemented in the harvest loop below.
 
 
+_SECRET_RE = None
+
+
+def _redact(text: str) -> str:
+    """ROUND-4 (security): fetch exceptions echo the failing URL — keys ride
+    query params (api_key=…&api_token=…). One 4xx away from a key persisting
+    into fetch_log; scrub centrally at both writers."""
+    global _SECRET_RE
+    if _SECRET_RE is None:
+        import re as _re
+
+        _SECRET_RE = _re.compile(
+            r"(api_key|api_token|apikey|token|key)=[^&\s]+", _re.IGNORECASE
+        )
+    return _SECRET_RE.sub(r"\1=REDACTED", text)
+
+
 def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dict | None]:
     """GAP-HEAL (audit P1-1, 2026-09-13): fetchers exposing fetch_window land
     EVERY observation in the window — a shutdown night that missed a
@@ -96,7 +113,13 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
             first_obj = None
             if prefix == "FRED:":
                 ref = (e.get("native_id") or e.get("primary_source") or sid_full).split(":", 1)[-1]
-                obs = mod.fetch_observations(ref, sort="desc", limit=10)
+                # ROUND-4: freq-aware depth — the flat 10-obs window never
+                # caught monthly/annual/benchmark revisions (a monthly series
+                # revises months back; weekly revises ~12 weeks)
+                _depth = {"D": 10, "W": 60, "M": 36, "Q": 16, "A": 5}.get(
+                    (e.get("freq") or "D").upper(), 10
+                )
+                obs = mod.fetch_observations(ref, sort="desc", limit=_depth)
                 if obs:
                     first_obj = obs[0]
                 # release_ts = the FRED realtime_start (the date this value
@@ -107,6 +130,20 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     for o in obs
                     if o["value"] is not None
                 ]
+                # ROUND-4: first-print vintage — INSERT OR IGNORE a 'first'
+                # copy of every fetched observation (first-writer-wins via the
+                # PK); the frozen first-print store had stopped 09-02, so
+                # point-in-time replay only worked for recent windows
+                conn.executemany(
+                    "INSERT OR IGNORE INTO raw_observations"
+                    "(series_id,ts,release_ts,value,vintage_ts,source,fetched_at)"
+                    " VALUES (?,?,?,?, 'first', 'FRED', ?)",
+                    [
+                        (sid_full, o["ts"], o.get("realtime_start") or "na", o["value"], now)
+                        for o in obs
+                        if o["value"] is not None
+                    ],
+                )
             else:
                 rows, first_obj, window_err = _window_or_latest(mod, sid_full, prefix)
                 if window_err:
@@ -159,7 +196,7 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
             ok += 1
             rows_new += n
         except Exception as ex:
-            status, err = "ERROR", str(ex)[:150]
+            status, err = "ERROR", _redact(str(ex))[:150]
             fail += 1
         # quota_used = 1 call for PAID sources (FMP/EODHD), 0 for free
         # institutional ones; approximates the daily call count

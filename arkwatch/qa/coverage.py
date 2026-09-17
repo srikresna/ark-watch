@@ -14,6 +14,9 @@ from ..qa.verify_sources import ROUTES
 
 REQUIRED = ("unit", "value_format", "freq", "primary_source")
 MIN_ACTUALS = 24  # calendar-gap gate (see the gap section below)
+# ROUND-4: the gate must use SUM(importance='high')>0 — MAX() over TEXT is a
+# LEXICAL compare ('unknown' > 'high'), so any stray low/medium/unknown row
+# silently suppressed the whole family; the R3 '0 gaps' was false-clean.
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,12 +115,13 @@ def main(argv: list[str] | None = None) -> int:
         WHERE e.indicator_key IS NOT NULL
         GROUP BY e.indicator_key
         HAVING SUM(e.actual IS NOT NULL) >= ?
-           AND MAX(e.importance) = 'high'
+           AND COUNT(DISTINCT substr(e.ts_utc,1,10)) >= ?
+           AND SUM(e.importance = 'high') > 0
            AND NOT EXISTS (SELECT 1 FROM series_registry r
                            WHERE r.calendar_family = e.indicator_key AND r.active = 1)
         ORDER BY 3 DESC
         """,
-        (MIN_ACTUALS,),
+        (MIN_ACTUALS, MIN_ACTUALS),
     ).fetchall()
     _conn.close()
     print(

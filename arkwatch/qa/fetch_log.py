@@ -55,7 +55,12 @@ def log_collection(
 ) -> None:
     """One call per collection (settlements/cvol/voi/flows-extra): status is OK
     when rows_n > 0, ERROR when err, with a drift check against the previous
-    fingerprint."""
+    fingerprint. Error text is REDACTED (ROUND-4 security: a failing URL can
+    echo an api key in a query param)."""
+    from .harvest import _redact
+
+    if err:
+        err = _redact(err)
     fp = schema_fp(first_obj)
     status = "ERROR" if err else ("OK" if rows_n > 0 else "EMPTY")
     if fp:

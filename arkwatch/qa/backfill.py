@@ -100,6 +100,34 @@ def backfill_fred(conn, entries, *, dry: bool = False) -> dict[str, int]:
     return out
 
 
+def backfill_cal(conn, *, dry: bool = False) -> dict[str, int]:
+    """ROUND-4: the CAL: history load was an uncommitted one-off — commit the
+    route: idempotent family walk + fetch_log rows (the round-2 visibility
+    convention), so a missed month is always re-healable."""
+    from ..fetchers import caldist
+
+    out: dict[str, int] = {}
+    for suffix, fam in caldist.FAMILIES.items():
+        sid = f"CAL:{suffix}"
+        pts = caldist.family_rows(*fam)
+        rows = [(sid, p["ts"], p["value"], "CAL") for p in pts]
+        if dry:
+            out[sid] = len(rows)
+        else:
+            out[sid] = db.insert_observations(conn, rows)
+            try:
+                from .fetch_log import log_collection
+
+                log_collection(
+                    conn, "backfill", sid,
+                    {"ts": rows[-1][1], "value": rows[-1][2]} if rows else None,
+                    out[sid],
+                )
+            except Exception:
+                pass
+    return out
+
+
 def _tga_rows(account_type: str) -> list[tuple]:
     rows, url, params = (
         [],
@@ -138,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--dry", action="store_true", help="count without writing")
-    p.add_argument("--source", choices=["fred", "tga"], default="fred")
+    p.add_argument("--source", choices=["fred", "tga", "cal"], default="fred")
     args = p.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -153,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.source == "tga":
         result = backfill_tga(None, dry=args.dry) if args.dry else _run_tga(args.db)
+    elif args.source == "cal":
+        conn = db.get_conn(args.db, allow_init=True)
+        n_reg = sync_registry(conn)
+        print(f"registry synced: {n_reg} entries")
+        result = backfill_cal(conn, dry=args.dry)
+        conn.close()
     else:
         fred_targets = [e for e in reg if e["series_id"].startswith("FRED:")]
         if args.dry:

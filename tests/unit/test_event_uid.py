@@ -44,3 +44,31 @@ def test_both_writers_share_uid_construction():
     assert "sha1" not in src.replace("event_uid", "") or True  # no independent hashing of uids
     # and the helper itself:
     assert cal.event_uid is event_uid
+
+
+def test_fomc_schedule_matches_curated_calendar():
+    """ROUND-4: the June-2027 meeting sat one week late in FOMC_SCHEDULE vs
+    curated_calendar.yaml (Fed publishes Jun 8-9) -- a wrong meeting date
+    shifts every ZQ day-weight after it. The two sources of truth must
+    agree, structurally, forever."""
+    from arkwatch.config import load_curated_calendar
+    from arkwatch.transforms.fedwatch import FOMC_SCHEDULE
+
+    cal = load_curated_calendar()
+    f27 = cal.get("fomc_2027") or []
+    curated = []
+    for m in list(cal.get("fomc_2026") or []) + list(
+        f27.get("meetings", []) if isinstance(f27, dict) else f27
+    ):
+        # decision_day when present (2026); else day-2 of the dates pair (2027
+        # entries carry only dates=[start, end]; the decision is day 2)
+        dd = str(m.get("decision_day") or (m.get("dates") or [""])[-1])[:10]
+        if dd:
+            from datetime import date
+
+            curated.append(date.fromisoformat(dd))
+    assert curated, "curated calendar empty -- cannot cross-check"
+    assert sorted(FOMC_SCHEDULE) == sorted(curated), (
+        f"FOMC_SCHEDULE disagrees with curated_calendar: "
+        f"{sorted(set(FOMC_SCHEDULE) ^ set(curated))}"
+    )

@@ -594,8 +594,10 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     if flow_row:
         # Bybit funding RETIRED 2026-09-16 (unreachable from all our networks;
         # served one line at 22% fill rate) — the stablecoin line below
-        # (DefiLlama) is the surviving flows indicator
-        pass
+        # (DefiLlama) is the surviving flows indicator. ROUND-4: the section
+        # HEADER died with the funding line — keep an unconditional anchor so
+        # the block stays greppable and a disappearing line is visible.
+        lines.append("Flows:")
         # ETF flows (Farside — release dates can lag today → separate query)
         etf_row = conn.execute(
             "SELECT date, btc_etf_musd, eth_etf_musd FROM flows_daily "
@@ -1237,7 +1239,15 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     # Today-window fetch ratio, not lifetime: idempotent re-runs append EMPTY
     # rows that monotonically drag a lifetime ratio down, and a harvester
     # reporting 0 new rows is healthy, not failing.
-    today_s = datetime.now(UTC).date().isoformat()
+    # ROUND-4: the window anchor is the WIB DAY (the brief's canonical slot
+    # is 07:00 WIB = 00:00 UTC — a UTC-day bound reads ~'1/1' fake-perfect
+    # because only send/verify have run since UTC midnight).
+    wib_day_start = (
+        datetime.now(WIB).replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+        .isoformat(timespec="seconds")
+    )
+    today_s = wib_day_start
     total_ok = conn.execute(
         "SELECT COUNT(*) FROM fetch_log WHERE status='OK' AND ts>=?", (today_s,)
     ).fetchone()[0]

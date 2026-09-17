@@ -55,6 +55,10 @@ SCHEDULE = [
     (8, 30, "daily", "f2", "COT + flows (Bybit/Farside/PBoC/LBMA/TIC/LME) + FedWatch"),
     (23, 30, "daily", "backup", "VACUUM INTO + verification + rotation"),
     (22, 0, "sunday", "alfred", "Weekly maintenance + vintage audit"),
+    # ROUND-4: the blindness class that started this whole audit (calendar
+    # families with actuals but no series) must be checked by the daemon, not
+    # by an accidental question — weekly, before the alfred maintenance
+    (21, 0, "sunday", "coverage", "Registry lint + calendar-family gap detector"),
 ]
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle
@@ -128,6 +132,28 @@ def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
     return due
 
 
+def _alert_job_failed(cmd: str, detail: str) -> None:
+    """ROUND-4: job failures lived only in the log file — the nightly backup
+    hard-failed for two nights with zero visibility while the on-disk backup
+    rotted. Route failures through the watcher's outbox (its cooldown dedup
+    suppresses the retry echo; one alert per failure episode)."""
+    try:
+        from . import db as _db
+        from .qa.watcher import _fire
+
+        conn = _db.get_conn(ROOT / "data" / "arkwatch.db")
+        _fire(
+            conn,
+            "job_failed",
+            f"Daemon job '{cmd}' failed: {detail[:110]}",
+            "A scheduled job failed (see logs/daemon-*.log + fetch_log for detail)",
+            f"Run `python -m arkwatch {cmd}` on the server to diagnose",
+        )
+        conn.close()
+    except Exception as ex:  # the alert must never break the loop
+        logger.error(f"job-failure alert itself failed: {ex}")
+
+
 def _run_job(cmd: str, desc: str) -> bool:
     if cmd in PAUSED_JOBS:
         logger.info(f"⏸ {cmd} paused (D-023 data-first) — {desc}")
@@ -158,15 +184,17 @@ def _run_job(cmd: str, desc: str) -> bool:
             logger.info(f"✓ {cmd} ({dt:.0f}s) — {summary[:240]}")
             return True
         err = (r.stderr or r.stdout or "").strip().splitlines()
-        logger.error(
-            f"✗ {cmd} ({dt:.0f}s) exit={r.returncode} — {(err[-1] if err else 'no output')[:200]}"
-        )
+        tail = (err[-1] if err else "no output")[:200]
+        logger.error(f"✗ {cmd} ({dt:.0f}s) exit={r.returncode} — {tail}")
+        _alert_job_failed(cmd, tail)
         return False
     except subprocess.TimeoutExpired:
         logger.error(f"✗ {cmd} TIMEOUT 30min — hard-kill")
+        _alert_job_failed(cmd, "TIMEOUT 30min")
         return False
     except Exception as ex:
         logger.error(f"✗ {cmd} — daemon exception: {ex}")
+        _alert_job_failed(cmd, str(ex))
         return False
 
 

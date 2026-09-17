@@ -807,7 +807,11 @@
   primary_source: FRED:PCETRIM1M158SFRBDAL
   secondary_source: null
   tolerance: null
-  active: 1
+  active: 0
+  # DEACTIVATED 2026-09-17 (round-4): this RAW mnemonic was registered active
+  # AND as FRED:DALLAS_TRIM_1M's primary_source — the same FRED series
+  # harvested twice (duplicate fetches + two registry rows). DALLAS_TRIM_1M
+  # is the stable handle; stored rows stay (append-only).
   # Dallas trimmed PCE — the PCE-side twin of median CPI; the Fed's other torch.
 #   - MoM/YoY/Δ3-month CPI derivatives → computed from the raw SA index below
 #   - OVX (energy channel complement) → stress-vol registry (part-2 file)
@@ -874,6 +878,8 @@
   primary_source: FRED:PPIFIS
   secondary_source: null              # calendar PPI MoM actuals cross-check the DERIVED MoM
   tolerance: null
+  calendar_family: "PRODUCER PRICE INDEX MOM"   # ROUND-4: was 'PPI MOM' — a
+                                                # 1-row TV orphan; the real 58-release family
   calendar_family: "PPI MOM"
   active: 1
   # ADDED 2026-09-17: wholesale-inflation level — the pipeline read headline

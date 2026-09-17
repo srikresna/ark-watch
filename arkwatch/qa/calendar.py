@@ -85,6 +85,10 @@ _ALIASES = {
     # 09-16 actual 1.2 == RETAIL SALES MOM; diffusion index == diffusion PMI)
     "RETAIL SALES": "RETAIL SALES MOM",
     "ISM MANUFACTURING INDEX": "ISM MANUFACTURING PMI",
+    # ROUND-4: TV's stray 2026-09-10 PPI spellings (1-row orphans; the TV
+    # actual 0.4 == the FMP twin's — same release under a split key)
+    "PPI MOM": "PRODUCER PRICE INDEX MOM",
+    "PPI YOY": "PRODUCER PRICE INDEX YOY",
 }
 
 
