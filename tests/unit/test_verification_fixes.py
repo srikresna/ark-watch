@@ -273,6 +273,44 @@ def test_ads_colon_date_normalized():
         assert _dt.strptime(s, fmt).date().isoformat() == "2026-09-05"
 
 
+# --- Price upsert: partial bars must never freeze (2026-09-17 audit P1) --------
+
+
+def test_insert_prices_partial_then_final_heals(conn):
+    """INSERT OR IGNORE froze partial bars forever: (a) a NULL-close row
+    blocked its own final bar, (b) an intraday close swept pre-session-close
+    could never be corrected. The COALESCE upsert: latest non-NULL wins,
+    NULLs never clobber."""
+    from arkwatch.qa.instruments import insert_prices
+
+    # morning sweep lands a NULL-close partial (2026-09-10 class)
+    n = insert_prices(conn, "GC1", "YAHOO", [{"ts": "2026-09-10", "close": None, "high": 4400.0}])
+    assert n == 1
+    row = conn.execute(
+        "SELECT close, high FROM instrument_prices WHERE symbol='GC1' AND ts='2026-09-10'"
+    ).fetchone()
+    assert row == (None, 4400.0)
+    # final print arrives — must HEAL the NULL close, not be ignored
+    insert_prices(conn, "GC1", "YAHOO", [{"ts": "2026-09-10", "close": 4366.5, "high": 4410.0}])
+    row = conn.execute(
+        "SELECT close, high FROM instrument_prices WHERE symbol='GC1' AND ts='2026-09-10'"
+    ).fetchone()
+    assert row == (4366.5, 4410.0)
+    # intraday wrong close (ES1 class) — a later final bar must overwrite it
+    insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-16", "close": 7600.0}])
+    insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-16", "close": 7668.5}])
+    assert conn.execute(
+        "SELECT close FROM instrument_prices WHERE symbol='ES1' AND ts='2026-09-16'"
+    ).fetchone()[0] == 7668.5
+    # a NULL-close payload must NOT clobber a stored good close
+    insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-16", "close": None}])
+    assert conn.execute(
+        "SELECT close FROM instrument_prices WHERE symbol='ES1' AND ts='2026-09-16'"
+    ).fetchone()[0] == 7668.5
+    # fully-empty rows are dropped at build time
+    assert insert_prices(conn, "ES1", "YAHOO", [{"ts": "2026-09-17"}]) == 0
+
+
 # --- Calendar ingest: dead sub-component families ------------------------------
 
 

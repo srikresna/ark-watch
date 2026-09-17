@@ -28,6 +28,17 @@ def instruments() -> list[dict]:
 
 
 def insert_prices(conn, symbol: str, source: str, rows: list[dict]) -> int:
+    """Upsert: latest NON-NULL value wins per column.
+
+    2026-09-17 anomaly-audit P1: INSERT OR IGNORE permanently froze whatever
+    landed first — (a) NULL-close partial rows (GC1/SI1/HG1/PL1 @2026-09-10)
+    blocked their own final bars forever, (b) intraday Yahoo bars swept while
+    a market was still trading (ES1 carried 8 permanently-wrong closes) could
+    never be corrected by the final print. The upsert overwrites stored
+    columns only where the incoming payload is non-NULL, so a later final bar
+    heals a partial row while a partial payload never clobbers stored values.
+    Fully-empty rows (all OHLCV NULL) are dropped at payload build.
+    """
     payload = [
         (
             symbol,
@@ -40,12 +51,21 @@ def insert_prices(conn, symbol: str, source: str, rows: list[dict]) -> int:
             r.get("volume"),
         )
         for r in rows
+        if any(r.get(k) is not None for k in ("open", "high", "low", "close", "volume"))
     ]
+    if not payload:
+        return 0
     conn.execute("BEGIN IMMEDIATE")
     try:
         cur = conn.executemany(
-            "INSERT OR IGNORE INTO instrument_prices(symbol,ts,source,open,high,low,close,volume,adjusted)"
-            " VALUES (?,?,?,?,?,?,?,?,0)",
+            "INSERT INTO instrument_prices(symbol,ts,source,open,high,low,close,volume,adjusted)"
+            " VALUES (?,?,?,?,?,?,?,?,0)"
+            " ON CONFLICT(symbol,ts,source) DO UPDATE SET"
+            "  open=COALESCE(excluded.open, instrument_prices.open),"
+            "  high=COALESCE(excluded.high, instrument_prices.high),"
+            "  low=COALESCE(excluded.low, instrument_prices.low),"
+            "  close=COALESCE(excluded.close, instrument_prices.close),"
+            "  volume=COALESCE(excluded.volume, instrument_prices.volume)",
             payload,
         )
         conn.execute("COMMIT")
