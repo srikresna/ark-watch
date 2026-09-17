@@ -34,4 +34,14 @@ def fetch_stablecoin_total() -> dict:
         # harvest. The total is the sum across pegs (same definition the
         # old scalar carried).
         raw = sum(v for v in raw.values() if isinstance(v, (int, float)))
-    return {"ts": str(latest.get("date", ""))[:10], "total_usd": float(raw)}
+    raw_date = latest.get("date")
+    if isinstance(raw_date, (int, float)):
+        # same schema change: `date` became an epoch int — str()[:10] fed the
+        # stale gate "1789603200", which lexically sorts BEFORE every ISO
+        # date and fails the gate forever. Convert to ISO like the old shape.
+        from datetime import UTC, datetime
+
+        ts = datetime.fromtimestamp(raw_date, tz=UTC).date().isoformat()
+    else:
+        ts = str(raw_date or "")[:10]
+    return {"ts": ts, "total_usd": float(raw)}

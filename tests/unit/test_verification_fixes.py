@@ -186,7 +186,9 @@ def test_llama_dict_shape_summed(monkeypatch):
 
         def json(self):
             return [
-                {"date": "2026-09-17",
+                # BOTH fields changed shape in the same release: the date is
+                # now an epoch int (1789603200 = 2026-09-17T00:00Z)
+                {"date": 1789603200,
                  "totalCirculatingUSD": {"peggedUSD": 305_000_000_000.0,
                                          "peggedEUR": 500_000_000.0}},
             ]
@@ -194,7 +196,7 @@ def test_llama_dict_shape_summed(monkeypatch):
     monkeypatch.setattr(bybit.requests, "get", lambda *a, **k: R())
     out = bybit.fetch_stablecoin_total()
     assert out["total_usd"] == 305_500_000_000.0
-    assert out["ts"] == "2026-09-17"
+    assert out["ts"] == "2026-09-17"  # epoch → ISO, not "1789603200"
 
 
 def test_stablecoin_harvest_writes_and_gates(conn):
