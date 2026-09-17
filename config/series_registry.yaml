@@ -71,7 +71,7 @@
   value_format: pct
   freq: D
   ts_convention: obs_day          # effective rate for day-ts, published T+1 morning ET
-  release_schedule: business days; value for day-T published T+1 morning ET (NY Fed ~09:00)
+  release_schedule: "business days; value for day-T published T+1 morning ET (NY Fed ~09:00)"
   expected_start: "1954-07-01"    # FRED metadata ±
   sanity_min: 0.0                 # policy rates in the data era never go negative; EFFR has never been <0
   sanity_max: 22.0                # Volcker-era 1981 daily peak ~19-20 (FRED DFF); 22 = anti-false-alarm margin
@@ -109,7 +109,7 @@
   value_format: pct
   freq: D
   ts_convention: obs_day          # SOFR for day-T is published ~08:00 ET on T+1
-  release_schedule: business days; T+1 morning ET (~08:00)
+  release_schedule: "business days; T+1 morning ET (~08:00)"
   expected_start: "2018-04-02"    # FRED metadata ± — first SOFR publication
   sanity_min: 0.0                 # collateralized US repo has never gone negative
   sanity_max: 10.0                # Sep-2019 spike 5.25 & Sep-Oct-2023 ~5.4; 10 = extreme-spike margin
@@ -127,7 +127,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close         # CMT = OTC market close yield; on FRED the same ET evening
-  release_schedule: business days; curve closes ~15:30 ET
+  release_schedule: "business days; curve closes ~15:30 ET"
   expected_start: "1976-06-01"    # FRED metadata ±
   sanity_min: 0.0                 # modern nominal yields implausibly <0; Japan-style negatives never occurred in US CMT
   sanity_max: 17.0                # Sep-1981 daily peak ~16.9 (FRED DGS2); 17 so full backfill does not false-alarm
@@ -145,7 +145,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close         # same as DGS2
-  release_schedule: business days; curve closes ~15:30 ET
+  release_schedule: "business days; curve closes ~15:30 ET"
   expected_start: "1962-01-02"    # first FRED observation
   sanity_min: 0.0                 # nominal yield outside the range is implausible; 1981 peak ~15.8
   sanity_max: 15.0                # nominal yield outside the range is implausible; 1981 peak ~15.8
@@ -163,7 +163,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close         # same as DGS2
-  release_schedule: business days; curve closes ~15:30 ET
+  release_schedule: "business days; curve closes ~15:30 ET"
   expected_start: "1977-02-28"    # FRED metadata ±; KNOWN GAP 2002-02-18..2006-02-08
                                   # (30Y bond issuance suspended) — a structural gap,
                                   # not harvester data loss
@@ -219,7 +219,7 @@
   value_format: pct
   freq: D
   ts_convention: effective_date   # ts = date the rate takes effect; announcement date → release_ts
-  release_schedule: business days; changes only after ECB decisions (~8×/year, Thursday 14:15 CET)
+  release_schedule: "business days; changes only after ECB decisions (~8×/year, Thursday 14:15 CET)"
   expected_start: "1999-01-04"    # FRED metadata ± — start of the euro
   sanity_min: -1.0                # DFR was NEGATIVE 2014-2022 (low -0.5); lower bound -1
   sanity_max: 5.0                 # high 4.0 (2023); 5 margin
@@ -237,7 +237,7 @@
   value_format: pct
   freq: E
   ts_convention: effective_date   # ts = date the rate takes effect; announcement → release_ts
-  release_schedule: per MPC meeting (8×/year); decision Thursday 12:00 UK
+  release_schedule: "per MPC meeting (8×/year); decision Thursday 12:00 UK"
   expected_start: "1975-01-01"    # EODHD policy-rates historical depth UNVERIFIED ±
   sanity_min: 0.0                 # Bank Rate has never been negative
   sanity_max: 20.0                # history 0.1 (2020-21) to 17 (1979); 20 margin
@@ -281,7 +281,7 @@
   ts_convention: target_month     # ts = predicted month; many daily vintages per month →
                                   # distinguished by vintage_ts (append-only); consume as
                                   # "latest element per month"
-  release_schedule: daily (Cleveland updates after new data lands, ~10:00 ET ±)
+  release_schedule: "daily (Cleveland updates after new data lands, ~10:00 ET ±)"
                                   # NO expected_start on purpose: the JSON only carries the
                                   # current chart year ± (short retention) — a depth floor is
                                   # unverifiable by construction, and Gate 3 would need a
@@ -478,7 +478,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close         # official par curve ~15:30 ET
-  release_schedule: business days; XML ~15:30 ET
+  release_schedule: "business days; XML ~15:30 ET"
   expected_start: "1996-01-02"    # treasury.gov XML history starts ~1996 ±
                                   # (year-loop backfill)
   sanity_min: 0.0                 # same as DGS*
@@ -499,7 +499,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close
-  release_schedule: business days; XML ~15:30 ET
+  release_schedule: "business days; XML ~15:30 ET"
   expected_start: "1996-01-02"    # same as PAR_1_5Y ±
   sanity_min: 0.0
   sanity_max: 17.0                # same as PAR_1_5Y
@@ -518,7 +518,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close
-  release_schedule: business days; XML ~15:30 ET
+  release_schedule: "business days; XML ~15:30 ET"
   expected_start: "1996-01-02"    # same as PAR_1_5Y ±
   sanity_min: 0.0
   sanity_max: 16.0                # same as PAR_1_5Y
@@ -536,7 +536,7 @@
   value_format: pct
   freq: D
   ts_convention: et_close
-  release_schedule: business days; XML ~15:30 ET
+  release_schedule: "business days; XML ~15:30 ET"
   expected_start: "1996-01-02"    # same as PAR_1_5Y ±; the 20Y tenor has a discontinued
                                   # issuance era ± — expect a structural gap
   sanity_min: 0.0
@@ -822,7 +822,7 @@
   value_format: level
   freq: M
   ts_convention: report_month    # ts = reference month; BLS release date → release_ts (anti look-ahead)
-  release_schedule: BLS ±13 business days after the end of the reference month, 08:30 ET
+  release_schedule: "BLS ±13 business days after the end of the reference month, 08:30 ET"
   expected_start: "1947-01-01"   # FRED metadata ± — SA series starts 1947
   sanity_min: 20.0               # 1947 starting value ~21.5
   sanity_max: 600.0              # ~320 in the mid-2020s, ~3%/yr growth → 600 leaves a
@@ -836,6 +836,64 @@
   active: 1
   # Raw SA index — Inflation pillar C: 3m-ann REACCEL overlay + YoY z; all MoM/YoY/Δ3m derivatives computed from it.
 
+- series_id: FRED:CPILFESL
+  name: Core CPI (ex food & energy), SA (index 1982-84=100)
+  block: C
+  tier: 0
+  unit: index_1982_84
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "BLS ±13 business days after month end, 08:30 ET (same release as headline CPI)"
+  expected_start: "1957-01-01"       # FRED live-verified: 835 obs from 1957-01
+  sanity_min: 25.0                    # 1957 start = 28.5
+  sanity_max: 370.0                   # live max 337.8 (2026-08) + ~3%/yr headroom
+  primary_source: FRED:CPILFESL
+  secondary_source: "FMP:coreCPI (carries YoY% — cross-validate the DERIVED YoY, never a raw level diff)"
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17 (anomaly-hunt round 1, Pri-1): the Inflation pillar and
+  # regime score judged inflation on HEADLINE CPIAUCSL only, while the calendar
+  # proves core prints move markets — core is the Fed's reaction-function read.
+
+- series_id: FRED:PPIFIS
+  name: PPI Final Demand, SA (index)
+  block: C
+  tier: 1
+  unit: index_fd
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "BLS ±13 business days after month end, 08:30 ET"
+  expected_start: "2009-11-01"       # FRED live-verified: 202 obs (FD rebased 2009=100)
+  sanity_min: 95.0                    # live min 100.2
+  sanity_max: 175.0                   # live max 157.4 + margin
+  primary_source: FRED:PPIFIS
+  secondary_source: null              # calendar PPI MoM actuals cross-check the DERIVED MoM
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17: wholesale-inflation level — the pipeline read headline
+  # CPI cannot give. FD (SA) chosen over PPIACO (NSA legacy aggregate) so the
+  # MoM derivation is comparable to the calendar's SA MoM prints.
+
+- series_id: FRED:WPSFD49507
+  name: PPI Final Demand ex Food & Energy (core), SA (index)
+  block: C
+  tier: 1
+  unit: index_fd_core
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "BLS ±13 business days after month end, 08:30 ET"
+  expected_start: "2010-04-01"       # FRED live-verified: 197 obs
+  sanity_min: 95.0                    # live min 99.8
+  sanity_max: 170.0                   # live max 152.3 + margin
+  primary_source: FRED:WPSFD49507
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17: core PPI — the sticky-wholesale read (round-1 Pri-1 gap).
+
 - series_id: FRED:PCEPILFE
   name: Core PCE price index (2012=100)
   block: C
@@ -844,7 +902,7 @@
   value_format: level
   freq: M
   ts_convention: report_month
-  release_schedule: BEA end of the following month, 08:30 ET
+  release_schedule: "BEA end of the following month, 08:30 ET"
   expected_start: "1959-01-01"   # FRED metadata ±
   sanity_min: 10.0               # 1959 starting value ~15-16
   sanity_max: 400.0              # ~147 in the mid-2020s; wide bound — wrong-digit guard

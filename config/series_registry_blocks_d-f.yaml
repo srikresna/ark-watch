@@ -256,6 +256,64 @@ series:
   # then fully-empty ingest). Prices Paid = the input-price/inflation-pipeline
   # read the hawkish-narrative watch needs.
 
+- series_id: FRED:UMCSENT
+  name: University of Michigan Consumer Sentiment (index)
+  block: D
+  tier: 1
+  unit: index_sentiment
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "preliminary mid-month (friday) + final end-month, 10:00 ET"
+  expected_start: "1952-11-01"       # FRED live-verified: 675 obs
+  sanity_min: 40.0                    # live min 44.8 (1980)
+  sanity_max: 120.0                   # live max 112.0
+  primary_source: FRED:UMCSENT
+  secondary_source: null              # FMP consumerSentiment carries the same index — future cross-check
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17 (anomaly-hunt round 1, Pri-1): the sentiment headline had
+  # 120 calendar actuals but no series — the 1y-inflation-expectations leg
+  # existed while the sentiment level itself was invisible to series analysis.
+
+- series_id: FRED:DGORDER
+  name: "Manufacturers' New Orders: Durable Goods (millions USD, SA)"
+  block: D
+  tier: 1
+  unit: "millions USD (SA)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "Census advance report ~26th of the following month, 08:30 ET"
+  expected_start: "1958-02-01"       # FRED live-verified: 414 obs
+  sanity_min: 100000                  # live min 114,535
+  sanity_max: 380000                  # live max 347,767 + margin
+  primary_source: FRED:DGORDER
+  secondary_source: null              # calendar durable-goods MoM actuals cross-check the DERIVED MoM
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17: capex-cycle read — durables orders lead investment; the
+  # MoM print moves markets monthly while the level history was missing.
+
+- series_id: FRED:CES0500000003
+  name: Average Hourly Earnings, All Employees Total Private ($/hour, SA)
+  block: D
+  tier: 1
+  unit: "usd_per_hour (SA)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "BLS employment situation ~1st Friday, 08:30 ET"
+  expected_start: "2006-03-01"       # FRED live-verified: 246 obs
+  sanity_min: 19.0                    # live min 20.04
+  sanity_max: 45.0                    # live max 37.75 + ~3.5%/yr headroom
+  primary_source: FRED:CES0500000003
+  secondary_source: null              # calendar AHE MoM/YoY actuals cross-check the DERIVatives
+  tolerance: null
+  active: 1
+  # ADDED 2026-09-17: the wage leg of the Fed reaction function — AHE prints
+  # monthly with NFP but only existed as calendar rows, never as a level series.
+
 - series_id: FRED:GDPNOW
   name: "GDPNow — real GDP QoQ annualized nowcast"
   block: D
@@ -533,7 +591,7 @@ series:
   value_format: fraction
   freq: W
   ts_convention: week_ending_fri
-  release_schedule: weekly (with NFCI, Wednesday ~08:30 ET)
+  release_schedule: "weekly (with NFCI, Wednesday ~08:30 ET)"
   expected_start: "1971-03-05"       # FRED metadata ±
   sanity_min: -2.0                   # landed history −1.34..+5.20 — match the
   sanity_max: 6.0                    # NFCI twin's do-not-narrow convention
