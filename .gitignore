@@ -5,8 +5,8 @@ API.md
 
 references/
 
-# docs/ tracked since 2026-09-18 (round-5: the project's persistent memory
-# lived only on one disk — zero durability). Secrets stay ignored above.
+docs/
+
 __pycache__/
 *.pyc
 *.pyo
