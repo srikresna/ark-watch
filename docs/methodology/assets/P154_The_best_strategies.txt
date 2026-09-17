@@ -1,0 +1,4864 @@
+*All articles are now 
+categorized by topics 
+and subtopics. View at 
+PM-Research.com.
+The Best Strategies for 
+Inflationary Times
+Henry Neville, Teun Draaisma, Ben Funnell, Campbell R. Harvey, 
+and Otto Van Hemert
+KEY FINDINGS
+n	 The authors examine a range of passive and active strategies using a century of data 
+in the United States, the United Kingdom, and Japan and find that passive equity and 
+fixed-income strategies fare poorly during inflation surges.
+n	 Commodities provide historical inflation protection, as do collectibles such as wine and 
+fine art.
+n	 Active strategies such as trend-following fare well during historical inflation surges, and 
+equity factor strategies such as quality provide some protection. 
+ABSTRACT
+Over the past three decades, a sustained surge in inflation has been absent in developed 
+markets. As a result, investors face the challenge of having limited experience and no 
+recent data to guide the repositioning of their portfolios in the face of heightened inflation 
+risk. In this article, the authors provide some insight by analyzing both passive and active 
+strategies across a variety of asset classes for the United States, the United Kingdom, 
+and Japan over the past 95 years. Unexpected inflation is bad news for traditional assets, 
+such as bonds and equities, with local inflation having the greatest effect. Commodities 
+have positive returns during inflation surges, but there is considerable variation within the 
+commodity complex. Among the active strategies, the authors find that trend-following 
+provides the most reliable protection during important inflation shocks. Active equity factor 
+strategies also provide some degree of hedging ability. The authors also provide an analysis 
+of alternative asset classes such as fine art and discuss the economic rationale for including 
+cryptocurrencies as part of a strategy to protect against inflation.
+TOPICS
+Developed markets, financial crises and financial market history, risk management, 
+portfolio management/multi-asset allocation*
+I
+nflation has not been a serious and persistent economic problem in developed 
+markets for decades. Both monetary and fiscal policy have contributed to economic 
+circumstances that are disinflationary, resulting in lower and less volatile inflation 
+(Exhibit 1). Today, those fearful of an inflation resurgence point to at least two factors 
+that suggest the risk has increased. 
+First, there has been an unprecedented increase in money creation. The US money 
+supply (M2) has grown by $4.9 trillion, from $15.5 trillion to $20.4 trillion in the 16 
+Henry Neville
+is an analyst at Man-MSL 
+in London, UK.
+henry.neville@man.com
+Teun Draaisma
+is a portfolio manager at 
+Man-MSL in London, UK. 
+teun.draaisma@man.com
+Ben Funnell
+is a portfolio manager at 
+Man-MSL in London, UK. 
+ben.funnell@man.com
+Campbell R. Harvey
+is a professor of finance 
+at Duke University in 
+Durham, NC, and a research 
+associate at the National 
+Bureau of Economic 
+Research in Cambridge, MA. 
+cam.harvey@duke.edu
+Otto Van Hemert
+is the director of Core 
+Strategies at Man-AHL 
+in London, UK. 
+otto.vanhemert@man.com
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  9
+August 2021
+months between February 2020 and June 2021. Second, there has been extraordi­
+nary fiscal accommodation. The Congressional Budget Office (CBO) estimates a US 
+fiscal deficit of $3.1 trillion in 2020, or 14.9% of gross domestic product (GDP). The 
+CBO forecasts the deficit will be slightly reduced to $3.0 trillion in 2021, or 13.4% 
+of GDP. In the entire modern history of the United States, there have only been two 
+instances of consecutive double-digit deficit years.1
+Rather than predicting when (or if) inflation will increase to disruptive levels, this 
+article seeks to answer a simpler question: What passive and active investments have 
+historically tended to do well (or poorly) in environments of high and rising inflation? 
+The answer to this question may help investors reposition their portfolios so that they 
+are better prepared should current fears prove justified.
+We define inflationary regimes as the times when headline, year-over-year (YoY) 
+inflation is accelerating and when the level moves to 5% or more. We detail the 
+complete formulation of the regime classification later. Based on this definition, we 
+identify the eight US inflationary regimes shaded pink in Exhibit 1. We argue that 
+episodes of high and rising inflation rates are mostly due to unexpected inflation, 
+1 These periods occurred during World War I and World War II. In 1918 and 1919, the deficit was 
+12% and 17%, respectively. In the 1942–1945 period, the annual deficits were 12%, 27%, 21%, and 21%.
+EXHIBIT 1
+US YoY CPI Overlaid with Inflationary Regimes
+NOTES: The percentage increase in the US headline Consumer Price Index (CPI) basket over the trailing 12-month period. The pink 
+shaded areas demarcate our quantitatively defined inflationary regimes, which are described in more detail later. The red rectangles at 
+the bottom of the chart are periods when the US economy was in recession, as defined by the National Bureau of Economic Research 
+(NBER). The data are monthly, from 1926 to April 2021. See Appendix A for more details.
+20%
+Inﬂation Volatility = 4.8%
+(1925–1989 – annual)
+Inﬂation Volatility = 1.3%
+(1990–2021 – annual)
+15%
+10%
+5%
+0%
+–5%
+–10%
+–15%
+1925
+1931
+1937
+1943
+1949
+1955
+1961
+1967
+1973
+1979
+1985
+1991
+1997
+2003
+2009
+2015
+Inﬂation Regime
+NBER Recession
+CPI YOY %
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+10  |  The Best Strategies for Inflationary Times
+August 2021
+and assets may reprice materially during such regimes. To assemble a critical mass 
+of evidence, we use data from 1926, across three continents.
+In Exhibit 2, we summarize our main findings for the United States. We rank the 
+various passive and active strategies by the annualized average real returns during 
+the eight inflationary regimes (the pink shaded zones in Exhibit 1). Weak returns are 
+observed for nominal bonds. This is not surprising because rising inflation is typically 
+associated with rising yields and thus declining bond prices. Perhaps more notable is 
+that equities also perform poorly, compounding the challenge of the 60–40 equity–
+bond investor. The best historical performance is observed for commodities; in fact, 
+EXHIBIT 2
+Summary Performance in US Inflationary Regimes
+NOTES: The real total returns of assets analyzed in the article, through the eight US inflationary regimes shown in Exhibit 1 as well 
+as the annualized return during inflationary, noninflationary, and all periods. In the first column, the strategy is denoted as active or 
+passive by (A) or (P), respectively; returns for energies and gold in gray italics are spot returns for which we do not have futures data. 
+These are not included in the combined regime calculation. The data vary by start date. Further details are provided in the body of this 
+article and in Appendix A.
+Specific Inflation Regimes
+Combined Regimes
+Characteristics
+Start Month
+End Month
+Length (months)
+Total Price Level Change
+Strategy
+Real Return (total)
+Real Return (annualized)
+(P) Commodities—Energies
+(A) Trend—All Assets
+(A) Trend—Commodities
+(P) Commodities—Industrial
+(A) Trend—Bonds
+(P) Commodities—Aggregate
+(P) Commodities—Gold
+(P) Commodities—Precious
+(A) Trend—Equity
+(P) Commodities—Softs
+(A) Equity Factor—C-S Mom.
+(P) Commodities—Agri
+(A) Trend—FX
+(A) Equity Factor—Quality (QMJ)
+(P) Fixed Income—TIPS
+(A) Equity Factor—Investment (CMA)
+(P) Long Equities—Energy Sector
+(A) Equity Factor—Proﬁtability (RMW)
+(A) Equity Factor—Value (HML)
+(P) Real Estate—Residential
+(A) Equity Factor—Low Vol (BAB)
+(P) Fixed Income—2-Yr. Treasury
+(A) Equity Factor—Size (SMB)
+(P) Fixed Income—10-Yr. Treasury
+(P) Fixed Income—High Yield
+(P) Long Equities—Market Composite
+(P) Fixed Income—Investment Grade
+US
+Enters
+WW2
+April
+1941
+May
+1942
+14
+15%
+–3%
+20%
+20%
+–15%
+–14%
+–4%
+–17%
+–24%
+–13%
+–11%
+–11%
+–4%
+–24%
+–7%
+End of 
+WW2
+March
+1946
+March
+1947
+13
+21%
+2%
+23%
+12%
+23%
+–18%
+12%
+–10%
+–17%
+4%
+–6%
+–17%
+–23%
+–17%
+–11%
+–27%
+–12%
+Korean
+War
+August
+1950
+February
+1951
+7
+7%
+–6%
+19%
+1%
+6%
+24%
+7%
+6%
+25%
+3%
+–4%
+–3%
+–6%
+–4%
+––6%
+0%
+24%
+–3%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+48
+19%
+–16%
+135%
+54%
+115%
+79%
+26%
+28%
+77%
+–41%
+35%
+–23%
+14%
+–3%
+–7%
+–19%
+4%
+–8%
+–2%
+28%
+–1%
+45%
+–13%
+–18%
+–7%
+–23%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+30
+24%
+264%
+196%
+173%
+38%
+54%
+85%
+166%
+29%
+23%
+243%
+38%
+197%
+–14%
+–1%
+13%
+31%
+–19%
+–24%
+36%
+–7%
+–13%
+–7%
+–43%
+–12%
+–21%
+–46%
+–20%
+Iranian
+Revolution
+February
+1977
+March
+1980
+38
+37%
+57%
+100%
+33%
+–6%
+149%
+38%
+154%
+185%
+–13%
+15%
+44%
+–21%
+16%
+–12%
+–2%
+–9%
+31%
+–8%
+–11%
+11%
+9%
+–17%
+32%
+–31%
+–38%
+–14%
+–43%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+46
+20%
+201%
+65%
+132%
+306%
+6%
+84%
+–18%
+–27%
+13%
+11%
+41%
+6%
+42%
+40%
+11%
+24%
+31%
+18%
+–3%
+0%
+–7%
+11%
+–26%
+8%
+–10%
+12%
+–5%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+11
+6%
+68%
+17%
+25%
+3%
+6%
+21%
+27%
+33%
+–3%
+15%
+26%
+33%
+6%
+7%
+6%
+–10%
+2%
+6%
+–7%
+–13%
+–22%
+0%
+–4%
+5%
+–8%
+–17%
+1%
+Inflation
+(19%)
+41%
+25%
+20%
+19%
+15%
+14%
+13%
+11%
+8%
+8%
+8%
+7%
+4%
+3%
+2%
+2%
+1%
+–1%
+–1%
+–2%
+–3%
+–3%
+–4%
+–5%
+–7%
+–7%
+–7%
+Other
+(81%)
+–1%
+15%
+8%
+4%
+9%
+1%
+–1%
+–2%
+11%
+–3%
+4%
+–3%
+4%
+3%
+3%
+2%
+8%
+2%
+2%
+2%
+8%
+2%
+1%
+4%
+6%
+10%
+6%
+All 
+(100%)
+3%
+16%
+10%
+7%
+10%
+4%
+1%
+1%
+10%
+–1%
+5%
+0%
+4%
+3%
+3%
+2%
+6%
+2%
+2%
+1%
+6%
+1%
+0%
+2%
+4%
+7%
+3%
+(P) Fixed Income—30-Yr. Treasury
+–17%
+(P) Long Equities—Consumer
+   Durables
+–16%
+–17%
+–32%
+–6%
+24%
+–20%
+–30%
+–28%
+–62%
+–41%
+–27%
+13%
+–28%
+2%
+–36%
+–8%
+–15%
+5%
+13%
+3%
+7%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  11
+August 2021
+commodities show much higher real returns during rising inflation environments than 
+at other times.
+We start our empirical examination by detailing the economic mechanisms that 
+link unexpected inflation to asset returns. Next, we set out to define what we mean 
+by inflationary periods, identifying 34 episodes from 1926 across the United States, 
+the United Kingdom, and Japan.
+We show that neither equities nor bonds perform well in real terms during 
+inflationary regimes. Equities may be expected to deliver some inflation protection, 
+as a firm’s debt obligations are inflated away, and product prices may be adjusted 
+to inflation. In reality, equities suffer from the less stable economic climate, and 
+costs tend to rise with inflation more than output prices. Moreover, we find that no 
+individual equity sector offers significant protection against high and rising inflation; 
+even the energy sector is only slightly better than flat in real terms. Nominal bonds 
+do not deliver inflation protection, as expected, and performance deteriorates as 
+duration lengthens. Real returns to credit are also negative. Treasury inflation-pro­
+tected securities (TIPS) are robust when inflation rises, giving them the benefit of 
+generating similar real returns in inflationary and noninflationary regimes, both of 
+which are positive.
+We find that traded commodities have historically performed best during high and 
+rising inflation. In aggregate, they have a perfect track record of generating positive 
+real returns during our eight US regimes, averaging an annualized +14% real return. 
+This contrasts with normal periods, when the commodity aggregate returns are in 
+the low single digits. We also evaluate residential real estate and find that although 
+on average it holds its value during inflationary times (real returns are negative but 
+not of significant magnitude), it lags commodities significantly. Collectibles such as 
+art, wine, and stamps are also examined. We find strong real returns during infla­
+tionary periods (although still weaker than commodities), but clearly the extent to 
+which these can form a sizeable part of institutional mandates is very limited given 
+liquidity constraints. We also discuss the case for investing in cryptocurrencies such 
+as bitcoin as an inflation hedge. 
+We also analyze a number of active strategies. We find that cross-sectional stock 
+momentum is the best equity factor during our inflationary regimes, realizing an 8% 
+annual real return versus 4% in normal times. However, as we will argue later, the 
+difference is not statistically significant for this volatile, high-turnover strategy. That 
+said, active equity factors generally hold their own during inflation surges, with quality 
+having a small positive real return and value having a small negative return. We also 
+follow the method of Hamill, Rattray, and Van Hemert (2016) and Harvey, Rattray, and 
+Van Hemert (2021) and construct a time-series momentum (trend) strategy applied 
+to liquid futures and forwards across assets. This trend strategy performs well during 
+inflationary regimes, with the bond and commodity trend doing particularly well. This 
+lines up with our intuition that inflation shocks do not tend to be overnight affairs, 
+but rather prolonged episodes that play to the strength of trend strategies. 
+Although trend strategies tend to outperform equity factor strategies in high 
+and rising inflationary regimes, we are cognizant that the former have more limited 
+capacity than the latter, a key consideration for many institutional investors. In this 
+context, the modest protection provided by, for example, quality, which averages 
+3% in inflationary times, may still be useful, especially in comparison with the sharp 
+losses experienced in long-only financial assets.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+12  |  The Best Strategies for Inflationary Times
+August 2021
+WHY DOES INFLATION MATTER FOR ASSET PRICES?
+Economic Mechanism
+There is a deep academic literature that focuses on the economic mechanisms 
+that link unexpected inflation to asset prices.2 It is essential to distinguish between 
+temporary and permanent (or longer-lasting) inflation shocks. Asset prices such as 
+equities and bonds are long-lived and are most sensitive to changes in perceptions 
+about longer-term inflation. For example, a month-long disruption of a gas pipeline 
+might cause gasoline prices (and inflation) to temporarily surge, whereas the impact 
+on asset prices would be minimal because market participants would expect prices 
+to return to normal in the next month. This example highlights two key challenges in 
+conducting research linking inflation shocks to asset prices: separating permanent 
+and temporary shocks and identifying the most relevant inflation horizon. 
+Treasury bond prices are obviously affected by unexpected inflation. Their current 
+prices reflect an expected real interest rate, an expected rate of inflation, and a risk 
+premium. If there is an unexpected surge in inflation, the expected inflation embedded 
+in the yield increases and the bond price usually falls. If the new level of expected 
+inflation is permanent, bonds with higher durations will be more sensitive than those 
+with shorter durations. Indeed, with bonds we know the exact inflation horizon that is 
+relevant, given the fixed bond maturity. A change in uncertainty about inflation rates 
+may also affect the risk premium. 
+Equities are more complicated, and there are a number of ways in which increased 
+inflation can affect equity prices. First, higher and more volatile inflation creates more 
+economic uncertainty, thus harming the ability of companies to plan, invest, grow, 
+and engage in longer-term contracts. Moreover, although firms with market power can 
+increase their output prices to mitigate the impact of an inflation surprise, many com­
+panies can only partially pass on the increased cost of raw materials. Margins there­
+fore shrink. Second, unexpected inflation may be associated with future economic 
+weakness. Although an overheating may cause companies’ revenues to increase in 
+the short term, if the inflation is followed by economic weakness,3 this will decrease 
+expected future cash flows. Third, there is a tax implication for companies with high 
+capital expenditures. Given that depreciation is calculated based on the asset’s his­
+torical cost (unadjusted for change in the Consumer Price Index [CPI]), the recognized 
+expense will be artificially low in an environment of high and rising inflation, effectively 
+creating an inflation tax. Of course, many companies today rely heavily on intangible 
+capital and are relatively immune to this effect. Fourth, unexpected inflation could 
+serve to increase risk premiums (increase discount rates), thus reducing equity prices. 
+Finally, similar to bond markets, high-duration stocks (particularly growth stocks that 
+promise dividends far in the future) are especially sensitive to increased discount 
+rates that result from changing perceptions of long-term inflation.
+The inflation mechanism for commodities, like bonds, is relatively straightforward. 
+Indeed, commodities are often the source of inflation. However, commodities are also 
+a diverse asset class, and although some move closely with inflation, others do not. 
+2 For example, early attempts to study the impact of unexpected inflation on asset returns include 
+work by Fama and Schwert (1977), Kaul (1987), Fama (1981), Gultekin (1983), Beckers (1991), Lee 
+(1992), Boudoukh and Richardson (1993), Ferson and Harvey (1993, 1994), Sharpe (1999), and Ang 
+(2014).
+3 In Exhibit 1, a negative inflection in real economic growth immediately follows five of eight US 
+inflation regimes.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  13
+August 2021
+Expected and Unexpected Inflation
+Investors seek to hedge unexpected inflation. Indeed, expected inflation is easy to 
+hedge because bond prices already reflect it. Previous research has focused on two 
+types of inflation risk measures. The first is a measure of unexpected inflation (i.e., 
+the realized level of inflation minus the expected inflation, or the actual level at time t 
+minus the forecast for time t made at time t - 1). The expected inflation rate may be 
+derived from professional forecasts or a statistical model. Typically, the change in the 
+rate of inflation is used as a proxy for unexpected inflation. This formulation assumes 
+that the best forecast of the next period’s inflation rate is the current period’s rate. 
+Research has suggested that this simple model is a good approximation compared 
+to other measures of inflation forecasts, such as survey measures (Ang 2014). 
+However, there are still numerous issues in measuring unexpected inflation. For 
+example, although the measure is straightforward when implemented for one month, 
+one quarter, or even one year, it is not obvious how we should treat longer-horizon 
+inflation. It is unlikely that the term structure of expected inflation is flat. Indeed, 
+per our earlier example, a large monthly inflation shock could be irrelevant for asset 
+prices if market participants believe it will be reversed in the near future. As a result, 
+another approach measures the change in expected inflation. For example, this could 
+be measured as the change in the breakeven inflation (BEI) rate reflected in TIPS and 
+nominal Treasuries. The BEI is the weighted average of inflation expectations over 
+the life of the bond. Changes in the BEI have the advantage of reflecting changes in 
+long-term or permanent inflation expectations. Unfortunately, BEI data are only avail­
+able from 1997, limiting their usefulness in the analysis of historical inflation surges. 
+In our research, we will measure how asset returns vary in response to unex­
+pected inflation. This is akin to an inflation beta. We expect bonds and equities to 
+have negative inflation betas, whereas certain commodities will likely have positive 
+betas. However, relatively little is known about the sensitivity of active strategies 
+to unexpected inflation. One of our contributions is to detail the inflation-hedging 
+properties of various equity factor strategies as well as active trend strategies. Of 
+course, inflation betas are measured with noise because our measure of unexpected 
+inflation (change in inflation rate) focuses exclusively on the short term and is unable 
+to separate the temporary and permanent components. 
+Much of our focus centers on specific episodes in which inflation surges to high 
+levels. These inflationary regimes are likely a mixture of expected and unexpected 
+inflation. For example, suppose inflation begins to rise. This provides a positive infla­
+tion surprise, and expectations increase. At some point, the inflation rate starts to 
+fall; even though the level of inflation is still high, the rate is falling, leading to negative 
+surprises (investors thought the rate would be higher than the realization). Thus, a 
+high inflationary regime experiences both positive (acceleration at the beginning) and 
+negative (deceleration at the end) inflation surprises. Our research focuses on the 
+part of the regime in which there are positive inflation surprises. 
+DEFINING INFLATIONARY REGIMES
+Before detailing an ex ante inflationary regime rule, we must acknowledge that 
+inflation is very hard to define. Of course, there are various different published ver­
+sions of inflation—CPI headline, CPI core, Personal Consumption Expenditure Deflator, 
+and GDP deflator. The results we will present are largely robust under these different 
+definitions. 
+However, there are two deeper issues that complicate the construction of an 
+inflation index. First is the adjustment for quality. In 1990, the cost of a gigabyte of 
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+14  |  The Best Strategies for Inflationary Times
+August 2021
+data was $10,000 (in today’s dollars), and today it is less than one cent. Upon its 
+release in 1985, a Cray 2 supercomputer would cost $32 million in current dollars, 
+and today you carry the computing power of hundreds of Crays in your pocket for about 
+$1,000. Technology is a deflationary force, and the hedonic quality adjustments that 
+are made in official CPI calculations are subjective to some degree.
+Second, there is no single measure of inflation. The CPI, for instance, is based 
+on a fixed-weight basket of goods. This basket may be appropriate for one portion of 
+the population but not for another portion. Indeed, everyone faces their own inflation 
+rate. Yet, we use a single index, which may or may not reflect the experience of those 
+investing in assets and the strategies designed to provide inflation protection.
+Although inflation is complicated to define, what matters for asset prices is what 
+market participants believe is the most appropriate measure, and we settle on the CPI 
+headline inflation. It has the added advantage of a long history. Although we mostly 
+focus on the United States, we also present similar analysis for the United Kingdom 
+and Japan in Appendix B. We provide a cross-country analysis later in the article. To 
+reiterate, we are using the change in realized inflation as our measure of inflation 
+surprise. Using survey-based inflation expectations would drastically shorten our 
+sample period. Another alternative is to use the market-implied BEI, the gap between 
+the nominal and inflation-protected bond yield. However, these measures suffer the 
+same problem as the survey-based measures: a very limited history.4
+We define inflationary regimes as time periods in which the YoY realized inflation 
+rate rises materially beyond 2%. Today, this level is often targeted by central banks 
+across the world and, even when not explicit, is considered a psychologically important 
+threshold.5 We define “materially beyond 2%” as reaching 5% or more.6 We define 
+the regime end as the point at which CPI YoY reaches its peak without having fallen 
+below 50% of its maximum annual rate in rolling 24-month observation windows. Using 
+this observation window allows the inflation rate to be volatile at a high level but to 
+reach successive higher highs without ending an inflationary episode. Alternatively, 
+a new episode is determined to have started when inflation is already above 2% but 
+has fallen to less than 50% of its trailing 24-month peak rate and then starts to 
+reaccelerate, as long as it reaches an inflation rate faster than 5%. Lastly, episodes 
+shorter than six months are excluded for being too short to constitute a regime change 
+(i.e., asset prices are most sensitive to longer-term rather than short-term inflation 
+changes). In Exhibit 1, we highlight in pink the eight US inflationary periods since 
+1926 based on this method. In Exhibit 2, we give each regime a name based on 
+the historical context, and we use these as labels throughout the rest of the article.
+One concern when comparing inflationary episodes is whether each regime is driven 
+by a different component of the basket and is therefore unique. Inflation-components 
+data produced by the Bureau of Labor Statistics (BLS) suggest this is not the case. 
+Exhibit 3 uses the US inflation periods defined in Exhibit 1 and tracks how various 
+components of the CPI basket move. The available data give 125 regime-component 
+pairs. Of these, 79 (63%) experience annualized inflation of 5% or more, our threshold 
+for defining an inflationary regime. Looking at the averages, in 100% of instances, the 
+basket component experiences higher rates of price rises during inflationary regimes 
+than outside of them, and the rate is at least twice as high in 59% of instances.
+4 The United Kingdom introduced index-linked government bonds in 1981.
+5 Indeed, it can be argued that 2% has been associated with price stability since the Reserve Bank 
+of New Zealand pioneered central bank inflation targeting in the late 1980s.
+6 The fourth decile of the distribution of US YoY inflation since 1926 is 2%. The eighth decile is 5%.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  15
+August 2021
+FINANCIAL ASSETS
+We now turn our attention to the performance of financial assets during the eight 
+US inflationary regimes. In Exhibit 4, we tabulate the performance of a broad US 
+equity index, the 10-year Treasury bond, and a 60–40 equity–bond portfolio. In the 
+first columns, we show the total returns during the eight inflationary regimes, both 
+in nominal terms (top panel) and real terms (bottom panel). At the top of the exhibit, 
+we report some additional statistics that characterize the different periods. The next 
+three columns show the annualized return over inflationary, noninflationary, and all 
+periods. The final columns show the hit rate, defined as the proportion of regimes for 
+which a given asset has yielded a positive return, and the t-statistic, which provides 
+a heteroskedasticity-consistent test of whether returns are significantly different in 
+inflationary and noninflationary times.
+Starting with equities, we note that the nominal returns during inflationary peri­
+ods are zero on average, with negative returns in 50% of the inflationary regimes. 
+The real return averages -7% during inflationary times, with negative returns in 75% 
+EXHIBIT 3
+Components of CPI Basket during US Inflationary Regimes
+NOTES: The annualized rate of inflation for different basket components during the eight identified US inflationary regimes, as well as 
+the average rise for inflationary and noninflationary regimes, which is an arithmetic average of the annual inflation rate during these 
+two types of regimes. The data vary by start point, with the earliest series beginning in 1926, at a monthly periodicity. More detail on 
+sources can be found in Appendix A.
+Specific Inflation Regimes
+Combined Regimes
+Start Month
+End Month
+Total Price Level Change
+Total Price Level Change (ann’d)
+Inflation Component
+Average Price Rise in Regime (ann.)
+Average
+Price Rise (ann.)
+Cereals and Bakery Products
+Meat, Poultry, Fish, and Eggs
+Dairy
+Fruit and Veg
+Soft Drinks
+Other Food
+Food Outside Home
+Alcohol
+Household Goods and Services
+Apparel
+New Vehicles
+Medical Goods
+Recreation Goods and Services
+Education Goods and Services
+Energy Products
+Energy Services
+Tobacco Products
+Shelter
+Water and Sewerage
+Medical Services
+Transport Services
+Personal Goods and Services
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+13%
+9%
+15%
+28%
+20%
+–1%
+1%
+5%
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+19%
+32%
+34%
+10%
+20%
+–1%
+11%
+4%
+Korean
+War
+August
+1950
+February
+1951
+7%
+12%
+16%
+23%
+11%
+24%
+17%
+4%
+1%
+6%
+5%
+11%
+19%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+4%
+3%
+5%
+4%
+2%
+6%
+3%
+5%
+2%
+0%
+3%
+1%
+6%
+6%
+4%
+8%
+6%
+4%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+9%
+20%
+12%
+12%
+10%
+16%
+22%
+10%
+6%
+9%
+6%
+5%
+3%
+20%
+11%
+5%
+8%
+6%
+8%
+3%
+8%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+10%
+9%
+10%
+8%
+9%
+14%
+11%
+10%
+6%
+7%
+5%
+7%
+8%
+25%
+11%
+6%
+13%
+8%
+10%
+8%
+7%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+5%
+6%
+5%
+5%
+7%
+1%
+3%
+4%
+4%
+2%
+5%
+2%
+8%
+13%
+2%
+10%
+5%
+6%
+8%
+6%
+4%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+6%
+13%
+4%
+7%
+12%
+3%
+7%
+5%
+3%
+1%
+0%
+–1%
+1%
+2%
+3%
+53%
+18%
+8%
+3%
+5%
+4%
+6%
+3%
+Inflation
+(19%)
+13%
+8%
+14%
+11%
+10%
+11%
+7%
+5%
+5%
+10%
+3%
+4%
+2%
+3%
+23%
+5%
+7%
+7%
+6%
+7%
+6%
+8%
+Other
+(82%)
+2%
+2%
+2%
+3%
+3%
+2%
+3%
+2%
+1%
+1%
+2%
+3%
+1%
+2%
+1%
+2%
+6%
+3%
+5%
+4%
+3%
+2%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+16  |  The Best Strategies for Inflationary Times
+August 2021
+of regimes. The real return is more relevant for most investors. These results are in 
+line with the economic mechanisms presented earlier.
+For the 10-year Treasury bond, the performance during high and rising infla­
+tion periods is also poor, which is not surprising for reasons already described. 
+Although in nominal terms the average annualized return during inflationary regimes 
+is +3%, it is -5% in real terms. Consequently, the 60–40 equity–bond portfolio per­
+forms poorly during inflationary regimes, with a -6% real annualized return.
+In Exhibit 5, we take a different approach, which serves as a robustness check 
+to our regime analysis and allows us to explore how the equity response depends on 
+the starting level of inflation. 
+In the left panel, we show a scatter plot of the 12-month real return for equities 
+versus the contemporaneous 12-month change in the YoY inflation rate. We choose 
+the 12-month change because it is more likely reflective of long-term inflation shocks. 
+We separate instances in which the starting inflation rate is below (yellow) and above 
+(blue) the median level since 1926 (2.6%). The trend lines suggest that equities actually 
+benefit from rising inflation if the starting level is below the median (risk of deflation) 
+but are hurt by rising inflation if the starting level is above the median (increased 
+risk of inflation escalating). It is the latter effect that our regime analysis captures. A 
+similar result can be gleaned from the right panel, in which we report the correlation 
+between the 12-month real equity return and the contemporaneous 12-month change 
+in the inflation rate for quintiles formed by the starting inflation rate. Only in the lowest 
+quintile (starting inflation rate less than 1.0%) is the correlation positive at 0.4. In all 
+other cases, there is a negative relationship between the real equity return and inflation 
+changes, (monotonically) more so for higher starting levels of inflation.
+In Exhibit 6, we repeat this exercise for real 10-year Treasury returns. The negative 
+relation between bond returns and inflation changes does not depend much on the 
+starting level of inflation.
+EXHIBIT 4
+US Equity and Treasury Bond Performance across Inflationary Regimes
+NOTES: Total returns to US equities, government bonds (10-year maturity), and a 60–40 equity–bond portfolio during the eight US infla­
+tionary regimes defined in the previous section, as well as the annualized return during inflationary, noninflationary, and all periods. 
+In the final columns, we present the hit rate (proportion of inflationary periods with positive returns) and the t-statistic, which tests 
+whether the returns in inflationary and noninflationary times are different. The data are from 1926 to 2020. See Appendix A for details 
+on sources and methodology.
+ 
+ 
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Nominal Return (total)
+Nominal Return (ann.)
+Strategy
+Real Return (total)
+Real Return (ann.)
+Start Month
+End Month
+Total Price Level Change
+Length (months)
+Equities
+Government Bonds
+60–40
+Equities
+Government Bonds
+60–40
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+14
+–13%
+3%
+–7%
+–24%
+–11%
+–19%
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+13
+–12%
+0%
+–7%
+–27%
+–17%
+–23%
+Korean
+War
+August
+1950
+February
+1951
+7%
+7
+32%
+0%
+18%
+24%
+–6%
+11%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+48
+10%
+4%
+8%
+–7%
+–13%
+–9%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+30
+–32%
+9%
+–17%
+–46%
+–12%
+–34%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+38
+18%
+–5%
+9%
+–14%
+–31%
+–20%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+46
+35%
+30%
+35%
+12%
+8%
+12%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+11
+–12%
+11%
+–3%
+–17%
+5%
+–8%
+Inflation
+(19%)
+0%
+3%
+2%
+–7%
+–5%
+–6%
+Other
+(81%)
+12%
+6%
+10%
+10%
+4%
+8%
+All 
+(100%)
+10%
+5%
+9%
+7%
+2%
+6%
+Hit Rate
+50%
+88%
+50%
+25%
+25%
+25%
+t-Stat
+–3.2
+–1.8
+–3.6
+–4.8
+–5.1
+–6.0
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  17
+August 2021
+In Exhibit 7, we present the performance of different equity sectors. To conserve 
+space, from now on, we will only report real returns. Only the energy sector has pos­
+itive annualized real returns during inflationary regimes. However, at +1%, it signifi­
+cantly lags the commodity it produces (see next section). Possible reasons for this 
+include operational issues (e.g., the impact of wage inflation or the fact that assets 
+are often located in geopolitically turbulent regions) and the hedging strategies of the 
+companies themselves, which may confound the transmission mechanism between 
+commodity inflation and higher profits for the producer.
+Weak sectors include those with a high exposure to the individual consumer, such 
+as durables (-15%) and retail (-9%). Technology (“business equipment” in the Fama 
+and French 1997 categorization) is also -9%. Financials are weak because default 
+risk dominates the benefits of possible rising rates and because there can be a lag 
+between an inflationary regime and central bank tightening. In Appendix C, we show 
+a more granular split of US equity sectors.
+Exhibit 8 goes into more detail on fixed income. In terms of Treasury bonds, the 
+higher the maturity, the greater the sensitivity to rising inflation (which is typically 
+paired with rising nominal yields). This is intuitive because higher maturity bonds have 
+a higher duration. The annualized real return during inflationary regimes is -3% for 
+the 2-year, -5% for the 10-year, and -8% for the 30-year bond.
+EXHIBIT 5
+Real US Equity Return versus Contemporaneous 12-Month Inflation Rate Change
+NOTES: The relation between the 12-month real US equity return and the contemporaneous 12-month change in the YoY inflation rate. 
+Panel A plots the data, splitting the data points into the above- and below-median inflation rate at the start of the 12-month evaluating 
+window, and we add a trend line for both cases. Panel B shows the correlation, splitting the data points into five quintiles based on 
+the inflation rate at the start of the 12-month evaluation window. We use all overlapping 12 months in the 1926–2020 sample period.
+200%
+150%
+100%
+–100%
+50%
+0%
+0%
+12-Month Real Return
+12-Month Change in Year-on-Year
+Inflation Rate
+5%
+10%
+15%
+20%
+–5%
+–10%
+–15%
+–50%
+Above-Median Starting Inﬂation
+Below-Median Starting Inﬂation
+Panel A: 12-Month Real Equity Return vs. Inflation
+Rate Change
+0.0
+0.1
+–0.1
+0.2
+–0.2
+0.3
+–0.3
+0.4
+0.5
+Q1 
+(low starting
+inﬂation)
+Q5 
+(high starting
+inﬂation)
+Q4
+Q3
+Q2
+Panel B: Correlation of 12-Month Real Equity
+Returns and Inflation Rate Change
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+18  |  The Best Strategies for Inflationary Times
+August 2021
+Neither investment-grade (IG) nor high-yield (HY) corporate bonds come close to 
+protecting purchasing power, with both having a -7% real annualized return during 
+inflationary regimes. Both underperform government issuance at comparable tenor 
+in the inflationary regimes. The duration of the IG index ranges between six and 
+eight years, whereas HY is between four and six years. This is less than the 10-year 
+Treasury, which has tended to be between seven and nine. The shorter duration is 
+not consistent with the weaker performance, and it is likely that recessionary fears 
+(and subsequent default risk) intensify through an inflationary regime. The compari­
+son makes clear that hedging IG and HY long positions with short government bond 
+positions of similar duration did not provide inflation protection in the past.
+Finally, Exhibit 8 shows the performance of TIPS, which have coupon and prin­
+cipal payments that are indexed to the price level. The US Treasury only started 
+to issue TIPS in 1997. However, data from a synthetic TIPS are available back to 
+1959 (Marshall 2020). The TIPS performance during the most recent five inflation­
+ary regimes is robust, with a 2% annualized real return, but not better than the real 
+return in noninflationary times. It is noteworthy, however, that the starting TIPS yield 
+in our inflationary regimes was +2.4%, whereas it is currently -0.9%. The low yield 
+means that TIPS will be a very expensive inflation hedge going forward (investors bear 
+negative returns in noninflationary times). 
+EXHIBIT 6
+Real US Bond Return vs. Contemporaneous 12-Month Inflation Rate Change
+NOTES: The relationship between the 12-month real US 10-year Treasury return and the contemporaneous 12-month change in the 
+YoY inflation rate. Panel A plots the data, splitting the data points into the above- and below-median inflation rate at the start of the 
+12-month evaluation window, and we add a trend line for both cases. Panel B shows the correlation, splitting the data points into five 
+quintiles based on the inflation rate at the start of the 12-month evaluation window. We use all overlapping 12 months in the 
+1926–2020 sample period.
+50%
+40%
+30%
+20%
+–30%
+–20%
+10%
+–10%
+0%
+0%
+12-Month Real Return
+12-Month Change in Year-on-Year
+Inflation Rate
+5%
+10%
+15%
+20%
+–5%
+–10%
+–15%
+Above-Median Starting Inﬂation
+Below-Median Starting Inﬂation
+Panel A: 12-Month Real Bond Return vs. Inflation 
+Rate Change
+0.00
+–0.05
+–0.10
+–0.15
+–0.20
+–0.25
+–0.30
+–0.35
+–0.40
+–0.45
+–0.50
+Q1 
+(low starting
+inﬂation)
+Q5 
+(high starting
+inﬂation)
+Q4
+Q3
+Q2
+Panel B: Correlation of 12-Month Real Bond
+Returns and Inflation Rate Change
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  19
+August 2021
+EXHIBIT 7
+US Sector Performance in Inflationary Regimes
+NOTES: Total returns to 12 long-only sector portfolios, as collected on Kenneth R. French’s website, during the eight US inflationary 
+regimes defined in the previous section, as well as the annualized return during inflationary, noninflationary, and all periods. In the 
+final columns, we present the hit rate (proportion of inflationary periods with positive returns) and the heteroskedasticity-consistent 
+t-statistic, which tests whether the returns in inflationary and noninflationary times are different. The data are from 1926 to 2020. 
+See Appendix A for details on sources and methodology.
+EXHIBIT 8
+Fixed Income in Inflationary Regimes
+NOTES: Total returns to 30-year, 10-year, and 2-year US Treasuries, investment-grade and high-yield credit, and 10-year TIPS during the 
+eight US inflationary regimes defined in the previous section (see Exhibit 1), as well as the annualized return during inflationary, nonin­
+flationary, and all periods. In the final columns, we present the hit rate (proportion of inflationary periods with positive returns) and 
+the heteroskedasticity-consistent t-statistic, which tests whether the returns in inflationary and noninflationary times are different. 
+The data are from 1926 to 2020 for all assets other than TIPS, which are from 1959. See Appendix A for details on sources and 
+methodology.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Real Return (ann.)
+Start Month
+End Month
+Total Price Level Change
+Consumer Nondurables
+Consumer Durables
+Manufacturing
+Energy
+Chemicals
+Bus. Equip. (tech)
+Telecoms
+Utilities
+Retail
+Health
+Financials
+Other
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+–24%
+–16%
+–23%
+–14%
+–25%
+–26%
+–32%
+–43%
+–25%
+–18%
+–20%
+–20%
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+–24%
+–32%
+–23%
+–10%
+–17%
+–34%
+–25%
+–20%
+–24%
+–8%
+–29%
+–36%
+Korean
+War
+August
+1950
+February
+1951
+7%
+11%
+24%
+27%
+25%
+27%
+19%
+3%
+12%
+19%
+18%
+18%
+25%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+5%
+–30%
+–9%
+–19%
+–23%
+37%
+–19%
+–24%
+14%
+25%
+23%
+–12%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+–56%
+–62%
+–52%
+–19%
+–37%
+–58%
+–15%
+–38%
+–64%
+–42%
+–53%
+–62%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+–15%
+–27%
+–12%
+31%
+–24%
+–11%
+–24%
+–22%
+–27%
+–2%
+–5%
+7%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+42%
+–28%
+–2%
+31%
+9%
+–29%
+41%
+8%
+6%
+43%
+–24%
+–4%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+–7%
+–36%
+–15%
+2%
+2%
+–15%
+–27%
+–3%
+–15%
+–6%
+–35%
+–21%
+Inflation
+(19%)
+–6%
+–15%
+–8%
+1%
+–6%
+–9%
+–7%
+–9%
+–9%
+–1%
+–9%
+–10%
+Other
+(81%)
+11%
+13%
+11%
+8%
+11%
+12%
+9%
+10%
+12%
+11%
+11%
+8%
+All 
+(100%)
+8%
+7%
+7%
+6%
+8%
+8%
+6%
+6%
+8%
+9%
+7%
+5%
+Hit Rate
+38%
+13%
+13%
+50%
+38%
+25%
+25%
+25%
+38%
+38%
+25%
+25%
+t-Stat
+–3.7
+–5.0
+–3.7
+–1.4
+–3.5
+–3.9
+–4.1
+–4.5
+–3.9
+–2.2
+–3.7
+–3.1
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Real Return (ann.)
+Start Month
+End Month
+Total Price Level Change
+US Treasury 30 Yr.
+US Treasury 10 Yr.
+US Treasury 2 Yr.
+USD Invest-Grd. Credit
+USD High-Yield Credit
+TIPS
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+–17%
+–11%
+–13%
+–7%
+–4%
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+–17%
+–17%
+–17%
+–12%
+–11%
+Korean
+War
+August
+1950
+February
+1951
+7%
+–6%
+–6%
+–6%
+–3%
+0%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+–20%
+–13%
+–1%
+–23%
+–18%
+–3%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+–28%
+–12%
+–7%
+–20%
+–21%
+13%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+–41%
+–31%
+–17%
+–43%
+–38%
+–2%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+13%
+8%
+11%
+–5%
+–10%
+11%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+2%
+5%
+0%
+1%
+–8%
+6%
+Inflation
+(19%)
+–8%
+–5%
+–3%
+–7%
+–7%
+2%
+Other
+(81%)
+5%
+4%
+2%
+6%
+6%
+3%
+All 
+(100%)
+3%
+2%
+1%
+3%
+4%
+3%
+Hit Rate
+25%
+25%
+13%
+13%
+13%
+60%
+t-Stat
+–5.0
+–5.1
+–5.8
+–8.1
+–7.8
+–0.6
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+20  |  The Best Strategies for Inflationary Times
+August 2021
+HARD ASSETS
+In this section, we consider hard assets: commodities, residential real estate, 
+and collectibles. Such tangible assets may naturally adjust to changes in the overall 
+price level and, in some cases, may explicitly be included in the basket of goods used 
+to determine the inflation rate (e.g., oil).
+In Exhibit 9, we conduct the same exercise as in the previous exhibits with six 
+commodity groupings, as well as gold and silver individually, and an aggregate com­
+modity portfolio. Returns assume investment in commodity futures (plus a cash return 
+to create a funded investment). All commodities have positive annualized real returns 
+during inflationary regimes. In fact, it is during noninflationary times that commodities 
+tend to have a poorer performance of around +1% real. Thus, historically, commodities 
+have not only been robust to rising inflation but have also benefitted from such an 
+environment relative to normal times.
+How does performance differ among commodity groups? Foodstuffs do least 
+well, but still generate strongly positive real annual returns between 7% and 8%. The 
+ending of the Bretton Woods episode is particularly weak for agris and softs (e.g., 
+sugar, coffee, and cocoa). In a sense, this is idiosyncratic because it coincides with 
+legislation across the 1960s designed to bring food prices down (e.g., the 1962–1963 
+repeal of the mandatory price support programs initiated in World War II). Precious and 
+industrial metals do better, with returns of +11% and +19%, respectively. The stron­
+ger performance of the latter perhaps reflects that, during inflation, the substitute 
+EXHIBIT 9
+Commodities in Inflationary Regimes
+NOTES: Total returns to six baskets of commodity futures, as well as gold and silver individually, and an equal-weighted, monthly 
+rebalanced basket of all commodities during the eight US inflation regimes already defined, as well as the annualized return during 
+inflationary, noninflationary, and all periods. Returns in gray italics are spot returns prior to the existence of a liquid futures con­
+tract. These are not included in the aggregate calculations. All other returns are funded. In the final columns, we present the hit rate 
+(proportion of inflationary periods with positive returns) and the heteroskedasticity-consistent t-statistic, which tests whether the 
+returns in inflationary and noninflationary times are different. The starting point for the data varies from 1946 (agris) to 1979 
+(energies) and runs through to 2020 at a monthly periodicity. See Appendix A for details on sources and methodology.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Real Return (ann.)
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+–3%
+Start Month
+End Month
+Total Price Level Change
+Industrials
+Precious
+Agris
+Softs
+Livestock
+Energies
+Gold
+Silver
+Commods. Aggregate
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+–12%
+2%
+12%
+Korean
+War
+August
+1950
+February
+1951
+7%
+6%
+–6%
+6%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+115%
+28%
+–23%
+–41%
+69%
+–16%
+9%
+26%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+38%
+29%
+197%
+243%
+–21%
+264%
+166%
+99%
+85%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+–6%
+185%
+–21%
+15%
+35%
+57%
+154%
+210%
+38%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+306%
+–27%
+6%
+11%
+97%
+201%
+–18%
+–41%
+84%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+3%
+33%
+33%
+15%
+–23%
+68%
+27%
+36%
+21%
+Inflation
+(19%)
+19%
+11%
+7%
+8%
+7%
+41%
+13%
+12%
+14%
+Other
+(81%)
+4%
+–2%
+–3%
+–3%
+1%
+–1%
+–1%
+–5%
+1%
+All 
+(100%)
+7%
+1%
+0%
+–1%
+2%
+3%
+1%
+0%
+4%
+Hit Rate
+80%
+80%
+71%
+80%
+60%
+100%
+67%
+80%
+100%
+t-Stat
+1.7
+1.7
+1.8
+1.6
+1.6
+1.8
+3.1
+1.1
+1.7
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  21
+August 2021
+physical asset tendency is stronger than the substitute physical currency tendency. 
+Energies lead by some margin at +41%.7
+Some caution needs to be exercised in interpreting the commodity sector anal­
+ysis. For example, with electric vehicle technology developing fast, it is likely that in 
+the long term, oil and other brown economy fuels will lose the level of inflation per­
+formance they enjoyed in the past. However, over a shorter outlook, there are good 
+reasons to think the historical pattern might hold: alternative fuels are yet to reach 
+critical mass, and electric and hybrid vehicles made up just 4% of global automotive 
+sales in 2020.8 In addition, there are many other reasons why inflation could have 
+different effects on certain sectors: semiconductor shortages and the associated 
+price hikes could affect the technology sector, and shortages of rare elements such 
+as lithium may mean the inflationary impact on traditional commodities will differ 
+from that indicated by the past.
+In Exhibit 10, we again take a different approach to evaluating aggregate commodity 
+performance as a function of annual inflation rate changes, as we did in the previous 
+section for equities and bonds. Consistent with those results, we see a positive rela­
+tionship between the 12-month real return to the equally weighted commodity basket 
+and the contemporaneous 12-month change in the inflation rate, irrespective of the 
+starting level of inflation. From the right panel, we can see that the positive relation 
+tends to be somewhat stronger when the inflation rate is in the top two quintiles.
+Next, we turn to residential property. In Exhibit 11, we see that US residential 
+real estate has a small negative annualized real return of -2% during inflationary 
+regimes, whereas it is +2% at other times. Thus, the asset does not seem to benefit 
+from inflation in the same way commodities do; however, it could be argued that it is 
+more robust than financial assets, with only a modest difference in the real returns 
+between inflationary and other times. In Appendix B, we see that the UK real estate 
+experience is similar to that in the United States, whereas for Japan (where our data 
+capture the value of residential land rather than housing), the real return is higher 
+during inflationary regimes than at other times.
+Next, we consider collectibles, in particular art, wine, and stamps. In Exhibit 12, 
+we show how these assets have performed through the eight US inflationary regimes. 
+We find that collectibles have lived up to their reputation as a store of value in infla­
+tionary times. Real annual returns are positive during inflationary episodes for all three 
+asset groups, with art at +7%, wine at +5%, and stamps +9%. Moreover, we notice 
+a possible distinction between art and stamps (performance markedly improves in 
+inflationary periods relative to normal times) and wine, which experiences lower but 
+more consistent returns between normal and inflationary times.
+Collectibles are unlikely to be part of an institutional portfolio, given the small 
+traded volumes. For instance, the global wine market turnover was $364 billion in 
+2019, according to Fortune Business Insights, of which collectible wine is a small 
+sliver. To put that in context, the World Bank estimated global equity market turnover 
+at $60 trillion in 2019.
+ACTIVE STRATEGIES
+So far, we have looked at passive investments in financial and hard assets. Now, 
+we turn to active strategies. We first consider long–short stock factor portfolios. 
+Second, we study trend strategies applied to futures and forwards.
+7 Erb and Harvey (2006) analyzed the inflation-hedging ability of a broader set of commodities, 
+and Erb and Harvey (2013) analyzed the inflation-hedging performance of gold over long horizons. They 
+concluded that gold is too volatile to be a reliable inflation hedge and the performance since 1975 was 
+largely driven by a single year, 1979, when gold dramatically appreciated in value.
+8 Data from EV-Volumes.com.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+22  |  The Best Strategies for Inflationary Times
+August 2021
+For active strategies, implementation costs can be substantial. Therefore, we 
+incorporate estimated costs, based on our live experience trading similar portfolios, 
+which capture the combined effect of transaction, slippage, funding, and short-sell­
+ing costs. The estimates are at the maximum of the range set forth by Harvey et 
+al. (2019): 2.0% and 0.8% per annum for stock factor and future trend strategies, 
+respectively. See Appendix A for further discussion on the costs of implementation.
+In Exhibit 13, we show the performance of some well-known factor strategies 
+through the eight US inflationary regimes. Smaller companies perform poorly in 
+inflationary regimes. In real terms, the return for being long small size and short 
+large size is -4% a year in inflationary periods, compared to +1% in normal times. The 
+factor is positive in just two of the eight episodes. This fits with intuition. The costs of 
+inflation will have some economies of scale benefit. Take, for example, “shoe-leather 
+costs,” meaning the extra effort that companies have to make when the value of 
+cash is more volatile—making more trips to the bank and wearing out their shoes 
+being the analogy (Fischer and Modigliani 1978). Larger companies are more suited 
+to reacting to these conditions, given that they are more likely to have the necessary 
+infrastructure to make such adaptations seamlessly.
+EXHIBIT 10
+Real Commodity Returns vs. Contemporaneous 12-Month Inflation Rate Change
+NOTES: The relationship between the 12-month real commodity basket return and the contemporaneous 12-month change in the 
+YoY inflation rate. The commodities basket is an equal-weight futures basket. Panel A plots the data, splitting the data points into 
+the above- and below-median inflation rate at the start of the 12-month evaluation window, and we add a trend line for both cases. 
+Panel B shows the correlation, splitting the data points into five quintiles based on the inflation rate at the start of the 12-month 
+evaluation window. Quintiles are based on the full inflation dataset from 1926. If we start in 1947 (when the commodity series starts) 
+correlations are slightly higher. We use all overlapping 12 months in the 1947–2020 sample period.
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+Q1 
+(low starting
+inﬂation)
+Q5 
+(high starting
+inﬂation)
+Q4
+Q3
+Q2
+Panel B: Correlation of 12-Month Real Commodity
+Returns and Inflation Rate Change
+15%
+80%
+40%
+60%
+20%
+–60%
+–20%
+120%
+–40%
+0%
+0%
+12-Month Real Return
+12-Month Change in Year-on-Year
+Inflation Rate
+5%
+10%
+–5%
+–10%
+–15%
+Above-Median Starting Inﬂation
+Below-Median Starting Inﬂation
+Panel A: 12-Month Real Commodities Return vs. Inflation
+Rate Change
+100%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  23
+August 2021
+The profitability and value factors roughly hold their own during inflationary periods 
+(-1% real return). The value performance might be surprisingly weak to some, given 
+that higher-duration growth stocks are often assumed to be adversely sensitive to 
+unexpected inflation as discount rates increase. Still, it is worth saying that value 
+long–short is still much more inflation robust than the long-only financial assets 
+discussed previously.
+Cross-sectional equity momentum historically performs well, with real inflation 
+regime returns of +8% on average and a 75% hit rate across the eight episodes; 
+however, we are somewhat cautious about the result, given the low t-statistic. In 
+addition, the performance is highly sensitive to the dating of our regimes. For exam­
+ple, January 1975 was a very negative month for cross-sectional momentum, and 
+our inflationary regime stops in December 1974. Equally, late 2008 through early 
+2009 was catastrophic for momentum, and our inflationary period ends in July 2008.
+We also look at quality and low-beta premiums, using portfolios as formu­
+lated by Asness, Frazzini, and Pedersen (2019) and Frazzini and Pedersen (2014) 
+(QMJ and BAB, respectively, in Exhibit 13). Although quality holds up well in the 
+EXHIBIT 11
+Performance of Residential Real Estate in Inflationary Regimes
+NOTES: Price return to US residential real estate during the eight US inflationary regimes already defined, as well as the annualized 
+return during inflationary, noninflationary, and all periods. In the final columns, we present the hit rate (proportion of inflationary peri­
+ods with positive returns) and the heteroskedasticity-consistent t-statistic that tests whether the returns in inflationary and noninfla­
+tionary times are different. The data are from 1926 to 2020. See Appendix A for details on sources and methodology.
+EXHIBIT 12
+Performance of Collectibles in Inflationary Regimes
+NOTES: Price returns to art, wine, and stamps during the eight US inflationary regimes already defined, as well as the annualized return 
+during inflationary, noninflationary, and all periods. In the final columns, we present the hit rate (proportion of inflationary periods with 
+positive returns). The data are from 1926 to 2020. See Appendix A for details on sources and methodology.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Real Return (ann.)
+Start Month
+End Month
+Total Price Level Change
+Residential Real Estate
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+4%
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+–17%
+Korean
+War
+August
+1950
+February
+1951
+7%
+–4%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+–2%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+–7%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+11%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+0%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+–3%
+Inflation
+(19%)
+–2%
+Other
+(81%)
+2%
+All 
+(100%)
+1%
+Hit Rate
+25%
+t-Stat
+–5.1
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Real Return (ann.)
+Start Month
+End Month
+Total Price Level Change
+Art
+End of 
+WW2
+March
+1946
+March
+1947
+21%
+–14%
+US
+Enters
+WW2
+April
+1941
+May
+1942
+15%
+3%
+Korean
+War
+August
+1950
+February
+1951
+7%
+–25%
+Ending of
+Bretton 
+Woods
+February
+1966
+January
+1970
+19%
+96%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+18%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+54%
+Reagan’s
+Boom
+February
+1987
+November
+1990
+20%
+61%
+China
+ Demand
+Boom
+September
+2007
+July
+2008
+6%
+–13%
+Inflation
+(19%)
+7%
+Other
+(81%)
+2%
+All 
+(100%)
+3%
+Hit Rate
+63%
+Wine
+–39%
+156%
+–6%
+15%
+–26%
+120%
+0%
+–13%
+5%
+6%
+6%
+50%
+Stamps
+–5%
+4%
+–18%
+35%
+4%
+204%
+6%
+16%
+9%
+3%
+4%
+75%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+24  |  The Best Strategies for Inflationary Times
+August 2021
+inflation regimes, low beta is weak, with a real annual average return of -3% and a hit 
+rate of 25%. The duration effect may be prevalent here, given that low beta is often 
+a play on long-term stable cash flows (e.g., non-CPI-linked utilities).
+Some caution needs to be exercised in comparing these dynamic factor returns 
+to long-only equity. These active strategies generally have low or even negative betas 
+with the market. For example, over the full sample, the value factor has a beta of 0.2 
+and the low-beta factor has a beta of 0.1. The average returns are approximately the 
+alpha of the strategy. 
+Next, we follow the methodology of Hamill, Rattray, and Van Hemert (2016) and 
+Harvey, Rattray, and Van Hemert (2021) and construct a time-series momentum 
+(trend) strategy applied to liquid futures and forwards. The strategy has a 10% ex ante 
+annualized volatility target, and the weights to historical lags in the trend definition 
+are chosen such that it best approximates the BTOP50 trend-following index returns. 
+In Exhibit 14, we observe that the annualized real return during inflationary regimes 
+is positive for each of the five trend strategies, covering the four asset classes plus 
+the all-asset version. For bonds and commodities, the real returns are positive during 
+each of the individual inflationary regimes. This seems intuitive because bonds and 
+commodities have a very clear exposure to inflation (suffering and benefitting from 
+rising inflation, respectively). Furthermore, for the bonds-and-commodities trend, the 
+performance in rising inflationary periods is much higher than during other periods. The 
+all-asset class trend also performs relatively well during rising inflation periods. This 
+is consistent with Baltussen, Swinkels, and Van Vliet (2020) who find a positive expo­
+sure of bond and commodity trend performance to changes in inflation expectations.
+The active strategies provide some advantages. Although the trend-following 
+strategies perform better than the equity factors, it is important to realize that the 
+trend strategies have limited capacity, whereas the main equity factors have robust 
+capacity. With that in mind, having a -1% real return for a value strategy, or a 3% 
+EXHIBIT 13
+US Equity Style Performance in Inflationary Regimes
+NOTES: Total real returns of various long–short equity strategies in inflationary, noninflationary, and all periods. In the final columns, we 
+present the hit rate (proportion of inflationary periods with positive returns) and the heteroskedasticity-consistent t-statistic that tests 
+whether the returns in inflationary and noninflationary times are different. These are the same strategies as were analyzed by Harvey 
+et al. (2019). Data are from 1926 in the case of SMB and HML, from 1927 in the case of momentum, from 1963 for RMW and CMA, 
+from 1930 for BAB, and from 1957 for QMJ. More detail on sources and methodology can be found in Appendix A.
+Strategy
+Real Return (total)
+Real Return (ann.)
+Specific Inflation Regimes
+Combined Regimes
+US
+Enters
+WW2
+End of
+WW2
+Korean
+War
+Ending of
+Bretton
+Woods
+OPEC Oil
+Embargo
+Iranian
+Revolution
+Reagan’s
+Boom
+China
+Demand
+Boom
+End Month
+May
+1942
+March
+1947
+February
+1951
+January
+1970
+December
+1974
+March
+1980
+November
+1990
+July
+2008
+Start Month
+April
+1941
+March
+1946
+August
+1950
+February
+1966
+July
+1972
+February
+1977
+February
+1987
+September
+2007
+Total Price
+Level Change
+15%
+21%
+7%
+19%
+24%
+37%
+20%
+6%
+Inflation
+(19%)
+Other
+(81%)
+All
+(100%)
+Hit
+Rate
+t-Stat
+SMB—Size
+–11%
+–23%
+–4%
+45%
+–43%
+32%
+–26%
+–4%
+–4%
+1%
+0%
+25%
+–1.8
+HML—Value
+–4%
+–17%
+3%
+–8%
+36%
+–11%
+–3%
+–7%
+–1%
+2%
+2%
+25%
+–1.5
+RMW—Proﬁtability
+4%
+–24%
+–8%
+18%
+6%
+–1%
+2%
+2%
+60%
+–1.5
+CMA—Investment
+–7%
+31%
+–9%
+24%
+–10%
+2%
+2%
+2%
+40%
+–0.1
+Momentum
+–15%
+–18%
+7%
+35%
+38%
+44%
+41%
+26%
+8%
+4%
+5%
+75%
+0.6
+QMJ—Quality-Junk
+14%
+–1%
+–12%
+40%
+7%
+3%
+3%
+3%
+60%
+–0.1
+BAB—Betting
+against Beta
+–24%
+–6%
+ –3%
+28%
+–13%
+9%
+–7%
+–22%
+–3%
+8%
+6%
+25%
+–4.2
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  25
+August 2021
+average return for a quality strategy, does not look that bad. The equity factors do 
+not experience the large negative returns that passive equity and fixed-income invest­
+ments experience during inflation shocks. 
+INTERNATIONAL INFLATION
+We perform an analysis for the United Kingdom and Japan similar to that we have 
+done for the United States. We define inflationary regimes using the same method 
+(i.e., when inflation is accelerating above 5%, as already described) but based on 
+local data. This results in the regimes presented in Exhibit 15.
+In Appendix B, we detail how a variety of local assets performed in the infla­
+tionary periods for these countries, similar to the analysis in Exhibit 4 for the 
+United States. In Exhibit 16, we show a comparison of asset performance across 
+all three nations. We note that performance is always from the vantage point of 
+a specific country (base currency), which matters for realized inflation correction. 
+For active strategies, implemented with futures contracts, the base currency also 
+matters for the interest earned on any unencumbered cash, just like investment 
+funds often have different currency share classes. We report the annualized real 
+performance during the different regimes for the three countries and, in the final 
+columns of the exhibit, split the sample period in terms of how many countries are 
+in an inflationary regime.
+Equities tend to perform worst during their own country’s inflationary periods. US 
+equities, for instance, achieve +6% and +9% real annualized return in UK and Japa­
+nese inflationary periods, compared to -7% in US regimes. The results also suggest 
+benefits to international diversification. For example, taking the UK perspective, US 
+and Japanese equities generate +6% and +9% real annualized returns during UK 
+EXHIBIT 14
+Trend Strategies in Inflationary Regimes
+NOTES: Total real returns of futures trend strategies by asset class and combined, during the eight US inflationary regimes already 
+defined, as well as the annualized return during inflationary, noninflationary, and all periods. In the final columns, we present the hit 
+rate (proportion of inflationary periods with positive returns) and the t-stat on inflationary periods having higher returns. The data are 
+from 1926 to 2020. See Appendix A for details on sources and calculation methodology.
+Strategy
+Real Return (total)
+Real Return (ann.)
+Specific Inflation Regimes
+Bonds Trend
+FX Ttrend
+Equity Trend
+Commods. Trend
+All Asset Trend
+Start Month
+End Month
+Total Price
+Level Change
+US
+Enters
+WW2
+20%
+20%
+April
+1941
+May
+1942
+15%
+End of
+WW2
+23%
+23%
+March
+1946
+March
+1947
+21%
+Korean
+War
+24%
+1%
+19%
+August
+1950
+February
+1951
+7%
+Ending of
+Bretton
+Woods
+79%
+77%
+54%
+135%
+February
+1966
+January
+1970
+19%
+OPEC Oil
+Embargo
+54%
+–14%
+23%
+173%
+196%
+July
+1972
+December
+1974
+24%
+Iranian
+Revolution
+149%
+16%
+–13%
+33%
+100%
+February
+1977
+March
+1980
+37%
+Reagan’s
+Boom
+6%
+42%
+13%
+132%
+65%
+February
+1987
+November
+1990
+20%
+China
+Demand
+Boom
+September
+2007
+July
+2008
+6%
+6%
+6%
+–3%
+25%
+17%
+Combined Regimes
+Inflation
+(19%)
+15%
+4%
+8%
+20%
+25%
+Other
+(81%)
+9%
+4%
+11%
+8%
+15%
+All
+(100%)
+10%
+4%
+10%
+10%
+16%
+Hit
+Rate
+100%
+75%
+75%
+100%
+100%
+t-Stat
+1.9
+0.5
+–0.9
+2.8
+2.8
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+26  |  The Best Strategies for Inflationary Times
+August 2021
+inflation regimes, respectively.9 Importantly, equities work well when none of the three 
+countries has high and rising inflation (49% of the time) or when one of the three 
+has it (32% of the time). Equities really only struggle when two or more countries 
+are suffering. This is consistent with a global bout of inflation being very negative for 
+equity markets.
+Bonds clearly perform the worst during their own country’s inflationary periods.
+Commodities perform well during the inflationary periods of any one of these 
+three countries. The effect is strongest during US inflationary regimes (running at a 
+15-percentage-point differential between inflation and other regimes, compared to 8 
+for the United Kingdom and 7 for Japan). Commodities perform particularly well when 
+all three countries are in an inflationary regime, which is about 4% of the months.
+The all-asset trend strategy discussed in the previous section performs best 
+during US inflationary periods, when the differential with normal times is 10 per­
+centage points (+25% versus +15%). A possible driver here is US global economic 
+leadership, both in terms of fundamentals and market prices, giving it first-mover 
+advantage as trends develop. Also, the trend strategy performs particularly well when 
+all countries are in the inflationary regime.
+9 This is perhaps one of the drivers behind the large international equity allocations run by some 
+of the major UK pension funds coming out of the inflationary 1970s and 1980s. We do note that for 
+international diversification, exchange rate effects still need to be accounted for. Converted into GBP, 
+the real annualized returns during UK inflationary regimes are 4% and 9% for US and Japanese equities.
+EXHIBIT 15
+UK and Japanese Headline Inflation Rates and Regimes
+NOTES: The YoY headline inflation rate (blue line) and inflationary regimes (pink highlighted) for the United Kingdom (Panel A) and 
+Japan (Panel B). UK data are collected from the Bank of England, and Japanese data are from Global Financial Data. We truncated 
+the Panel B y-axis at 30% for readability; Japanese YoY CPI peaked at +780% in August 1946. The data are from 1926 to 2020. 
+See Appendix B for more details on the regime classification.
+20%
+–20%
+10%
+0%
+–10%
+30%
+–30%
+1925
+1940
+1955
+1970
+1985
+2000
+2015
+Panel B: Japanese YoY Inflation Rate
+20%
+15%
+10%
+5%
+0%
+–5%
+–10%
+25%
+30%
+1925
+1940
+1955
+1970
+1985
+2000
+2015
+Panel A: UK YoY Inflation Rate
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  27
+August 2021
+STRUCTURAL CHANGE AND THE RISE OF CRYPTOCURRENCIES
+As with any historical analysis, we are faced with the usual question: Is this time 
+different? For example, the inflation surge in the early 1970s was influenced by an 
+exogenous event: the OPEC oil embargo. At the time, the US economy was highly 
+dependent on that source of oil. Today is different because the United States is not 
+as dependent on foreign oil sources. Moreover, although electric vehicles do not 
+have critical mass today, such technological change in the future may make it much 
+less likely that a surge in oil prices would have the same inflationary effect. Hence, 
+caution needs to be exercised in interpreting the data. Indeed, this is precisely why 
+most of our analysis focuses on regime behavior. Looking at averages over all regimes 
+could be misleading because of one influential regime. For example, Erb and Harvey 
+(2013) showed that gold’s seeming ability to hedge unexpected inflation is driven by 
+a single observation: 1979. 
+Other factors need to be carefully weighted given the structural evolution of the US 
+economy. In the 1950s and 1960s, the United States was a manufacturing economy. 
+Today, only 11% of GDP is driven by manufacturing.10 The nature of companies has 
+changed. Much of the capital deployed is not physical but intangible, including trade 
+secrets, proprietary software, patented and unpatented research and development, 
+client relationships, and legal rights. These may be more resilient to inflation.
+Finally, we are in the midst of another technological disruption in the form of cryp­
+tocurrencies, including bitcoin.11 Bitcoin is not controlled by any centralized authority—
+it is the result of a computer program that algorithmically increases the supply until 
+it caps out at 21 million coins in 2140. This money supply rule induces algorithmic 
+10 Per Bloomberg, ticker GDPRMANU Index, collected from the Bureau of Economic Analysis.
+11 For additional details, see Harvey, Ramachandran, and Santoro (2021). 
+EXHIBIT 16
+Annualized Real Returns during Different Regimes for Different Countries
+NOTES: Real annualized returns to assets in inflationary, noninflationary, and all regimes for the United States, United Kingdom, and 
+Japan. The final segment of the exhibit shows the real annualized return to the asset in which zero, one, two, or three of the countries 
+are in an inflation regime at the same time. Returns are expressed in a specific base currency, which dictates what inflation correction 
+is applied and what interest is earned on unencumbered cash for the active futures and commodities strategies. The data run from 
+1926 to 2020.
+United States
+United Kingdom
+Japan
+Countries in Inflation
+Asset
+% of Time
+US Equities
+UK Equities
+JP Equities
+US Bonds
+UK Bonds
+JP Bonds
+Commods.
+Commods.
+Commods.
+Trend
+Trend
+Trend
+Base
+USD
+GBP
+JPY
+USD
+GBP
+JPY
+USD
+GBP
+JPY
+USD
+GBP
+JPY
+Inflation
+19%
+–7%
+–2%
+–7%
+–5%
+–2%
+–10%
+16%
+18%
+12%
+25%
+29%
+16%
+Other
+81%
+10%
+7%
+6%
+4%
+3%
+1%
+1%
+1%
+0%
+15%
+14%
+11%
+All
+100%
+7%
+5%
+4%
+2%
+2%
+–1%
+4%
+5%
+2%
+16%
+17%
+12%
+Inflation
+34%
+6%
+0%
+9%
+1%
+–3%
+–2%
+9%
+8%
+8%
+19%
+17%
+17%
+Other
+66%
+8%
+8%
+1%
+3%
+5%
+–1%
+1%
+3%
+–1%
+15%
+17%
+10%
+All
+100%
+7%
+5%
+4%
+2%
+2%
+–1%
+4%
+5%
+2%
+16%
+17%
+12%
+Inflation
+22%
+9%
+3%
+–10%
+0%
+–2%
+–16%
+10%
+10%
+6%
+20%
+20%
+2%
+Other
+78%
+7%
+6%
+8%
+3%
+3%
+4%
+3%
+4%
+2%
+15%
+16%
+15%
+All
+100%
+7%
+5%
+4%
+2%
+2%
+–1%
+4%
+5%
+2%
+16%
+17%
+12%
+0
+49%
+8%
+7%
+7%
+5%
+6%
+5%
+–1%
+0%
+–2%
+15%
+16%
+15%
+1
+32%
+12%
+11%
+5%
+1%
+1%
+–3%
+8%
+7%
+5%
+15%
+15%
+8%
+2
+15%
+–1%
+–7%
+–11%
+0%
+–1%
+–11%
+9%
+8%
+8%
+16%
+16%
+6%
+3
+4%
+–7%
+–7%
+8%
+–8%
+–12%
+–12%
+21%
+23%
+16%
+48%
+50%
+41%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+28  |  The Best Strategies for Inflationary Times
+August 2021
+scarcity. This scarcity has some similarities to the scarcity of gold, given the limited 
+amount of newly mined gold that comes to market each year. 
+Some have advocated for the inclusion of bitcoin into a diversified portfolio as 
+an inflation protection asset. However, caution is warranted given that bitcoin is 
+untested, with only eight years of quality data—over a period that that lacks a single 
+inflationary regime. Moreover, bitcoin is five times more volatile than the S&P 500 or 
+gold. This high volatility could lead to bitcoin being an unreliable hedge. Indeed, Erb 
+and Harvey (2013) argued gold is an unreliable hedge over the short term because 
+of its volatility.
+Aside from this, there is evidence the price moves in bitcoin are not independent 
+of economic events. Although, theoretically, bitcoin should have a zero inflation beta 
+and zero market beta, reality is different. For example, in March of 2020 at the height 
+of the COVID-19 crisis, investors began to reduce risk. The stock market dropped 
+34%, gold dropped 12%, and bitcoin plummeted 53% as investors poured money into 
+safe-haven US Treasuries. As it became evident that the outlook was not as grim 
+as first thought, investors returned to risky assets, with the stock market reaching 
+an all-time high, gold reaching its third-highest value in history, and bitcoin surging 
+more than 800% (in the 12 months following its March 2020 trough). This suggests 
+that bitcoin is a speculative asset and has a positive beta against the US market. 
+Our analysis shows that unexpected high inflation is negatively related to US equity 
+returns. The correlation of US equity and bitcoin returns suggests that bitcoin may 
+not deliver positive real returns in periods of unexpected inflation.
+CONCLUSIONS
+Even if one forecasts a rate of inflation in the 2%–3% range over the next few 
+years, it is likely that that forecast has a larger confidence interval than the same 
+forecast at the end of 2019. Given the unprecedented monetary and fiscal interven­
+tions, most agree that inflation risk has increased. As such, it is time that portfolio 
+managers review their asset positioning in the face of this heightened risk.
+Our article is not about forecasting whether inflation will surge. We provide some 
+evidence as to what may happen to the performance of a wide range of asset classes 
+and active strategies if inflation does surge. Our analysis spans nearly a century. The 
+long sample is particularly important because inflation spikes in developed economies 
+have been rare in the past 30 years. 
+Our analysis takes two approaches. The first is the inflation beta approach in 
+which an asset or strategy’s returns are correlated with unexpected inflation. An 
+asset with a negative unexpected inflation beta provides a hedge—on average. The 
+second approach focuses on specific regimes in which inflation has risen from a 
+moderate level and crossed the 5% threshold. The advantage of this approach is that 
+asset performance can be scrutinized in each regime. The inflation beta approach, 
+in contrast, is just the average across all regimes. 
+Some of our analysis reaffirms what we already know. For example, Treasury 
+bonds do poorly when inflation surges. Commodities, often being a source of infla­
+tion, do well. However, we offer additional insights. Commodities, for example, are a 
+diverse set of assets, and their inflation-hedging properties depend on the individual 
+commodity. Most importantly, we show that unexpected inflation is very bad news 
+for equity investors. 
+We also examine a number of active strategies. Our results suggest that trend-
+based strategies focusing on equity, bonds, foreign exchange, and commodities have 
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  29
+August 2021
+strong hit rates during the eight inflation episodes and provide an impressive level of 
+protection. We consider a range of equity portfolios and find that popular factors such 
+as value provide some benefit during inflationary times, as we define them. Although 
+the average benefit is small (e.g., 3% real returns for a quality strategy to -1% for the 
+value strategy), these factor portfolios perform far better than passive investments in 
+stocks or bonds. The equity factors also have the extra advantage of high capacity. 
+APPENDIX A
+FURTHER SOURCES AND CALCULATION METHODOLOGY
+Inflation Measurements
+For the United States, we use the BLS headline CPI index, as reported by Bloomberg. 
+The components of inflation shown in Exhibit 3 are from the same source. In the early 
+part of the history, some components report only quarterly or annually, and we therefore 
+forward-fill the indexes where there are gaps.
+Performance Statistics
+For each of the asset performance exhibits, we show the regimes relevant to the 
+country in question. For each regime, we show the real total return to the asset across 
+the full time for which that regime endures (in case of Exhibits 4, B1, and B2, we also 
+show the nominal returns). We also detail the length of the regime and the extent to which 
+the headline CPI basket rose through it.
+We then aggregate the data by showing the compound annual growth rate (CAGR) 
+across all the regimes (8 in the United States, 14 in the United Kingdom, and 12 in Japan). 
+If we do not have data for an asset over all of the regimes, we calculate the CAGR for the 
+regimes that we have. Similarly, we calculate the CAGR for the asset in all other months 
+(i.e., in which it was not within an inflationary regime) and then for the combined total. 
+After the aggregate returns, we present the hit rate, which is the percentage of infla­
+tion regimes in which the real return to the asset was positive (similarly for the nominal 
+return in the case of Exhibits 4, B1, and B2). Finally, we calculate the heteroskedastici­
+ty-consistent t-statistic on a regression of the monthly returns to the asset on a constant 
+plus a dummy variable that switches between 1 (in an inflationary regime) and 0 (not in 
+an inflationary regime). 
+US Equities and Bonds
+For US equities, we use Robert Shiller’s data for the S&P 500 total return history. For 
+US 10-year Treasury bonds, we use Global Financial Data’s total return index. The 60–40 
+portfolio consists of a 60% S&P 500 and 40% US 10-year Treasury bond investment 
+(capital weighted), rebalanced monthly. All returns to equities and bonds are assumed 
+to be physical, cash-settled transactions.
+US Fixed Income
+Data for US Treasury nominal bonds of all three maturities are from Global Financial 
+Data. Both the IG and HY indexes are calculated by Man Group based on data from Morgan 
+Stanley Research. We take the IG spread and the BBB spread as a proxy for HY prior to 
+1980, and maturity data as reported by Morgan Stanley. We assume the indexes were 
+issued at par in January 1921 and that coupons are paid semi-annually to deduce the 
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+30  |  The Best Strategies for Inflationary Times
+August 2021
+modified duration. We then take default rates collated by Moody’s and assume a 40% 
+recovery rate to calculate the total return.
+The historical TIPS index is constructed by Goldman Sachs (Marshall 2020). To 
+transform into a TIPS TR index, we use 10-year nominal yields to calculate the Macaulay 
+duration, assuming a par rate, and then the estimated real yield to calculate the modified 
+duration. To calculate the inflation accrual, we lag historical CPI by three months.
+Commodities
+Nominal returns are funded—in other words, the return of the contract plus the 
+risk-free rate as reported by Kenneth French’s website. The real returns are the funded 
+returns, minus inflation. The strategies take whichever futures contract is most liquid 
+within the Man-AHL database. This is not always the first but will be in the early part of 
+the curve. Groupings are as follows: industrials = copper; precious = gold, silver, and 
+platinum; agris = wheat, corn, and soybeans; softs = cocoa, cotton, coffee, and sugar; 
+livestock = cattle and hogs; and energies = Brent, WTI, and heating oil. Returns are 
+equally weighted averages, month by month. Where one commodity in the group is not 
+available, the average of the others is taken. The commodity aggregate category is a 
+month-by-month, equally weighted average of all commodity groups. All returns are in US 
+dollars. Gold spot returns are from the World Gold Council website.
+Real Estate
+US residential real estate data are from the Case–Shiller US home price index. In the 
+early part of the series, the data are quarterly, and we linearly interpolate the missing 
+values to make monthly data.
+Collectibles
+We focus on three long-term price series in particular: those for art, wine, and 
+stamps. Goetzmann, Renneboog, and Spaenjers (2011) constructed an annual art price 
+index from 1756–2007 using repeat-sales regression, based on sales pairs (of the same 
+work). Dimson, Rousseau, and Spaenjers (2013) constructed a wine price index for the 
+five Bordeaux Premier Grand Cru Classé chateaus from 1900–2012 using auction prices. 
+Dimson and Spaenjers (2011) constructed an index for stamps from 1899–2008 using 
+the Stanley Gibbons Stamp Catalogue covering 127 collectible stamps. Data are compiled 
+in Credit Suisse’s Asset Returns Yearbook. These data are real, and we transform them to 
+nominal using the long-term GDP deflator calculated in the Bank of England’s Millennium 
+of Macroeconomic Data dataset. The series are annual, and we linearly interpolate them 
+to get monthly values to match up with our regimes.
+Active Equity Factors
+Nominal returns are funded—in other words, we used the return of the Fama and 
+French long–short factor plus the risk-free rate as reported on Kenneth French’s website. 
+The real returns are the funded return (which adds the risk-free return), minus inflation. 
+We assume 2% annual trading costs. The different factors are formed as a dollar-neutral 
+portfolio that is long stocks that score high on the pertinent metric and short those that 
+score low. The SMB factor is based on market capitalization; the HML factor uses the 
+book-to-price ratio; the RMW factor orders stocks on EBT margin; the CMA factor uses 
+the annual change in total assets; and momentum is based on the past 12-month return, 
+skipping the most recent month.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  31
+August 2021
+The last two factors we look at are QMJ and BAB. These are taken from the work 
+of Asness, Frazzini, and Pedersen (2019) and Frazzini and Pedersen (2014). Quality in 
+QMJ is defined as a combination of profitability (captured through a variety of profit and 
+margin measures per unit of book value), growth (trailing five-year growth in profits), and 
+safety (market beta, volatility of profits, financial leverage, and credit risk). Beta in the 
+BAB strategy uses the capital asset pricing model.
+It is worth giving a bit more detail on how we arrived at the 2% figure for annual trading 
+costs. This is a simplification because active strategies such as cross-sectional momen­
+tum have much higher turnover than strategies like value. Partly this is just a matter of 
+experience of the costs we feel when trading similar strategies. However, a similar result 
+can be arrived at via the following:
+=
++
++
+Total costs
+Dividend withholding tax
+Slippage
+Financing
+Assume a dividend withholding tax of 30% and a yield of 2% (average US level), which 
+gives 0.6% for the first term. Given a holding period of three months and an average 
+slippage of 6 bps, the cost would be
+×
+×
+×
+=
+m
+m
+Round trip trades
+Gross book size
+12
+/3
+2(
+)
+2(
+)
+0.06%
+1.0%
+We think 0.4% per annum is a reasonable expectation for financing, so we get
++
++
+=
+Dividend withholding tax
+Slippage
+Financing
+0.6%(
+)
+1.0%(
+)
+0.4%(
+)
+2.0%
+Trend
+We follow the methodology of Hamill, Rattray, and Van Hemert (2016) and Harvey, 
+Rattray, and Van Hemert (2021) and construct a time-series momentum (trend) strategy 
+applied to liquid futures and forwards (or proxies) across assets, but we extend the data 
+back further than their original work. For equities, we have data for Japan, the United 
+Kingdom, the United States, Italy, Australia, and France from the 1926 start of our sample 
+period. Other markets enter as they become available. For bonds, we have US bonds 
+(different tenors) available since 1926, whereas most European bonds are included from 
+1950, some years after the dust of the second world war had settled. In commodities, 
+we have soybeans, corn, and wheat starting between 1940 and 1950. Currencies still 
+only start after the end of Bretton Woods in 1973. We assume annual transaction costs 
+of 0.8%.
+APPENDIX B
+UNITED KINGDOM AND JAPAN
+As discussed earlier, we have defined high and rising inflationary regimes for the 
+United Kingdom and Japan using the same method we applied to the United States. We 
+use the Retail Price Index (RPI) for the United Kingdom and the Nationwide Consumer Price 
+Index (CPI) for Japan. There are differences in the basket weights of the three headline 
+inflation measures chosen, as would be expected in three regions with different consump­
+tion patterns. Shelter makes up 32% of the US CPI, 27% of the UK RPI, and 21% of the 
+Japan CPI, as at September 2020. The US CPI is 60% services and 40% goods, whereas 
+the other two are both broadly equally weighted in these categories. These differences 
+are considered of secondary importance, however, when set against the requirement 
+that the measure be widely disseminated and in the broadest use. The regimes that this 
+approach yields are as we have already shown in Exhibit 15.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+32  |  The Best Strategies for Inflationary Times
+August 2021
+In Exhibits B1 and B2, we show the nominal and real returns for equities and nominal 
+bonds in the United Kingdom and Japan, as we did in Exhibit 4 for the United States. The 
+nominal returns are expressed in local currency (British pound and Japanese yen), and 
+real returns are computed by adjusting for the local realized inflation. Results are broadly 
+in line with the evidence for the United States, as presented before, in that both equities 
+and government bonds have negative real returns, on average, during inflation regimes.
+It is noted that UK equities do somewhat better than US stocks. In real terms, they 
+are flat (fractionally negative) across the 14 regimes, with a 43% positive hit rate. As a 
+reminder, the United States does -7% with a 25% hit rate. Possibly there is a currency 
+effect here. In 1926, when our data start, the pound traded just below $5. Sterling depre­
+ciated fairly consistently to present-day levels below $2, but these depreciations were 
+often particularly intense around inflationary regimes, as would be expected. It may be 
+that such moves were advantageous to the foreign-currency earnings of British stocks, 
+which have always been proportionately significant. Possibly this provided some ballast 
+for the performance of these securities.
+Japan’s inflationary regime in World War II also bears mention as the one example 
+of hyperinflation within our dataset. Between December 1941 and August 1946, Japan 
+experienced a 1,432% rise in the general price level. Clearly, it is reductio ad absurdum, 
+and hyperinflation is a very remote probability in the West today; however, it is still inter­
+esting that in this instance even diversified equity investors would have lost 95% of their 
+purchasing power.
+In Exhibit B3, we show the return to UK residential property. Real returns are positive, 
+indicating some inflation protection, but low and weaker than in normal regimes.
+In Exhibit B4, we show the return to Japanese residential land, for which we have 
+better data than for actual housing. Interestingly, Japan shows very strong returns to 
+EXHIBIT B1
+UK Equity and Government Bond Performance across Inflationary Regimes
+NOTES: Total returns during the identified UK inflationary regimes, as well as the annualized return during inflationary, noninflationary, 
+and all periods. In the final column, we present the hit rate, defined as the proportion of inflationary periods for which the return is 
+positive. We consider both nominal returns (Panel B) and real returns (Panel C). We provide further characteristics for the specific 
+inflation regimes (Panel A). The data are collected from the Bank of England and run from 1926 to 2020.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Nominal Return (total)
+Strategy
+Real Return (total)
+Start Month
+End Month
+Total Price
+ Level Change
+Length
+ (months)
+Equities
+Gov. Bonds
+Equities
+Gov. Bonds
+Nominal Return
+(ann.)
+Real Return
+(ann.)
+Abdication Crisis
+October
+1935
+July
+1937
+22
+7%
+16%
+2%
+8%
+–5%
+UK Enters WW2
+September
+1939
+August
+1940
+12
+21%
+–17%
+8%
+–31%
+–10%
+Indian Independence
+November
+1947
+June
+1948
+8
+8%
+5%
+3%
+–3%
+–5%
+Korean War
+October
+1950
+January
+1952
+16
+16%
+1%
+–6%
+–13%
+–20%
+Lead Up to Suez Crisis
+July
+1954
+April
+1956
+22
+11%
+28%
+–8%
+15%
+–17%
+Berlin Wall Built
+January
+1961
+May
+1962
+17
+7%
+–4%
+8%
+–10%
+1%
+Harold Wilson Becomes PM
+April
+1964
+April
+1965
+13
+6%
+0%
+–2%
+–6%
+–8%
+OPEC Oil Embargo
+December
+1967
+August
+1975
+93
+122%
+60%
+45%
+–28%
+–35%
+Britain Goes to the IMF
+August
+1976
+July
+1977
+12
+18%
+31%
+18%
+11%
+0%
+Iranian Revolution
+January
+1979
+May
+1980
+17
+29%
+20%
+13%
+–6%
+–12%
+The Miners’ Strike
+March
+1984
+April
+1985
+14
+9%
+37%
+12%
+26%
+3%
+Big Bang
+November
+1986
+October
+1990
+48
+32%
+54%
+44%
+16%
+9%
+China Demand Boom
+October
+2002
+July
+2008
+70
+22%
+78%
+26%
+46%
+3%
+Eurozone Crisis
+December
+2009
+September
+2011
+22
+10%
+4%
+17%
+–5%
+7%
+5%
+2%
+All (100%)
+10%
+6%
+Inflation (34%)
+8%
+5%
+0%
+–3%
+Other (66%)
+11%
+7%
+8%
+5%
+Hit Rate
+79%
+79%
+43%
+43%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  33
+August 2021
+EXHIBIT B2
+Japanese Equity and Government Bond Performance across Inflation Regimes
+NOTES: Total returns during the identified Japanese inflationary regimes, as well as the annualized return during inflationary, other, and 
+all periods. In the final column we present the hit rate, defined as the proportion of inflationary periods for which the return is positive. 
+We consider both nominal returns (middle panel) and real returns (bottom panel). We provide further characteristics for the specific 
+inflation regimes (top panel). The data are collected from Global Financial Data and run from 1926 to 2020.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Nominal Return (total)
+Strategy
+Real Return (total)
+Nominal Return
+(ann.)
+Real Return
+(ann.)
+Start Month
+End Month
+Length
+ (months)
+Total Price
+ Level Change
+Equities
+Gov. Bonds
+Equities
+Gov. Bonds
+Takahashi’s Reforms
+September
+1932
+July
+1933
+11
+9%
+78%
+11%
+63%
+2%
+Sino-Japan Tensions
+August
+1935
+April
+1936
+9
+7%
+16%
+3%
+8%
+–4%
+Sino-Japanese War
+December
+1936
+July
+1940
+44
+68%
+42%
+14%
+–15%
+–32%
+WW2
+December
+1941
+August
+1946
+57
+1,423%
+–19%
+22%
+–95%
+–92%
+Dodge Line
+January
+1951
+October
+1951
+10
+19%
+78%
+5%
+50%
+–12%
+Series of Natural Disasters
+February
+1953
+December
+1953
+11
+8%
+–12%
+–3%
+–19%
+–10%
+Typhoon Vera/Civil Unrest
+December
+1959
+November
+1961
+24
+12%
+13%
+–4%
+1%
+–14%
+Continuing of Economic
+Miracle
+December
+1962
+September
+1963
+10
+9%
+3%
+19%
+–6%
+10%
+Izanagi Boom
+August
+1967
+April
+1970
+33
+20%
+53%
+19%
+28%
+–1%
+Tatenokai Attempted
+Coup d’etat
+September
+1970
+September
+1971
+13
+10%
+20%
+8%
+9%
+–2%
+OPEC Oil Embargo
+October
+1972
+February
+1974
+17
+29%
+2%
+–7%
+–21%
+–28%
+Iranian Revolution
+October
+1979
+September
+1980
+12
+9%
+7%
+2%
+–2%
+–6%
+All  (100%)
+11%
+6%
+3%
+–1%
+Inflation (22%)
+11%
+4%
+–10%
+–16%
+Other (78%)
+11%
+7%
+8%
+4%
+Hit Rate
+83%
+75%
+50%
+17%
+EXHIBIT B3
+UK Residential Real Estate Performance across Inflationary Regimes
+NOTES: Total real returns during the identified UK inflationary regimes, as well as the annualized real return during inflationary, nonin­
+flationary, and all periods. In the final column, we present the hit rate, defined as the proportion of inflationary periods for which the 
+return is positive. The data are collected from the Office of National Statistics and run from 1926 to 2020. In the early part of the 
+series, the periodicity is annual, and we linearly interpolate the monthly readings from these results.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Start Month
+End Month
+Total Price
+ Level Change
+Residential
+ Real Estate
+Real Return
+(ann.)
+Abdication Crisis
+October
+1935
+July
+1937
+7%
+–7%
+UK Enters WW2
+September
+1939
+August
+1940
+21%
+–12%
+Indian Independence
+November
+1947
+June
+1948
+8%
+3%
+Korean War
+October
+1950
+January
+1952
+16%
+–9%
+Lead Up to Suez Crisis
+July
+1954
+April
+1956
+11%
+–4%
+Berlin Wall Built
+January
+1961
+May
+1962
+7%
+4%
+Harold Wilson Becomes PM
+April
+1964
+April
+1965
+6%
+3%
+OPEC Oil Embargo
+December
+1967
+August
+1975
+122%
+26%
+Britain Goes to the IMF
+August
+1976
+July
+1977
+18%
+–9%
+Iranian Revolution
+January
+1979
+May
+1980
+29%
+8%
+The Miners’ Strike
+March
+1984
+April
+1985
+9%
+1%
+Big Bang
+November
+1986
+October
+1990
+32%
+24%
+China Demand Boom
+October
+2002
+July
+2008
+22%
+34%
+Eurozone Crisis
+December
+2009
+September
+2011
+10%
+–8%
+All (100%)
+3%
+Inflation (34%)
+1%
+Other (66%)
+3%
+Hit Rate
+57%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+34  |  The Best Strategies for Inflationary Times
+August 2021
+real estate, in particular contrast to the United States, with a real CAGR of +12% and a 
+perfect hit rate. Clearly these regimes take one through Japan’s legendary real estate 
+bubble. Indeed, at the peak in 1986, Tokyo real estate was changing hands at $139,000 
+per square foot, by which reckoning, it is often said, the Imperial Palace was worth more 
+than the entire land value of California. Given these kind of historic extremes (and the 
+crash that followed), we are hesitant to read too much into these results.
+APPENDIX C
+MORE GRANULAR EQUITY SECTORS
+In Exhibit C1 we present real returns to sectors at a granular level. This supports the 
+previous discussion around Exhibit 7 that no non-commodity sector provides meaningful 
+inflation protection. Medical equipment is the only counterpoint, returning +1% real on 
+average across the eight regimes. Gold miners are the strongest sector on +7%, outpac­
+ing other commodity producers. Longer duration sectors such as software (-20% real 
+annualized) are particularly weak.
+EXHIBIT B4
+Japanese Residential Real Estate Performance across Inflationary Regimes
+NOTES: Total real returns during the identified Japan inflationary regimes, as well as the annualized real return during inflationary, non­
+inflationary, and all periods. In the final column, we present the hit rate, defined as the proportion of inflationary periods for which the 
+return is positive. The data are collected from the Japan Real Estate Institute and run from 1926 to 2020.
+Specific Inflation Regimes
+Combined Regimes
+Strategy
+Real Return (total)
+Start Month
+End Month
+Residential
+ Real Estate
+Real Return (ann.)
+Typhoon Vera/
+Civil Unrest
+December
+1959
+November
+1961
+56%
+Continuing 
+of Economic
+Miracle
+December
+1962
+September
+1963
+4%
+Izanagi
+Boom
+August
+1967
+April
+1970
+39%
+Tatenokai
+Attempted
+Coup d'etat 
+September
+1970
+September
+1971
+8%
+OPEC Oil
+Embargo
+October
+1972
+February
+1974
+13%
+Iranian
+Revolution
+October
+1979
+September
+1980
+4%
+All
+(100%)
+3%
+Inflation
+(22%)
+12%
+Other
+(78%)
+1%
+Hit Rate
+100%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  35
+August 2021
+EXHIBIT C1
+US Granular Sector Performance in Inflationary Regimes
+Inflation (19%)
+–2%
+–4%
+–10%
+–3%
+–2%
+–17%
+–7%
+–15%
+–9%
+–11%
+–5%
+1%
+–1%
+–7%
+–9%
+–12%
+–8%
+–7%
+–6%
+–5%
+–6%
+–10%
+–15%
+–13%
+–10%
+–4%
+7%
+–2%
+5%
+0%
+–9%
+–7%
+–14%
+–8%
+–8%
+–20%
+–10%
+–4%
+–6%
+–4%
+–12%
+–6%
+–10%
+–7%
+Other (81%)
+7%
+11%
+14%
+12%
+11%
+9%
+11%
+10%
+10%
+11%
+7%
+11%
+11%
+11%
+12%
+9%
+10%
+7%
+6%
+3%
+10%
+12%
+12%
+15%
+9%
+13%
+1%
+8%
+1%
+8%
+10%
+9%
+7%
+10%
+13%
+10%
+12%
+11%
+7%
+11%
+10%
+6%
+12%
+11%
+All (100%)
+5%
+8%
+8%
+9%
+9%
+4%
+8%
+5%
+6%
+6%
+4%
+9%
+9%
+7%
+8%
+5%
+6%
+4%
+3%
+1%
+7%
+8%
+7%
+9%
+5%
+8%
+2%
+6%
+2%
+6%
+6%
+6%
+3%
+6%
+9%
+1%
+7%
+8%
+4%
+8%
+5%
+4%
+8%
+7%
+Hit Rate
+50%
+38%
+20%
+50%
+25%
+13%
+63%
+25%
+25%
+38%
+60%
+50%
+38%
+38%
+25%
+13%
+25%
+38%
+25%
+60%
+25%
+50%
+13%
+25%
+38%
+20%
+80%
+38%
+50%
+50%
+25%
+25%
+38%
+38%
+25%
+40%
+25%
+38%
+25%
+38%
+13%
+38%
+38%
+38%
+Specific Inflation Regimes
+Combined Regimes
+Real Return (total)
+Real Return (ann.)
+Strategy
+Start Month
+End Month
+Total Price Level Change
+Agris
+Food
+Soda
+Beer
+Tobacco
+Toys
+Recreation
+Books
+Household
+Apparel 
+Health
+Medical Equipment
+Drugs
+Chemicals
+Rubber
+Textiles
+Building Materials
+Construction
+Steel
+Fabricated Products
+Machinery
+Electrical Equipment
+Autos
+Planes
+Ships
+Guns
+Gold
+Mines
+Coal
+Oil
+Utilities
+Telecoms
+Personal Services
+Business Services
+Hardware
+Software
+Chips
+Lab Equipment
+Paper
+Boxes
+Transport
+Wholesale
+Retail
+Meals
+US Enters WW2
+April
+1941
+May
+1942
+15%
+–23%
+–22%
+7%
+–32%
+–48%
+20%
+–34%
+–24%
+–13%
+1%
+–19%
+–25%
+–19%
+–19%
+–18%
+–38%
+–24%
+–20%
+–27%
+–16%
+–24%
+–28%
+–22%
+–9%
+–14%
+–43%
+–32%
+–17%
+–24%
+–18%
+–9%
+–18%
+–25%
+–31%
+–21%
+–7%
+–25%
+–16%
+End of WW2
+March
+1946
+March
+1947
+21%
+15%
+–24%
+–40%
+–20%
+–26%
+–36%
+–47%
+–21%
+–22%
+–12%
+–8%
+–17%
+–32%
+–23%
+–24%
+–34%
+–21%
+–27%
+–38%
+–32%
+–43%
+–28%
+–29%
+–19%
+–10%
+–20%
+–25%
+–26%
+–17%
+–16%
+–19%
+–9%
+–16%
+–11%
+–38%
+–25%
+–24%
+–26%
+Korean War
+August
+1950
+February
+1951
+7%
+24%
+8%
+21%
+–2%
+17%
+9%
+33%
+20%
+18%
+25%
+17%
+28%
+28%
+23%
+28%
+32%
+27%
+28%
+19%
+25%
+15%
+18%
+35%
+23%
+25%
+12%
+3%
+3%
+19%
+19%
+24%
+15%
+35%
+35%
+24%
+19%
+19%
+20%
+Ending of Bretton
+Woods
+February
+1966
+January
+1970
+19%
+–7%
+3%
+45%
+25%
+8%
+–35%
+76%
+–11%
+8%
+6%
+16%
+99%
+15%
+–41%
+16%
+–27%
+11%
+9%
+–24%
+–27%
+–19%
+0%
+–27%
+–53%
+–12%
+–31%
+26%
+–6%
+85%
+–20%
+–24%
+–19%
+4%
+36%
+73%
+–70%
+–22%
+33%
+2%
+17%
+–41%
+32%
+12%
+116%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+24%
+–42%
+–38%
+–66%
+–65%
+–38%
+–78%
+–76%
+–69%
+–61%
+–76%
+–86%
+–54%
+–38%
+–30%
+–64%
+–65%
+–57%
+–59%
+–15%
+–53%
+–44%
+–66%
+–61%
+–61%
+–30%
+–35%
+6%
+–14%
+4%
+–19%
+–38%
+–15%
+–75%
+–68%
+–57%
+–92%
+–63%
+–57%
+–30%
+–46%
+–60%
+–58%
+–64%
+–77%
+Iranian
+Revolution
+February
+1977
+March
+1980
+37%
+1%
+–26%
+–23%
+–10%
+–2%
+–21%
+31%
+4%
+–32%
+4%
+158%
+–9%
+–5%
+–20%
+–6%
+–14%
+–7%
+46%
+–23%
+21%
+–2%
+1%
+–34%
+52%
+30%
+38%
+78%
+7%
+–29%
+32%
+–22%
+–24%
+7%
+15%
+–20%
+76%
+1%
+29%
+–21%
+–18%
+–13%
+12%
+–34%
+0%
+Reagan’s Boom
+February
+1987
+November
+1990
+20%
+–19%
+62%
+–15%
+92%
+121%
+–3%
+16%
+–17%
+–2%
+–18%
+28%
+28%
+45%
+2%
+–4%
+–6%
+–7%
+–5%
+5%
+9%
+4%
+2%
+–23%
+–15%
+–65%
+–8%
+–4%
+9%
+–2%
+32%
+8%
+41%
+–47%
+–14%
+–34%
+8%
+–28%
+–25%
+–6%
+18%
+–4%
+–16%
+15%
+–5%
+China Demand
+Boom
+September
+2007
+July
+2008
+6%
+53%
+–6%
+–32%
+–1%
+–4%
+–24%
+–42%
+–42%
+–6%
+–27%
+–17%
+–2%
+–7%
+6%
+–20%
+–34%
+–25%
+–16%
+–9%
+12%
+–8%
+–10%
+–40%
+–25%
+4%
+–4%
+9%
+–6%
+107%
+0%
+–3%
+–27%
+–17%
+–21
+–21%
+–10%
+–17%
+–4%
+–26%
+–4%
+–5%
+–15%
+–16%
+–16%
+(continued)
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+36  |  The Best Strategies for Inflationary Times
+August 2021
+ACKNOWLEDGMENTS 
+We thank Tarek Abou Zeid, Ed Cole, Luke Ellis, Antoine Forterre, Carl Hamill, Soren Fryland 
+Moller, Andrea Mondelci, Sandy Rattray, Graham Robertson, Matthew Sargaison, and Dan Taylor.
+REFERENCES
+Ang, A. 2014. Asset Management: A Systematic Approach to Factor Investing. Oxford: Oxford Uni­
+versity Press.
+Asness, C., A. Frazzini, and L. H. Pedersen. 2019. “Quality Minus Junk.” Review of Accounting 
+Studies 24: 34–112.
+Baltussen, G., L. Swinkels, and P. Van Vliet. 2020. “Global Factor Premiums.” Journal of Financial 
+Economics, forthcoming.
+Beckers, S. E. 1991. “Stocks, Bonds, and Inflation in World Markets: Implications for Pension 
+Fund Investment.” The Journal of Fixed Income 1 (3): 18–30.
+Boudoukh, J., and M. Richardson. 1993. “Stock Returns and Inflation: A Long-Horizon Perspective.” 
+The American Economic Review 83 (5): 1346–1355.
+Dimson, E., P. L. Rousseau, and C. Spaenjers. 2013. “The Price of Wine.” Journal of Financial 
+Economics 118 (2): 431–449.
+Dimson, E., and C. Spaenjers. 2011. “Ex Post: The Investment Performance of Collectible Stamps.” 
+Journal of Financial Economics 100 (2): 443–458.
+Erb, C. B., and C. R. Harvey. 2006. “The Tactical and Strategic Value of Commodity Futures.” 
+Financial Analysts Journal 62 (2): 69–97.
+EXHIBIT C1 (continued)
+US Granular Sector Performance in Inflationary Regimes
+NOTES: Total returns to 49 long-only sector portfolios, as collected on Kenneth R. French’s website, during the eight US inflationary 
+regimes defined in the article, as well as the annualized return during inflationary, other, and all periods. In the final column, 
+we present the hit rate (proportion of inflationary periods with positive returns). The majority of the data are from 1926 to 2020; 
+however, six of the series start later. See Appendix A for details on sources and calculation methodology.
+Banks
+Insurance
+Real Estate
+Fins
+Other
+–11%
+–7%
+–17%
+–10%
+–11%
+Inflation (19%)
+13%
+10%
+5%
+11%
+6%
+Other (81%)
+8%
+7%
+1%
+7%
+2%
+All (100%)
+25%
+38%
+38%
+25%
+38%
+Hit Rate
+Specific Inflation Regimes
+Combined Regimes
+Real Return (total)
+Real Return (ann.)
+Strategy
+Start Month
+End Month
+Total Price Level Change
+US Enters WW2
+April
+1941
+May
+1942
+–27%
+–14%
+–42%
+–13%
+–13%
+15%
+End of WW2
+March
+1946
+March
+1947
+–22%
+–24%
+–52%
+–34%
+–22%
+21%
+Korean War
+August
+1950
+February
+1951
+12%
+18%
+36%
+23%
+21%
+7%
+Ending of Bretton
+Woods
+February
+1966
+January
+1970
+22%
+7%
+111%
+18%
+–25%
+19%
+OPEC Oil
+Embargo
+July
+1972
+December
+1974
+–49%
+–50%
+–87%
+–55%
+–74%
+24%
+Iranian
+Revolution
+February
+1977
+March
+1980
+–23%
+13%
+45%
+–1%
+11%
+37%
+Reagan’s Boom
+February
+1987
+November
+1990
+–34%
+–7%
+–54%
+–35%
+6%
+20%
+China Demand
+Boom
+September
+2007
+July
+2008
+–39%
+–31%
+–47%
+–29%
+–25%
+6%
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 
+The Journal of Portfolio Management  |  37
+August 2021
+——. 2013. “The Golden Dilemma.” Financial Analysts Journal 69 (4): 10–42.
+Fama, E. F. 1981. “Stock Returns, Real Activity, Inflation, and Money.” The American Economic 
+Review 71 (4): 545–565.
+Fama, E. F., and K. R. French. 1997. “Industry Costs of Equity.” Journal of Financial Economics 
+43 (2): 153–193.
+Fama, E. F., and G. W. Schwert. 1977. “Asset Returns and Inflation.” Journal of Financial Economics 
+5 (2): 115–146.
+Ferson, W. E., and C. R. Harvey. 1993. “The Risk and Predictability of International Equity Returns.” 
+The Review of Financial Studies 6 (3): 527–566.
+——. 1994. “Sources of Risk and Expected Returns in Global Equity Markets.” Journal of Banking 
+and Finance 18 (4): 775–803.
+Frazzini, A., and L. H. Pedersen. 2014. “Betting against Beta.” Journal of Financial Economics 
+111 (1): 1–25.
+Goetzmann, W. N., L. Renneboog, and C. Spaenjers. 2011. “Art and Money.” American Economic 
+Review: Papers & Proceedings 101 (3): 222–226.
+Gultekin, B. 1983. “Stock Market Returns and Inflation: Evidence from Other Countries.” 
+The Journal of Finance 38 (1): 49–65.
+Hamill, C., S. Rattray, and O. Van Hemert. 2016. “Trend Following: Equity and Bond Crisis Alpha.” 
+Working paper, SSRN.
+Harvey, C. R., E. Hoyle, S. Rattray, M. Sargaison, D. Taylor, and O. Van Hemert. 2019. “The Best 
+of Strategies for the Worst of Times: Can Portfolios Be Crisis Proofed?” The Journal of Portfolio 
+Management 45 (5): 7–28.
+Harvey, C. R., A. Ramachandran, and J. Santoro. 2021. DeFi and the Future of Finance. Hoboken, 
+NJ: John Wiley and Sons (forthcoming).
+Harvey, C. R., S. Rattray, and O. Van Hemert. 2021. Strategic Risk Management. Hoboken, NJ: 
+John Wiley and Sons.
+Kaul, G. 1987. “Stock Returns and Inflation: The Role of the Monetary Sector.” Journal of Financial 
+Economics 18 (2): 253–276.
+Lee, B. 1992. “Causal Relations among Stock Returns, Interest Rates, Real Activity and Inflation.” 
+The Journal of Finance 47 (4): 1591–1603.
+Marshall, W. 2020. “A Backcast History of Traded Inflation.” Goldman Sachs.
+Sharpe, S. “Stock Prices, Expected Returns, and Inflation.” Working paper, Federal Reserve Board, 
+1999.
+To order reprints of this article, please contact David Rowe at d.rowe@pageantmedia.com 
+or 646-891-2157.
+It is illegal to make unauthorized copies, forward to an unauthorized user, post electronically, or store on shared cloud or hard drive without Publisher permission. 
+by Campbell Harvey on July 5, 2022. Copyright 2021 With Intelligence Ltd. 
+, 
+https://jpm.pm-research.com/content/47/8
+Downloaded from 

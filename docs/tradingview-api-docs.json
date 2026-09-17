@@ -1,0 +1,308 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TradingView Free Internal APIs",
+    "description": "Dokumentasi OpenAPI 3.0 untuk API gratis/internal dari TradingView (Scanner, Symbol Search, dan Economic Calendar).",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://scanner.tradingview.com",
+      "description": "TradingView Scanner Server"
+    },
+    {
+      "url": "https://symbol-search.tradingview.com",
+      "description": "TradingView Symbol Search Server"
+    },
+    {
+      "url": "https://economic-calendar.tradingview.com",
+      "description": "TradingView Economic Calendar Server"
+    }
+  ],
+  "paths": {
+    "/{market}/scan": {
+      "post": {
+        "summary": "Multi-Market Asset Scanner & Screener",
+        "description": "Mengambil quote real-time, OHLC, perubahan harga, indikator teknikal, dan data fundamental untuk saham, forex, crypto, obligasi, dan indeks.",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "path",
+            "required": true,
+            "description": "Pasar target: global, america, indonesia, forex, crypto, bond",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "global",
+                "america",
+                "indonesia",
+                "forex",
+                "crypto",
+                "bond"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScannerRequest"
+              },
+              "example": {
+                "symbols": {
+                  "tickers": [
+                    "TVC:DE02Y",
+                    "TVC:US02Y"
+                  ]
+                },
+                "columns": [
+                  "name",
+                  "close",
+                  "change",
+                  "change_abs"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Berhasil mendapatkan data scanner.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/symbol_search/": {
+      "get": {
+        "summary": "Pencarian Symbol / Ticker",
+        "description": "Mencari simbol instrumen keuangan berdasarkan kata kunci pencarian.",
+        "servers": [
+          {
+            "url": "https://symbol-search.tradingview.com"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "text",
+            "in": "query",
+            "required": true,
+            "description": "Kata kunci pencarian (contoh: DE02Y, BTCUSD, BBCA)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hl",
+            "in": "query",
+            "required": false,
+            "description": "Highlight hasil pencarian (1 atau 0)",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar simbol yang cocok.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SymbolSearchItem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Kalender Ekonomi Global",
+        "description": "Mengambil jadwal rilis berita dan data ekonomi global real-time.",
+        "servers": [
+          {
+            "url": "https://economic-calendar.tradingview.com"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Tanggal awal rentang waktu (format ISO 8601, contoh: 2026-07-01T00:00:00.000Z)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Tanggal akhir rentang waktu (format ISO 8601, contoh: 2026-07-31T23:59:59.000Z)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daftar peristiwa ekonomi.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EconomicCalendarResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ScannerRequest": {
+        "type": "object",
+        "properties": {
+          "symbols": {
+            "type": "object",
+            "properties": {
+              "tickers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sort": {
+            "type": "object",
+            "properties": {
+              "sortBy": {
+                "type": "string"
+              },
+              "sortOrder": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            }
+          },
+          "range": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "example": [
+              0,
+              50
+            ]
+          }
+        }
+      },
+      "ScannerResponse": {
+        "type": "object",
+        "properties": {
+          "totalCount": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "s": {
+                  "type": "string",
+                  "description": "Simbol/Ticker"
+                },
+                "d": {
+                  "type": "array",
+                  "items": {},
+                  "description": "Nilai dari kolom yang diminta sesuai urutan pada request"
+                }
+              }
+            }
+          }
+        }
+      },
+      "SymbolSearchItem": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "exchange": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          }
+        }
+      },
+      "EconomicCalendarResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "actual": {
+                  "type": "number"
+                },
+                "forecast": {
+                  "type": "number"
+                },
+                "prior": {
+                  "type": "number"
+                },
+                "importance": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
