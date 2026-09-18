@@ -139,12 +139,17 @@ class TestFedWatch:
 
         The pre-meeting baseline is the end-of-month rate after meeting-1
         (4.08), not the previous month's time-averaged implied (4.205); a
-        market pricing hold must show HOLD, not 'cut 100%'."""
+        market pricing hold must show HOLD, not 'cut 100%'.
+
+        SOAK 2026-09-18: Oct-28 leaves n_post=4 ≤ 7 → the CME last-week
+        convention reads the NEXT-month contract for the post rate — the
+        strip must carry NOV (hold priced: NOV implied 4.08)."""
         from datetime import date
 
         # Sep: 15 days @4.33 + 15 days @4.08 → SEP implied = 4.205 (settle 95.795)
         # Oct: hold at 4.08 all month → OCT implied = 4.08 (settle 95.92)
-        settlements = {"SEP 26": 95.795, "OCT 26": 95.92}
+        # Nov: hold at 4.08 → NOV implied = 4.08 (settle 95.92)
+        settlements = {"SEP 26": 95.795, "OCT 26": 95.92, "NOV 26": 95.92}
         probs = compute(settlements, 4.33, meetings=[date(2026, 9, 16), date(2026, 10, 28)])
         assert len(probs) == 2
         # meeting-1: 25bp cut fully priced
@@ -161,7 +166,11 @@ class TestFedWatch:
         D/n_post extraction amplified the 25bp error ×31/4 → Oct-26 implied
         5.53%, Dec-09 3.61%, Jan-27 7.02% (live garbage on the server).
         With anchor_date passed, the just-held meeting re-runs first and the
-        running rate bootstraps the post-hike level from the strip itself."""
+        running rate bootstraps the post-hike level from the strip itself.
+
+        SOAK 2026-09-18: Oct-28 (n_post=4 ≤ 7) now reads the NEXT-month
+        contract per the CME last-week convention — implied = NOV = 3.98,
+        not the old day-weighted 4.0775."""
         from datetime import date
 
         # live strip td=2026-09-15 (server cme_settlements, product 305)
@@ -172,23 +181,28 @@ class TestFedWatch:
         # the passed meeting is bootstrap machinery — never returned
         assert all(p.meeting_date > date(2026, 9, 16) for p in probs)
         oct_row = next(p for p in probs if p.meeting_date == date(2026, 10, 28))
-        # (3.7375·30 − 3.63·15)/15 = 3.845 running → (3.875·31 − 3.845·27)/4
-        # = 4.0775 — NOT the 5.529 the stale anchor produced
-        assert abs(oct_row.implied_rate - 4.0775) < 0.01
-        assert oct_row.prob_hike > 0.5  # ≈ +23bp priced for Oct
+        # bootstrap: (3.7375·30 − 3.63·15)/15 = 3.845 running → Oct post =
+        # NOV implied 3.98 — sane, NOT the 5.529 the stale anchor produced
+        assert abs(oct_row.implied_rate - 3.98) < 0.01
+        assert oct_row.prob_hike > 0.5  # ≈ +13.5bp priced for Oct
 
-    def test_stale_anchor_without_date_drops_degenerate(self):
-        """Without anchor_date the pre-fix garbage path computes rows beyond
-        ±100bp — the degenerate tripwire must DROP them (honest 'ZQ data
-        unavailable' degradation) instead of serving 5.53% to the brief."""
+    def test_stale_anchor_without_date_now_sane(self):
+        """SOAK 2026-09-18: without anchor_date, the Sep bootstrap + the
+        next-month convention for late meetings keep every row INSIDE the
+        ±100bp tripwire band — the old cascade (5.53 → 3.61 → 7.02) is gone
+        at the source, so nothing needs dropping."""
         from datetime import date
 
         settlements = {
             "SEP 26": 96.2625, "OCT 26": 96.125, "NOV 26": 96.02, "DEC 26": 95.895,
         }
-        probs = compute(settlements, 3.63)  # no anchor_date → old behavior + tripwire
+        probs = compute(settlements, 3.63)  # no anchor_date → bootstrap + convention
         assert all(abs(p.expected_moves) <= 4.0 for p in probs)
-        assert all(p.meeting_date != date(2026, 10, 28) for p in probs)  # the 5.53 row dropped
+        # the Oct row is now SANE (post = NOV implied 3.98) and therefore kept
+        oct_row = next(
+            (p for p in probs if p.meeting_date == date(2026, 10, 28)), None
+        )
+        assert oct_row is not None and 3.5 < oct_row.implied_rate < 4.5
 
 
 class Test3mAnnualized:

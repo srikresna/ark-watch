@@ -499,6 +499,23 @@ def compute_fedwatch(conn) -> list[dict]:
     # bootstrap the new level by re-running the just-held meeting.
     anchor_date = date.fromisoformat(str(effr_row[0])[:10])
 
+    # SOAK FIX (2026-09-18): the bootstrap recovers the MARKET-EXPECTED new
+    # level (live: 3.845) rather than the realized one (3.875) — a 3bp gap
+    # the extraction amplified into a phantom "Oct hike 100%" while official
+    # read 53%. The decided target is a KNOWN FACT in events (FMP reports
+    # the UPPER bound; midpoint = upper − 12.5bp in the 25bp-range era):
+    # snap to it and disable the replay — nothing unknown remains.
+    decided = conn.execute(
+        "SELECT actual FROM events WHERE normalized_name='FED INTEREST RATE DECISION'"
+        " AND actual IS NOT NULL"
+        " AND substr(ts_utc,1,10) > ? AND substr(ts_utc,1,10) <= ?"
+        " ORDER BY ts_utc DESC LIMIT 1",
+        (anchor_date.isoformat(), datetime.now(UTC).date().isoformat()),
+    ).fetchone()
+    if decided and decided[0]:
+        effr = float(decided[0]) - 0.125
+        anchor_date = datetime.now(UTC).date()
+
     probs = fw.compute(settlements, effr, anchor_date=anchor_date)
 
     conn.execute("BEGIN IMMEDIATE")

@@ -316,18 +316,17 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
     s = session if session is not None else creq.Session(impersonate="chrome")
     r = s.get(url, timeout=(10, 60))
     # Unpublished months are a soft-404: HTTP 200 with an HTML body.
-    # Genuine XLSX starts with the PK magic bytes. ROUND-2: an unpublished
-    # CURRENT month is a legit early-month state ([]) — but a non-XLSX body
-    # for a month that MUST already be in the archive (any past month) means
-    # the path moved or the block changed: a silent [] froze the copper feed
-    # for 20 days with fetch_log reading EMPTY-not-ERROR. Raise named.
+    # Genuine XLSX starts with the PK magic bytes.
+    # SOAK CORRECTION (2026-09-18): the official listing page carries
+    # Jan–AUG 2026 only — the monthly file for month M publishes at the
+    # START of M+1 (verified against the live page). So a soft-404 for the
+    # CURRENT month is the NORMAL state all month (round-4's day-7 gate
+    # misread the cadence and errored daily). A non-XLSX body for a PAST
+    # month (the archive must have it) or an unparseable file remains a
+    # named error — that is the real path-moved/blocked detector.
     if r.status_code != 200 or r.content[:2] != b"PK":
         now = datetime.now(UTC)
-        past = (year, month) < (now.year, now.month)
-        # current-month grace: the file legitimately appears in the first
-        # days of a month — a non-XLSX body past day 7 is a path problem
-        # (live: September-2026 soft-404'd for 17 straight days as EMPTY)
-        if past or (now.year, now.month) == (year, month) and now.day > 7:
+        if (year, month) < (now.year, now.month):
             raise RuntimeError(
                 f"LME soft-404: stocks-{_LME_MONTHS[month - 1]}-{year}.xlsx"
                 f" serves HTTP {r.status_code} non-XLSX — path moved/blocked"

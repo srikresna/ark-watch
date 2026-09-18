@@ -118,7 +118,13 @@ def compute(
         pre_rate = running
 
         # post_rate
-        if n_post <= 3:
+        # SOAK FIX (2026-09-18): threshold ≤7 (CME's own "meeting in the last
+        # week of the month" convention). With 4 post days a single 0.25-tick
+        # move in the meeting-month contract swings the extracted rate ~2bp ≈
+        # 8pp of probability — tick noise the day-weighted formula amplifies
+        # 31/4×. The next-month contract prices the post-meeting level
+        # directly (live: settle-vs-mid timing flipped Oct between 0% and 53%).
+        if n_post <= 7:
             if key_next in implied:
                 post_rate = implied[key_next]  # end-of-month trick
             else:
