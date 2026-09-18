@@ -694,6 +694,10 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                     tic.append(f"TIC CN {cn:,.0f}B$")
             elif "tic_china" in d:
                 tic.append(f"TIC CN {d['tic_china'][1]:,.0f}B$")
+            # ROUND-7: Japan — the other classic TIC headline; the kind was
+            # written every month with zero readers (write-only inventory)
+            if "tic_japan" in d and d["tic_japan"][1] is not None:
+                tic.append(f"JP {d['tic_japan'][1]:,.0f}B$")
             if "tic_grand_total" in d:
                 tic.append(f"foreign total {d['tic_grand_total'][1]:,.0f}B$")
             if "wgc_gold" in d:  # manual CLI entry (FR-28), shown when fresher

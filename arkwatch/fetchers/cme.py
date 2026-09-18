@@ -100,8 +100,21 @@ class CmeError(RuntimeError):
     pass
 
 
+_SESSION: creq.Session | None = None
+
+
 def _session() -> creq.Session:
-    return creq.Session(impersonate="chrome")
+    """ONE shared chrome-impersonation session per process (ROUND-7).
+
+    A fresh session per call = distinct TLS fingerprints in rapid bursts —
+    exactly the churn pattern that gets gray-zone scrapers detected. The
+    options fetchers already thread a shared session; now settlements/
+    CVOL/VOI ride the same one (the LME fetcher documented this pattern
+    first)."""
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = creq.Session(impersonate="chrome")
+    return _SESSION
 
 
 def _biz_date_str(d: datetime) -> str:

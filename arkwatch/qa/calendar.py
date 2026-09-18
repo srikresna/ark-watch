@@ -425,6 +425,21 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     events, counts = pull(a.from_d, a.to_d)
     n_new = save(a.db, events)
+    # ROUND-7: per-source fetch_log rows — a dead TV/CME-calendar endpoint
+    # was invisible (the job always exits 0, failures only printed). A dead
+    # source now lands as EMPTY in the same health surface everything else
+    # uses. (FMP carries the values, so EMPTY ≠ data loss — visibility only.)
+    try:
+        import sqlite3 as _sq
+
+        from .fetch_log import log_collection as _lc_cal
+
+        _conn = _sq.connect(a.db, isolation_level=None)
+        for src, n in counts.items():
+            _lc_cal(_conn, "calendar", f"CAL:{src}", None, n)
+        _conn.close()
+    except Exception:
+        pass  # observability must never fail the calendar job
     hi = sum(1 for e in events if e["importance"] == "high")
     print(
         f"=== calendar union-4: fetch={counts} · unique={len(events)} (high={hi}) · new rows={n_new} ==="

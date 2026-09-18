@@ -566,8 +566,13 @@ def compute_fedwatch(conn) -> list[dict]:
                 ),
             )
             official_rows.append(o)
-    except Exception:
-        pass  # degradable by design
+    except Exception as ex:
+        # ROUND-7: except-pass had ZERO observability — a dead QuikStrike
+        # view silently killed the DIY-vs-official calibration gate while
+        # fetch_log read all-green. Degrade, but LEAVE A ROW.
+        from .fetch_log import log_collection as _lc_qs
+
+        _lc_qs(conn, "f2", "QS:FEDWATCH", None, 0, err=str(ex)[:140])
 
     # DIY vs official calibration gate ≤3pp
     if official_rows:

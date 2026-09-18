@@ -368,6 +368,16 @@ def get_conn(path: str | Path, *, allow_init: bool = False) -> sqlite3.Connectio
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # ROUND-7: a DB restored from a VACUUM INTO backup permanently carries
+    # journal_mode=delete (the backup file has no WAL) — every connection
+    # re-asserts WAL so the restore path cannot silently lose the invariant
+    # (idempotent; a already-WAL db is a no-op read)
+    try:
+        _jm = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(_jm).lower() != "wal":
+            conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass  # read-only connections cannot set PRAGMAs — harmless
     current = _schema_version(conn)
     if current is None:
         if not (allow_init or fresh):

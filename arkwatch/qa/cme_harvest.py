@@ -26,6 +26,7 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
     codes = products or list(cme.PRODUCTS.keys())
     out: dict[str, int] = {}
     for code in codes:
+        time.sleep(0.3)  # ROUND-7: pacing — bursts of fresh TLS hands beg blocking
         try:
             rows = cme.fetch_settlements(code)
             # ROUND-3: snapshot the frontier BEFORE the save — reading it
@@ -352,11 +353,25 @@ def main(argv: list[str] | None = None) -> int:
     if n_prod_fail:
         failed = [k for k, v in s.items() if v < 0]
         s_err = f"{n_prod_fail}/{len(s)} failed: {','.join(failed[:6])}"
+    # ROUND-7 kill-switch: a fully-dead CME vendor (6 signals at once:
+    # FedWatch/ECBWatch/XCCY/CVOL/VOI/options-PCR) must FAIL the job so the
+    # daemon's job_failed alert fires — exit-0-with-empty was silent death
+    all_dead = s and n_prod_fail == len(s)
+    # ROUND-7 stale gate: the strip itself can lag; name it in fetch_log
+    strip_td = conn.execute(
+        "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=305"
+    ).fetchone()[0]
+    if strip_td:
+        strip_age = (
+            datetime.now(UTC).date() - datetime.fromisoformat(strip_td).date()
+        ).days
+        if strip_age > 7:
+            s_err = (s_err or "") + f" |ZQ strip stale {strip_age}d ({strip_td})"
     # ROUND-2: rows = ACTUAL inserted/gap-filled rows (the old len(s) logged
     # '14' forever — a dead product was indistinguishable from a healthy one)
     log_collection(
         conn, "cme", "CME:settlements", None,
-        sum(v for v in s.values() if v > 0), err=s_err,
+        sum(v for v in s.values() if v > 0), err=s_err or None,
     )
     if not a.skip_options:
         n_opt_fail = sum(1 for v in o.values() if v < 0)
@@ -376,6 +391,10 @@ def main(argv: list[str] | None = None) -> int:
         log_collection(conn, "cme", "CME:voi", None, n, err=voi_err)
 
     conn.close()
+    # ROUND-7: propagate total vendor death to the daemon (job_failed alert)
+    if all_dead:
+        print("✗ CME: ALL settlement products failed — vendor kill-switch")
+        return 1
     return 0
 
 

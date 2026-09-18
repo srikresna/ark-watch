@@ -28,6 +28,12 @@ def backup(db_path: str = str(DEFAULT_DB)) -> Path:
     conn = sqlite3.connect(db_path)
     conn.execute("VACUUM INTO ?", (str(dst),))
     conn.close()
+    # ROUND-7: intrinsic 600 — the nightly artifact carries every live
+    # credential-adjacent table; harden.sh swept the old ones but every NEW
+    # backup was still born 644 (umask default)
+    import os
+
+    os.chmod(dst, 0o600)
     return dst
 
 
