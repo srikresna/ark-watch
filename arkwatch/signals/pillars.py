@@ -154,6 +154,15 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         ry_state = "FALLING" if ry_m < -_RY_THR else ("RISING" if ry_m > _RY_THR else "FLAT")
     else:
         ry_state = "INSUFFICIENT"
+    # ROUND-6 P0: NEGATED — rising real yields are a headwind for risk
+    # assets (the brief's own XAUUSD line reads 'RY↑ headwind'), but the
+    # raw z fed the POSITIVE-weighted score the other way: stress/RY-up
+    # pushed the score toward RISK-ON (11/12 live labels biased). The
+    # score convention is 'higher = more risk-on'; both B and F z must
+    # express 'supportive of risk'. ROUND-7: guard on the z RESULT, not the
+    # input list — zscore returns None below min_obs and unary-minus on
+    # None crashed the Sunday f4 replay at 66/261 months.
+    _zb = zscore(dfii)
     out["B"] = {
         "parts": ["FRED:DFII10"],
         "label": "RealYield",
@@ -161,13 +170,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         "detail": f"DFII10 {_pct(dfii[-1] if dfii else None)}% ({ry_m * 100:.0f}bps/20d)"
         if ry_m is not None
         else "N/A",
-        # ROUND-6 P0: NEGATED — rising real yields are a headwind for risk
-        # assets (the brief's own XAUUSD line reads 'RY↑ headwind'), but the
-        # raw z fed the POSITIVE-weighted score the other way: stress/RY-up
-        # pushed the score toward RISK-ON (11/12 live labels biased). The
-        # score convention is 'higher = more risk-on'; both B and F z must
-        # express 'supportive of risk'.
-        "z": -zscore(dfii) if dfii else None,
+        "z": -_zb if _zb is not None else None,
     }
 
     # C — Inflation (overlay)
@@ -269,6 +272,7 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
     # the watcher cooldown), and VIX still reaches the brief via the
     # overnight-changes section and the watcher.
     hy_pct = percentile_rank(hy, 756) if hy else None  # 3y percentile
+    _zf = zscore(hy, 756)
     if hy_pct is not None:
         f_state = "CALM" if hy_pct < 30 else ("ELEVATED" if hy_pct < 70 else "STRESSED")
     else:
@@ -281,8 +285,8 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         # ROUND-6 P0: NEGATED — widening HY spreads = credit stress = risk
         # OFF, but the raw z pushed the score toward RISK-ON (same class as
         # pillar B). z here expresses 'credit calm-ness' so the positive
-        # weights read correctly.
-        "z": -zscore(hy, 756) if hy else None,
+        # weights read correctly. ROUND-7: guard on the z result (see B).
+        "z": -_zf if _zf is not None else None,
     }
 
     return out

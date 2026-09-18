@@ -125,7 +125,8 @@ def save_first_prints(conn, series_id: str, prints: list[dict]) -> int:
         " ON CONFLICT(series_id,ts,source,vintage_ts) DO UPDATE SET"
         "  release_ts=excluded.release_ts, value=excluded.value,"
         "  fetched_at=excluded.fetched_at"
-        " WHERE raw_observations.release_ts = substr(raw_observations.fetched_at,1,10)",
+        " WHERE raw_observations.release_ts = substr(raw_observations.fetched_at,1,10)"
+        "   OR raw_observations.release_ts = 'na'",
         payload,
     )
     conn.execute("COMMIT")

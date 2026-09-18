@@ -1153,9 +1153,9 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         gold_biases.append("RY↓ tailwind")
     elif ry == "RISING":
         gold_biases.append("RY↑ headwind")
-    if dol_state == "WEAK":
+    if dol_state.startswith("WEAK"):
         gold_biases.append("USD↓ tailwind")
-    elif dol_state == "STRONG":
+    elif dol_state.startswith("STRONG"):
         gold_biases.append("USD↑ headwind")
     # COT crowded check — the category/report_type filters are required:
     # a bare LIMIT 1 lands on an arbitrary category row (mm/prod/nonrep/…)
@@ -1198,9 +1198,9 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     lines.append(f"  US500   : {idx_bias}")
 
     # FX
-    if dol_state == "WEAK":
+    if dol_state.startswith("WEAK"):
         lines.append("  EURUSD  : ↗ dollar weak")
-    elif dol_state == "STRONG":
+    elif dol_state.startswith("STRONG"):
         lines.append("  EURUSD  : ↘ dollar strong")
     else:
         lines.append("  EURUSD  : · neutral")

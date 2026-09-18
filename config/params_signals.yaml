@@ -179,3 +179,7 @@ cot_covering_chg_min: 10000     # weekly net-change magnitude for covering alert
 #  = konvensi "high conviction" yang lazim, belum teruji empiris di sini.]
 ecb_high_conviction_prob: 0.85  # dominant hike/cut prob that counts as conviction
 ecb_high_conviction_days: 7     # ... within N days of the GC decision
+
+# --- Round-6/7 gates (promoted from code defaults) ---
+net_liq_min_abs_b: 10.0         # $B deadband; WALCL is stored $M (gate multiplies by 1000)
+gold_ry_div_min_gold_pct: 0.5   # gold leg minimum % move over 20 sessions
