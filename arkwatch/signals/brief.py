@@ -663,7 +663,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         per = conn.execute(
             "SELECT kind, period, value FROM flows_periodic fp "
             "WHERE kind IN ('pboc_gold','pboc_gold_share','lbma_gold','lbma_silver',"
-            "'tic_china','tic_belgium','tic_grand_total','wgc_gold') "
+            "'tic_china','tic_japan','tic_belgium','tic_grand_total','wgc_gold') "
             "AND period=(SELECT MAX(period) FROM flows_periodic f2 "
             "            WHERE f2.kind=fp.kind)"
         ).fetchall()

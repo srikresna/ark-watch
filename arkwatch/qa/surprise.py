@@ -40,18 +40,35 @@ ESI_TAU_DAYS = float(_PS.get("surprise_esi_tau_days", 90.0))
 
 
 def backfill_keys(conn) -> int:
-    """Fill indicator_key for legacy rows (one-time, post migration v4)."""
-    rows = conn.execute(
-        "SELECT DISTINCT normalized_name FROM events WHERE indicator_key IS NULL"
-    ).fetchall()
+    """Fill/repair indicator_key for legacy or stranded rows.
+
+    ROUND-9: the fill-only-NULL predicate left pre-alias rows stranded
+    forever when an _ALIASES mapping landed after they were stored (live:
+    TV's 'PPI YOY'/'PPI MOM' @09-10 — the alias exists, the rows never
+    re-keyed, sigma stuck at n=1). The sweep now repairs ANY stored key
+    that disagrees with the current indicator_key() computation."""
+    rows = conn.execute("SELECT DISTINCT normalized_name FROM events").fetchall()
     n = 0
+    fixed: list[str] = []
     conn.execute("BEGIN IMMEDIATE")
     for (nn,) in rows:
-        conn.execute(
-            "UPDATE events SET indicator_key=? WHERE normalized_name=?", (indicator_key(nn), nn)
-        )
-        n += 1
+        want = indicator_key(nn)
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE normalized_name=? AND"
+            " (indicator_key IS NULL OR indicator_key<>?)",
+            (nn, want),
+        ).fetchone()[0]
+        if cur:
+            conn.execute(
+                "UPDATE events SET indicator_key=? WHERE normalized_name=?"
+                " AND (indicator_key IS NULL OR indicator_key<>?)",
+                (want, nn, want),
+            )
+            n += cur
+            fixed.append(f"{nn}→{want}")
     conn.execute("COMMIT")
+    if fixed:
+        print(f"  re-key: {n} rows across {len(fixed)} names ({'; '.join(fixed[:4])})")
     return n
 
 

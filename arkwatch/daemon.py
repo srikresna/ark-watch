@@ -198,7 +198,13 @@ def _run_job(cmd: str, desc: str) -> bool:
             logger.info(f"✓ {cmd} ({dt:.0f}s) — {summary[:240]}")
             return True
         err = (r.stderr or r.stdout or "").strip().splitlines()
-        tail = (err[-1] if err else "no output")[:200]
+        # ROUND-9: pages must quote the FAILING line, not the last — a
+        # verify failure blamed LME:CA_STOCKS (healthy, last row printed)
+        # while the sick series hid mid-stream
+        fail_lines = [
+            ln for ln in err if any(m in ln for m in ("✗", "ERROR", "Error", "Traceback"))
+        ]
+        tail = (" | ".join(fail_lines[-2:]) if fail_lines else (err[-1] if err else "no output"))[:200]
         logger.error(f"✗ {cmd} ({dt:.0f}s) exit={r.returncode} — {tail}")
         _alert_job_failed(cmd, tail)
         return False

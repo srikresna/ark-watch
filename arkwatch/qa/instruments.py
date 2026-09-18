@@ -144,6 +144,9 @@ def _cross_validate(conn, db_path: str) -> int:
     for spot, fut in (("XAUUSD", "GC1"), ("XAGUSD", "SI1"), ("XPTUSD", "PL1")):
         # ROUND-3: upper bound < today — a still-FORMING intraday bar diverges
         # from its futures leg by construction (false positive on first run)
+        # ROUND-9: threshold 1.5% (was 2%) — live, XAG/XPT wedged at
+        # 1.62%/1.57% while the futures legs matched CME settles EXACTLY,
+        # i.e. a genuine vendor wrong-cut passed SILENTLY under the 2% gate.
         rows = conn.execute(
             "SELECT a.ts, a.close, b.close FROM instrument_prices a"
             " JOIN instrument_prices b ON b.symbol=? AND b.source='YAHOO' AND b.ts=a.ts"
@@ -156,8 +159,24 @@ def _cross_validate(conn, db_path: str) -> int:
         for ts, s_close, f_close in rows:
             if f_close:
                 w = abs(s_close / f_close - 1)
-                if w > 0.02:
+                if w > 0.015:
                     wedges.append(f"{spot}/{fut} {ts} {w:.2%}")
+                    # ROUND-9 persistent-wedge REPAIR: the healing upsert
+                    # only works when the vendor eventually serves the
+                    # final — live, EODHD kept serving the same wrong close
+                    # forever (09-16 metals ~1-2.6% off, futures legs
+                    # CME-exact). A wedge this size on a CLOSED bar has no
+                    # innocent explanation (carry <1%): NULL the spot close
+                    # (the COALESCE upsert never overwrites NULL → clean
+                    # degradation; the reader-side NULL gates handle the
+                    # gap) rather than let a wrong price poison every
+                    # return/z/backtest downstream.
+                    conn.execute(
+                        "UPDATE instrument_prices SET close=NULL"
+                        " WHERE symbol=? AND source='EODHD' AND ts=?",
+                        (spot, ts),
+                    )
+                    print(f"  ⚠ xval REPAIR: {spot} {ts} close=NULL (wedge {w:.2%})")
     for sym in ("BTCUSD", "ETHUSD", "VIX", "US500", "US30", "US100", "DXY"):
         rows = conn.execute(
             "SELECT a.ts, a.close, b.close FROM instrument_prices a"
