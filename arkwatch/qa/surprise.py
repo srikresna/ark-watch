@@ -166,6 +166,10 @@ def compute_sigma(conn, as_of: str | None = None) -> dict:
         by_key.setdefault(key, []).append(round(actual - cons, 10))
 
     n_lc = 0
+    # ROUND-6: label names the REAL mechanism — >10×MAD unit-contaminants
+    # are EXCLUDED from the population (round-5); the old 'winsor4MAD'
+    # label described a clipping step that no longer exists
+    _window_label = f"{WINDOW_YEARS}y-excl10MAD"
     conn.execute("BEGIN IMMEDIATE")
     for key, diffs in by_key.items():
         n = len(diffs)
@@ -195,7 +199,7 @@ def compute_sigma(conn, as_of: str | None = None) -> dict:
             "INSERT OR REPLACE INTO indicator_stats"
             "(indicator, as_of, sigma, n_obs, window, low_conf)"
             " VALUES (?,?,?,?,?,?)",
-            (key, now[:10], sigma, n, f"{WINDOW_YEARS}y-winsor{WINSOR_SIGMA:g}MAD", low_conf),
+            (key, now[:10], sigma, n, _window_label, low_conf),
         )
     # ROUND-2: drop this as_of's ghost keys — families removed by re-keying/
     # stub-cleanup otherwise keep stale σ rows forever and the indicator

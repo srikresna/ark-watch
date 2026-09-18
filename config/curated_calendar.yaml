@@ -147,7 +147,7 @@ recurring:
 #     ESTRWatch (D-006). tz Europe/Berlin (NEW convention for this file:
 #     prior entries are ET); decision press release 14:15 local, presser
 #     14:45. NON-monetary-policy GC meetings (2026-09-30, 2026-11-25; 2027
-#     virtual: Feb-24, Apr-07, May-19, Jun-23, Sep-29, Nov-24) are
+#     virtual: Feb-24, Apr-07, May-19, Jun-23, Sep-29; Nov-24 is) are
 #     deliberately ABSENT — they carry no rate decision.
 #     transforms/ecbwatch.py vendors its own copy (ECB_GC_DECISIONS, the
 #     fedwatch/FOMC_SCHEDULE precedent) — keep both in sync on refresh.

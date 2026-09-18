@@ -29,7 +29,7 @@ python -m arkwatch verify    # data truth gate
 ```
 arkwatch/    fetchers (data sources) · signals (computation) · qa (jobs) · senders · daemon
 config/      series registry + signal thresholds (all YAML, provenance-commented)
-tests/       362 offline tests — no network needed
+tests/       440 offline tests — no network needed
 fixtures/    captured API responses for parser tests
 ```
 

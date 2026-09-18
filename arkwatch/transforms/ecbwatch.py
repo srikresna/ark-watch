@@ -32,7 +32,7 @@ docs/methodology/estrwatch.md):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 # (decision_day) — monetary-policy meetings only, verified against
 # ecb.europa.eu/press/calendars/mgcgc (Accessed 2026-09-10). Non-monetary
@@ -359,7 +359,7 @@ def format_brief(rows: list[ECBMeetingProb], diag: dict | None = None,
     move); the ESR strip date — decision-day prints are T−1-close pricing."""
     if not rows:
         return None
-    t = today or date.today()
+    t = today or datetime.now(UTC).date()
     r = next((x for x in rows if x.meeting_date >= t), None)
     if r is None:
         return None
@@ -377,6 +377,6 @@ def format_brief(rows: list[ECBMeetingProb], diag: dict | None = None,
         tail += f", ESR {asof[5:]}"
     if diag and "degraded" in diag.get("flags", []):
         tail += f" ⚠ fit {diag.get('rms_bp', '?')}bp"
-    if ECB_GC_DECISIONS and max(ECB_GC_DECISIONS) < date.today() + timedelta(days=90):
+    if ECB_GC_DECISIONS and max(ECB_GC_DECISIONS) < datetime.now(UTC).date() + timedelta(days=90):
         tail += " ⚠ vendored schedule <90d — UPDATE ecbwatch.ECB_GC_DECISIONS"
     return f"ECBWatch {act} {approx}{p:.0%} ({r.meeting_date.strftime('%b-%d')}, {delta}{implied}{tail})"

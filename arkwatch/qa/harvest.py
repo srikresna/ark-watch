@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import db
@@ -130,18 +130,28 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     for o in obs
                     if o["value"] is not None
                 ]
-                # ROUND-4: first-print vintage — INSERT OR IGNORE a 'first'
-                # copy of every fetched observation (first-writer-wins via the
-                # PK); the frozen first-print store had stopped 09-02, so
-                # point-in-time replay only worked for recent windows
+                # ROUND-6 FIX of the ROUND-4 fix: the plain fetch carries
+                # realtime_start = FETCH DAY for every obs (FRED only stamps
+                # true publication dates when a realtime window is passed) —
+                # so the per-fetch 'first' INSERT stamped fetch-dates onto
+                # old observations (561 factually-wrong release_ts rows on
+                # prod; PK first-writer-wins made them stick). Gate by the
+                # series' publication lag: only obs plausibly FIRST SEEN in
+                # this fetch may stamp (a deeper catch-up window cannot
+                # create new first-prints); f4 backfill-first remains the
+                # authority for true historical release dates.
+                _lag_days = {"D": 3, "W": 10, "M": 45, "Q": 130, "A": 400}.get(
+                    (e.get("freq") or "D").upper(), 3
+                )
+                _cutoff = (datetime.now(UTC) - timedelta(days=_lag_days)).date().isoformat()
                 conn.executemany(
                     "INSERT OR IGNORE INTO raw_observations"
                     "(series_id,ts,release_ts,value,vintage_ts,source,fetched_at)"
                     " VALUES (?,?,?,?, 'first', 'FRED', ?)",
                     [
-                        (sid_full, o["ts"], o.get("realtime_start") or "na", o["value"], now)
+                        (sid_full, o["ts"], "na", o["value"], now)
                         for o in obs
-                        if o["value"] is not None
+                        if o["value"] is not None and o["ts"] >= _cutoff
                     ],
                 )
             else:

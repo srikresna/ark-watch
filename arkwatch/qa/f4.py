@@ -41,7 +41,7 @@ def fetch_first_prints(native: str, obs_start: str = "1990-01-01") -> list[dict]
     """
     from datetime import date
 
-    today = date.today()
+    today = datetime.now(UTC).date()
     y0 = int(obs_start[:4])
     rows: list[dict] = []
     for y in range(y0, today.year + 1):
@@ -100,6 +100,16 @@ def fetch_first_prints_agg(rows: list[dict]) -> list[dict]:
 
 
 def save_first_prints(conn, series_id: str, prints: list[dict]) -> int:
+    """Upsert first-prints — ALFRED truth repairs fetch-day stamps.
+
+    ROUND-6: harvest's per-fetch 'first' INSERT (round-4) stamped
+    release_ts = FETCH DAY (FRED only returns true realtime dates through a
+    realtime-window query), and INSERT OR IGNORE made those wrong stamps
+    permanent. These rows come from fetch_first_prints (ALFRED realtime
+    queries — the TRUE publication dates), so they may overwrite any stored
+    first-row whose release_ts equals its own fetched_at date (the stamp
+    signature); a genuine backfill row always carries release < fetch-day
+    and is never touched."""
     now = datetime.now(UTC).isoformat(timespec="seconds")
     payload = [
         (series_id, p["ts"], p["release"], p["value"], VINTAGE_TAG, "FRED", None, now)
@@ -109,9 +119,13 @@ def save_first_prints(conn, series_id: str, prints: list[dict]) -> int:
         return 0
     conn.execute("BEGIN IMMEDIATE")
     cur = conn.executemany(
-        "INSERT OR IGNORE INTO raw_observations"
+        "INSERT INTO raw_observations"
         "(series_id,ts,release_ts,value,vintage_ts,source,precision_k,fetched_at)"
-        " VALUES (?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(series_id,ts,source,vintage_ts) DO UPDATE SET"
+        "  release_ts=excluded.release_ts, value=excluded.value,"
+        "  fetched_at=excluded.fetched_at"
+        " WHERE raw_observations.release_ts = substr(raw_observations.fetched_at,1,10)",
         payload,
     )
     conn.execute("COMMIT")
@@ -314,8 +328,11 @@ def run_replay(conn, start: str = "2005-01", verbose: bool = True) -> list[dict]
         if verbose and len(records) % 24 == 0:
             print(f"  … {as_of[:7]} score={score:+.2f} {label} pillars={n_pillars}")
 
-    # Persist a summary → computed_signals; run_id is versioned so a re-run of
-    # changed code does not ambiguously overwrite prior run history
+    # Persist a summary → computed_signals. ROUND-6 comment correction: the
+    # computed_signals PK does NOT include run_id — INSERT OR REPLACE is
+    # last-writer-wins per (signal_id, ts); each re-run REPLACES the prior
+    # run's month rows (only the run_id label distinguishes eras; the last
+    # full table state is the current replay by construction)
     conn.execute("BEGIN IMMEDIATE")
     for r in records:
         conn.execute(

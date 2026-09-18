@@ -171,7 +171,10 @@ def compute_xccy(conn: sqlite3.Connection) -> list[XccyRow]:
     if not common:
         return []
 
-    today = date.today()
+    from datetime import UTC as _U
+    from datetime import datetime as _dt
+
+    today = _dt.now(_U).date()
     out = []
     # Sort by IMM date, not alphabetically: alphabetical order puts
     # "DEC 27" < "JUN 27" < "MAR 27", so once DEC 26 expires the FARTHEST

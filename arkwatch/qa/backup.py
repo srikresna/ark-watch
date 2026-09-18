@@ -73,6 +73,21 @@ def main(argv: list[str] | None = None) -> int:
     dst = backup(a.db)
     verify(a.db, dst)
     rotate()
+    # ROUND-6: fetch_log is the one operational table that grew unbounded
+    # (~300-900 rows/day incl. retries) with no consumer beyond ~7d of
+    # health checks — prune past 180d nightly with the backup.
+    try:
+        import sqlite3
+
+        _c = sqlite3.connect(a.db, isolation_level=None)
+        _c.execute("PRAGMA busy_timeout=30000")
+        cur = _c.execute(
+            "DELETE FROM fetch_log WHERE ts < datetime('now', '-180 day')"
+        )
+        _c.close()
+        print(f"  fetch_log pruned: -{cur.rowcount} rows (>180d)")
+    except Exception as ex:  # pruning must never fail the backup
+        print(f"  ⚠ fetch_log prune skipped: {str(ex)[:80]}")
     print(
         f"=== backup OK: {dst.name} ({dst.stat().st_size / 1e6:.1f} MB, "
         f"integrity ✓, key-table COUNTs match) ==="

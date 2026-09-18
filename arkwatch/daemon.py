@@ -59,6 +59,12 @@ SCHEDULE = [
     # families with actuals but no series) must be checked by the daemon, not
     # by an accidental question — weekly, before the alfred maintenance
     (21, 0, "sunday", "coverage", "Registry lint + calendar-family gap detector"),
+    # ROUND-6: the point-in-time substrate needs scheduled consumers — the
+    # replay was frozen at a single 09-02 run while the vintage feed kept
+    # writing; backfill-first heals freeze-window first-print holes (ALFRED
+    # truth, upsert repairs fetch-day stamps)
+    (21, 15, "sunday", "f4 backfill-first", "First-print vintage heal (ALFRED truth)"),
+    (21, 30, "sunday", "f4 replay", "Point-in-time regime replay refresh"),
 ]
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle

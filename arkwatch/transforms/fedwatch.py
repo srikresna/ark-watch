@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 FOMC_SCHEDULE = [
     # Vendored from cme-fedwatch; verified against federalreserve.gov
@@ -88,7 +88,7 @@ def compute(
     same-day DFF still prints the old rate because the new target takes
     effect the following day.
     """
-    today = date.today()
+    today = datetime.now(UTC).date()
     if meetings is None:
         loop = [m for m in FOMC_SCHEDULE if m >= today]
         if anchor_date is not None:
@@ -194,7 +194,7 @@ def format_brief(probs: list[MeetingProb], asof: str | None = None) -> str:
     pre-FOMC-decision strip as CURRENT policy the morning after the hike —
     the reader cannot know the pricing vintage without the date)."""
     if not probs:
-        has_future = any(d >= date.today() for d in FOMC_SCHEDULE)
+        has_future = any(d >= datetime.now(UTC).date() for d in FOMC_SCHEDULE)
         if has_future:
             return "FedWatch: ZQ data unavailable"
         return "FedWatch: vendored FOMC schedule exhausted — UPDATE FOMC_SCHEDULE"
@@ -206,6 +206,6 @@ def format_brief(probs: list[MeetingProb], asof: str | None = None) -> str:
     else:
         action = f"hold {p.prob_hold:.0%}"
     tail = f" (ZQ {asof[5:]})" if asof else ""
-    if max(FOMC_SCHEDULE) < date.today() + timedelta(days=90):
+    if max(FOMC_SCHEDULE) < datetime.now(UTC).date() + timedelta(days=90):
         tail += " ⚠ vendored schedule <90 days"
     return f"{action} ({p.meeting_date.strftime('%b')} → {p.implied_rate:.2f}%){tail}"
