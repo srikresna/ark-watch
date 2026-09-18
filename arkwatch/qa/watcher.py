@@ -56,6 +56,8 @@ VIX_STRESS_LEVEL = int(_PS.get("vix_stress_level", 25))
 VIX_Z_STRESS = float(_PS.get("vix_z_stress", 1.0))
 ESI_FLIP_MIN_ABS = float(_PS.get("esi_flip_min_abs", 0.25))
 GOLD_RY_DIV_MIN_BP = float(_PS.get("gold_ry_div_min_bp", 5.0))  # DFII10 pct-points×100
+GOLD_RY_DIV_MIN_GOLD_PCT = float(_PS.get("gold_ry_div_min_gold_pct", 0.5))  # ±% over 20d
+NET_LIQ_MIN_ABS_B = float(_PS.get("net_liq_min_abs_b", 10.0))  # $B deadband
 COT_BROAD_DIV_MIN = int(_PS.get("cot_broad_div_min", 3))
 COT_COVERING_NET_MIN = int(_PS.get("cot_covering_net_min", 50000))
 COT_COVERING_CHG_MIN = int(_PS.get("cot_covering_chg_min", 10000))
@@ -382,7 +384,11 @@ def check_all(conn) -> list[str]:
     if len(walcl) >= 5:
         delta = walcl[-1] - walcl[-5]
         prev_delta = walcl[-5] - walcl[-9] if len(walcl) >= 9 else None
-        if prev_delta is not None and (delta > 0) != (prev_delta > 0):
+        # ROUND-6: magnitude deadband — ±0.01-0.3% balance-sheet noise fired
+        # two contradictory URGENT alerts 18h apart; a reversal must MOVE
+        if prev_delta is not None and abs(delta) >= NET_LIQ_MIN_ABS_B and (
+            (delta > 0) != (prev_delta > 0)
+        ):
             direction = "EXPANSION" if delta > 0 else "CONTRACTION"
             if _fire(
                 conn,
@@ -643,13 +649,20 @@ def check_all(conn) -> list[str]:
         "ORDER BY ts DESC LIMIT 60"
     ).fetchall()
     if len(ry) >= 20 and len(gold) >= 20:
+        # ROUND-6: the gold list is DESC (newest first) — the old
+        # gold[-1]-gold[-20] compared the OLDEST sessions in the 60-row
+        # window (ancient data, wrong direction). Compare the LATEST 20
+        # sessions: newest − 20-sessions-ago.
         ry_m = ry[-1] - ry[-20]
-        gold_m = gold[-1][0] - gold[-20][0]
-        if ry_m > GOLD_RY_DIV_MIN_BP / 100 and gold_m > 0:
+        gold_m = gold[0][0] - gold[19][0]
+        # ROUND-6: magnitude gate on the gold leg — a +$4 (+0.09%) drift
+        # was announced 8× as a 'structural bid'; require a real move
+        gold_pct = gold_m / gold[19][0] if gold[19][0] else 0.0
+        if ry_m > GOLD_RY_DIV_MIN_BP / 100 and gold_pct >= GOLD_RY_DIV_MIN_GOLD_PCT:
             if _fire(
                 conn,
                 "gold_ry_divergence",
-                f"Gold +{gold_m:.0f} BUT DFII10 +{ry_m * 100:.0f}bps (20d)",
+                f"Gold +{gold_pct:+.1%} (+{gold_m:.0f}) BUT DFII10 +{ry_m * 100:.0f}bps (20d)",
                 "Divergence: gold rising despite rising real yields = structural bid (CB?)",
                 "Watch PBoC/CB buying in the flows data",
                 cooldown_key=f"gold_ry_divergence@{ry_lv[0][:10] if ry_lv else '?'}",

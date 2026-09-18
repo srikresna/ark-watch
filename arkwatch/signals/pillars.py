@@ -161,7 +161,13 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         "detail": f"DFII10 {_pct(dfii[-1] if dfii else None)}% ({ry_m * 100:.0f}bps/20d)"
         if ry_m is not None
         else "N/A",
-        "z": zscore(dfii) if dfii else None,
+        # ROUND-6 P0: NEGATED — rising real yields are a headwind for risk
+        # assets (the brief's own XAUUSD line reads 'RY↑ headwind'), but the
+        # raw z fed the POSITIVE-weighted score the other way: stress/RY-up
+        # pushed the score toward RISK-ON (11/12 live labels biased). The
+        # score convention is 'higher = more risk-on'; both B and F z must
+        # express 'supportive of risk'.
+        "z": -zscore(dfii) if dfii else None,
     }
 
     # C — Inflation (overlay)
@@ -272,7 +278,11 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         "label": "Stress",
         "state": f_state,
         "detail": f"HY p{hy_pct:.0f}" if hy_pct is not None else "N/A",
-        "z": zscore(hy, 756) if hy else None,
+        # ROUND-6 P0: NEGATED — widening HY spreads = credit stress = risk
+        # OFF, but the raw z pushed the score toward RISK-ON (same class as
+        # pillar B). z here expresses 'credit calm-ness' so the positive
+        # weights read correctly.
+        "z": -zscore(hy, 756) if hy else None,
     }
 
     return out
@@ -319,13 +329,28 @@ def compute_quadrant(pillars: dict[str, dict]) -> str:
 
 
 def compute_dollar_smile(conn: sqlite3.Connection) -> str:
+    """Dollar 20d trend label + the input's AS-OF date.
+
+    ROUND-6: DTWEXBGS publishes weekly-ish (Treasury H.10, lagged) — the
+    label rendered from data frozen at 2026-09-11 for a week+ with no
+    marker. Callers append '(as of MM-DD)' and a ⚠ when the leg goes stale;
+    returning the ts makes the honesty mechanical instead of hoping each
+    caller queries it separately."""
+    from ..queries import latest_observation
+
     dtw = _values(conn, "FRED:DTWEXBGS", 60)
+    lv = latest_observation(conn, "FRED:DTWEXBGS")
+    asof = lv[0][5:] if lv else None  # MM-DD
     m20 = momentum(dtw, 20) if dtw and len(dtw) > 20 else None
     if m20 is None:
         return "N/A"
     pct_change = m20 / dtw[-21] * 100 if len(dtw) > 21 and dtw[-21] != 0 else 0
-    if pct_change > 0.4:
-        return "STRONG"
-    if pct_change < -0.4:
-        return "WEAK"
-    return "FLAT"
+    label = "STRONG" if pct_change > 0.4 else ("WEAK" if pct_change < -0.4 else "FLAT")
+    stale = ""
+    if lv:
+        from datetime import UTC, datetime
+
+        age = (datetime.now(UTC).date() - datetime.fromisoformat(lv[0][:10]).date()).days
+        if age > 12:  # H.10 weekly + holiday tolerance
+            stale = " ⚠stale"
+    return f"{label} (as of {asof}){stale}" if asof else label
