@@ -385,8 +385,11 @@ def check_all(conn) -> list[str]:
         delta = walcl[-1] - walcl[-5]
         prev_delta = walcl[-5] - walcl[-9] if len(walcl) >= 9 else None
         # ROUND-6: magnitude deadband — ±0.01-0.3% balance-sheet noise fired
-        # two contradictory URGENT alerts 18h apart; a reversal must MOVE
-        if prev_delta is not None and abs(delta) >= NET_LIQ_MIN_ABS_B and (
+        # two contradictory URGENT alerts 18h apart; a reversal must MOVE.
+        # ROUND-8: the ×1000 claimed by 9ddd78a never landed (pattern
+        # mismatch) — WALCL is stored $M, the threshold is $B; the message's
+        # own /1000 display proves the unit convention.
+        if prev_delta is not None and abs(delta) >= NET_LIQ_MIN_ABS_B * 1000 and (
             (delta > 0) != (prev_delta > 0)
         ):
             direction = "EXPANSION" if delta > 0 else "CONTRACTION"
