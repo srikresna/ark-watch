@@ -508,7 +508,15 @@ def compute_fedwatch(conn) -> list[dict]:
     decided = conn.execute(
         "SELECT actual FROM events WHERE normalized_name='FED INTEREST RATE DECISION'"
         " AND actual IS NOT NULL"
-        " AND substr(ts_utc,1,10) > ? AND substr(ts_utc,1,10) <= ?"
+        # ROUND-8: >= (was >). A decision taken ON the anchor's observation
+        # date has NOT taken effect in that observation (DFF@T is the
+        # pre-decision rate; the new target starts T+1), and FRED can lag the
+        # post-decision print for days (live: decided 09-16, DFF@09-17 still
+        # unpublished 09-18 17:45 UTC). With >, the snap only ever fired for a
+        # few hours on decision evening; from D+1 the anchor reverted to the
+        # OLD rate and the deprecated replay-bootstrap drove the brief (09-18:
+        # "hike 62%" vs official 57.6%; with the decided anchor 58%).
+        " AND substr(ts_utc,1,10) >= ? AND substr(ts_utc,1,10) <= ?"
         " ORDER BY ts_utc DESC LIMIT 1",
         (anchor_date.isoformat(), datetime.now(UTC).date().isoformat()),
     ).fetchone()
@@ -540,6 +548,7 @@ def compute_fedwatch(conn) -> list[dict]:
     # action carrying insid/qsid; the view shows the nearest meeting plus the
     # target-rate distribution.
     official_rows = []
+    qs_err = None
     try:
         from ..fetchers.quikstrike import fetch_fedwatch_official
 
@@ -567,14 +576,21 @@ def compute_fedwatch(conn) -> list[dict]:
             )
             official_rows.append(o)
     except Exception as ex:
-        # ROUND-7: except-pass had ZERO observability — a dead QuikStrike
-        # view silently killed the DIY-vs-official calibration gate while
-        # fetch_log read all-green. Degrade, but LEAVE A ROW.
+        qs_err = str(ex)[:140]
+    conn.execute("COMMIT")
+
+    # ROUND-8: log_collection COMMITS internally (fetch_log.log ends in
+    # conn.commit()), so it must never run inside the open snapshot
+    # transaction — it aborted it and the trailing COMMIT raised
+    # "no transaction is active" (latent in the ROUND-7 QS error path too).
+    # ROUND-7 intent preserved: a dead QuikStrike view must LEAVE A ROW
+    # instead of silently killing the DIY-vs-official calibration gate.
+    if qs_err:
         from .fetch_log import log_collection as _lc_qs
 
-        _lc_qs(conn, "f2", "QS:FEDWATCH", None, 0, err=str(ex)[:140])
+        _lc_qs(conn, "f2", "QS:FEDWATCH", None, 0, err=qs_err)
 
-    # DIY vs official calibration gate ≤3pp
+    # DIY vs official calibration gate ≤3pp (reads only — safe post-commit)
     if official_rows:
         try:
             from ..fetchers.quikstrike import compare_diy_vs_official
@@ -583,15 +599,33 @@ def compute_fedwatch(conn) -> list[dict]:
                 {"meeting": p.meeting_date.strftime("%b %y"), "hike": p.prob_hike} for p in probs
             ]
             cmp_ = compare_diy_vs_official(diy_fmt, official_rows)
+            breaches = []
             for c in cmp_:
                 status = "OK" if c["pass"] else "⚠ GATE>3pp"
                 print(
                     f"  FedWatch gate {c['meeting']}: diy {c['diy_hike_pct']:.0f}% vs "
                     f"official {c['official_hike_pct']:.0f}% (Δ{c['delta_hike_pp']:.1f}pp) {status}"
                 )
+                if not c["pass"]:
+                    breaches.append(
+                        f"{c['meeting']} diy {c['diy_hike_pct']:.0f}% vs official "
+                        f"{c['official_hike_pct']:.0f}% (Δ{c['delta_hike_pp']:.1f}pp)"
+                    )
+            # ROUND-8: the breach used to be PRINT-ONLY — on 2026-09-17 the
+            # gate computed "diy 100% vs official 53% (Δ47pp) ⚠" and the brief
+            # still shipped "hike 100% (Oct → 4.13%)" off a preliminary CME
+            # settle that was silently restated hours later. A breach must be
+            # OBSERVABLE: fetch_log ERROR routes through the watcher/outbox
+            # (same wedge pattern as INSTRUMENTS:XVAL).
+            if breaches:
+                from .fetch_log import log_collection as _lc_gate
+
+                _lc_gate(
+                    conn, "f2", "FEDWATCH:XVAL", None, 0,
+                    err=f"{len(breaches)} breach(es): " + "; ".join(breaches[:3])[:150],
+                )
         except Exception as ex:
             print(f"  ⚠ FedWatch gate: {str(ex)[:70]}")
-    conn.execute("COMMIT")
     return [
         {
             "meeting": p.meeting_date.isoformat(),

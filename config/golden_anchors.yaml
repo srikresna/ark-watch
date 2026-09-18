@@ -170,9 +170,11 @@ golden_anchors:
 
   - series_id: INDPRO
     anchor_date: "2026-07-01"
-    expected: 102.9939
+    expected: 103.0454
     tolerance: 0.005     # IP index, 4dp
-    provenance: "live-test verified 2026-08-28, FRED INDPRO"
+    provenance: "recalibrated 2026-09-18 (round-8 audit): G.17 revision cycle moved the
+      July index 102.9939 → 103.0454 after the 08-28 anchor was cut; FMP
+      crossval agrees exactly with the revised value; FRED live"
 
   - series_id: RSAFS
     anchor_date: "2026-07-01"
