@@ -118,6 +118,14 @@ def run_cot_gate(conn) -> tuple[int, int]:
             " AND report_date=? AND report_type='disagg' LIMIT 1",
             (code, report_date),
         ).fetchone()
+        if code.endswith("+"):
+            # ROUND-10: the '+' suffix marks a SYNTHETIC consolidated handle
+            # (13874+ = S&P500 E-mini + full-size combined). FMP symbols map
+            # to single contracts (ES = E-mini only), so the OI comparison is
+            # definitionally apples-vs-oranges (live: consolidated 2,483,362
+            # vs FMP ES 2,446,519 — the 36,843 gap IS the big contract's OI).
+            print(f"  cot-gate: {code} consolidated handle — OI check skipped (FMP maps single contracts)")
+            continue
         if not ours and (oi_ours is None or oi_ours[0] is None):
             # ROUND-2 fix: TFF-only contracts (the 9 financials) have no
             # disagg rows — the gate silently skipped them. OI comparison via
