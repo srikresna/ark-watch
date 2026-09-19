@@ -166,10 +166,11 @@ FOMC MINUTES TEXT:
                 {"role": "system", "content": "You are a central bank policy analyst. Respond ONLY with valid JSON, no markdown."},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 2000,
-            "temperature": 0.3,
+            "thinking": {"type": "enabled"},
+            "max_tokens": 4096,
+            "temperature": 0.6,
         },
-        timeout=(10, 120),
+        timeout=(10, 180),
     )
     if r.status_code != 200:
         raise MinutesError(f"z.ai: HTTP {r.status_code} — {r.text[:100]}")
