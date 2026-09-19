@@ -68,6 +68,10 @@ SCHEDULE = [
     # ROUND-11: the dot plot refreshes 4x/year with SEP meetings — a quarterly
     # cadence job re-fetches all vintages (idempotent; the web is the source)
     (5, 0, "sunday", "backfill --source sep", "FOMC dot plot refresh (quarterly cadence)"),
+    # NY Fed research expansion (2026-09-19): HHDC/MCT/LW/GSCPI/HPW rewrite
+    # whole histories — the daily window can't see revisions older than its
+    # floor, so a weekly full-history re-ingest lands them as vintage rows
+    (5, 10, "sunday", "backfill --source nyfedresearch", "NY Fed research full-history refresh (revisions)"),
     # Fed surveys + reports: SLOOS/Beige Book/SCOOS/FSR/Minutes/Press Conf.
     # Weekly check (quarterly/monthly sources — "unchanged" is the normal
     # outcome ~95% of days; new data triggers fetch + NLP + store).

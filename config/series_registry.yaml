@@ -471,6 +471,138 @@
   # The real-term premium the model strips from the 10Y — the "duration for
   # free" gauge; complements the Kim-Wright THREEFYTP10 series.
 
+# --- NY Fed research expansion 2026-09-19 (8-agent live-verified workflow; -----
+# --- ACM term premia + Laubach-Williams r-star → block B) -----------------------
+# Transport: plain requests OK (no bot-gating, unlike cmegroup). ACM is a 10MB
+# legacy .xls (xlrd only, process-cached); LW/HLW re-estimate the WHOLE history
+# each quarterly release → revisions handled by the NYFED realtime-vintage path.
+
+- series_id: NYFED:ACMTP10
+  name: ACM 10Y term premium (Adrian-Crump-Moench, NY Fed)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day           # file refreshed evening ET with T-1..T data
+  release_schedule: "business days, file refreshed ~evening ET"
+  expected_start: "1961-06-14"
+  sanity_min: -4.0
+  sanity_max: 8.0
+  primary_source: "NYFED:ACMTermPremium.xls 'ACM Daily' col ACMTP10 (xlrd, legacy xls)"
+  secondary_source: null           # acmPlot_data.csv = monthly 10y canary only
+  tolerance: null
+  active: 1
+  # Term premium the market pays beyond expected policy — cross-validates
+  # CLEVE:RRP_10Y_MODEL (different decomposition of the same 10Y).
+
+- series_id: NYFED:ACMTP05
+  name: ACM 5Y term premium
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "business days, file refreshed ~evening ET"
+  expected_start: "1961-06-14"
+  sanity_min: -4.0
+  sanity_max: 8.0
+  primary_source: "NYFED:ACMTermPremium.xls 'ACM Daily' col ACMTP05"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:ACMTP02
+  name: ACM 2Y term premium
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "business days, file refreshed ~evening ET"
+  expected_start: "1961-06-14"
+  sanity_min: -4.0
+  sanity_max: 8.0
+  primary_source: "NYFED:ACMTermPremium.xls 'ACM Daily' col ACMTP02"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:ACMTP01
+  name: ACM 1Y term premium
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: D
+  ts_convention: obs_day
+  release_schedule: "business days, file refreshed ~evening ET"
+  expected_start: "1961-06-14"
+  sanity_min: -4.0
+  sanity_max: 8.0
+  primary_source: "NYFED:ACMTermPremium.xls 'ACM Daily' col ACMTP01"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:LW_RSTAR
+  name: Laubach-Williams r-star (natural rate, one-sided current estimate)
+  block: B
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "quarterly (Mar/May/Aug/Nov), ~14:00 ET, ~8-9wk after quarter end"
+  expected_start: "1961-01-01"
+  sanity_min: -2.0
+  sanity_max: 8.0
+  primary_source: "NYFED:Laubach_Williams_current_estimates.xlsx sheet 'data' col C (one-sided)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Structural real-rate anchor (r* = c·g + z). Whole history re-estimated each
+  # release — realtime + vintage rows, never append-only trust. NOT an official
+  # NY Fed/FOMC estimate (research product).
+
+- series_id: NYFED:LW_GAP
+  name: Laubach-Williams output gap (percent of potential, one-sided)
+  block: B
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with LW_RSTAR (quarterly)"
+  expected_start: "1961-01-01"
+  sanity_min: -15.0
+  sanity_max: 15.0
+  primary_source: "NYFED:Laubach_Williams_current_estimates.xlsx sheet 'data' col F"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:HLW_RSTAR
+  name: Holston-Laubach-Williams r-star, US (COVID-adapted 2023 model)
+  block: B
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with LW_RSTAR (same files page, quarterly)"
+  expected_start: "1961-01-01"
+  sanity_min: -2.0
+  sanity_max: 8.0
+  primary_source: "NYFED:Holston_Laubach_Williams_current_estimates.xlsx 'HLW Estimates' US r*"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Post-COVID variant — currently r* 1.0% vs LW 1.65%: the model spread itself
+  # is the honesty gauge on r*-precision.
+
 - series_id: TREASURY:PAR_1_5Y
   name: Treasury 1.5-MONTH par curve (official)
   block: A
@@ -1004,6 +1136,87 @@
   secondary_source: null         # same as TRIM_1M
   tolerance: null
   active: 1
+
+# --- NY Fed research expansion 2026-09-19 (GSCPI + MCT → block C) ---------------
+# GSCPI from the interactive vintage-matrix CSV (current vintage = LAST column;
+# the downloads-page .xlsx is a legacy OLE2 xls in disguise). MCT from the
+# chart-feed CSV (four columns ALL named 'MCT' = band-lo|point|band-hi|vs-avg —
+# semantics verified numerically; lo<=point<=hi enforced at parse).
+
+- series_id: NYFED:GSCPI
+  name: Global Supply Chain Pressure Index (NY Fed)
+  block: C
+  tier: 0
+  unit: idx                       # standardized: mean 0 / sd 1 — NOT percent
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "monthly, 10:00 ET on the 4th business day (publishes M-1)"
+  expected_start: "1997-09-01"
+  sanity_min: -5.0
+  sanity_max: 5.0
+  primary_source: "NYFED:gscpi_interactive_data.csv (current vintage column)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Pipeline inflation: GSCPI up → goods inflation follows 1-2 quarters later.
+  # Last month revises (0.79→0.94 observed) — realtime+ vintage path applies.
+
+- series_id: NYFED:MCT
+  name: Multivariate Core Trend inflation (NY Fed, 17 core PCE sectors)
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "monthly, ~10:00 ET 1st business day after BEA PCE (~4-5wk lag)"
+  expected_start: "1960-01-01"
+  sanity_min: -5.0
+  sanity_max: 15.0
+  primary_source: "NYFED:mct-chart-data.csv col 3 (point estimate)"
+  secondary_source: null         # PCE_YOY cols in-file are BEA chart comparisons, NOT MCT
+  tolerance: null
+  active: 1
+  # Third independent core-trend read (Dallas Trim + Cleveland Median + MCT).
+  # Intrinsically CORE — an all-items MCT does not exist (research-verified).
+  # Re-smoothed monthly: revisions via realtime+ vintage path.
+
+- series_id: NYFED:MCT_BAND_LO
+  name: MCT 68% probability band, lower edge
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:MCT"
+  expected_start: "1960-01-01"
+  sanity_min: -5.0
+  sanity_max: 15.0
+  primary_source: "NYFED:mct-chart-data.csv col 2"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:MCT_BAND_HI
+  name: MCT 68% probability band, upper edge
+  block: C
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:MCT"
+  expected_start: "1960-01-01"
+  sanity_min: -5.0
+  sanity_max: 15.0
+  primary_source: "NYFED:mct-chart-data.csv col 4"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Band width = model uncertainty; a widening band with flat point is itself
+  # signal (trend estimate degrading).
 
 # --- END OF PART 1 (BLOCKS A-C) --------------------------------------------------------
 # Blocks D-F (raw_observations) continue in series_registry_blocks_d-f.yaml;

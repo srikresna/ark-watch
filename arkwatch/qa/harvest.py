@@ -101,7 +101,6 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
 
     ok = fail = rows_new = 0
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    today = now[:10]
     for e in reg:
         sid_full = e["series_id"]
         prefix = next(p for p in ROUTES if sid_full.startswith(p))
@@ -170,39 +169,14 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     err = f"SCHEMA_DRIFT {prev[0]}→{fp}"
                     print(f"  ⚠ {sid_full}: RESPONSE SCHEMA CHANGED ({err})")
             n = db.insert_observations(conn, rows)
-            # All FRED series are in-place revisable: FRED can revise a value
-            # for the same ts → realtime holds the LATEST source value; the
-            # revision history lives in vintage rows (snapshotted on change).
-            # Without this, the first print would be frozen forever.
-            if prefix == "FRED:":
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    for r in rows:
-                        sid, ts, val, src = r[0], r[1], r[2], r[3]
-                        cur_v = conn.execute(
-                            "SELECT value FROM raw_observations WHERE series_id=? "
-                            "AND ts=? AND source=? AND vintage_ts='realtime'",
-                            (sid, ts, src),
-                        ).fetchone()
-                        if cur_v is not None and abs(cur_v[0] - val) > 1e-12:
-                            # Preserve the OLD value as a vintage row dated today
-                            conn.execute(
-                                "INSERT OR IGNORE INTO raw_observations"
-                                "(series_id,ts,release_ts,value,vintage_ts,source,"
-                                "precision_k,fetched_at) VALUES (?,?,?,?,?,?,?,?)",
-                                (sid, ts, "na", cur_v[0], today, src, None, now),
-                            )
-                            conn.execute(
-                                "UPDATE raw_observations SET value=?, fetched_at=? "
-                                "WHERE series_id=? AND ts=? AND source=? "
-                                "AND vintage_ts='realtime'",
-                                (val, now, sid, ts, src),
-                            )
-                            n += 1
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
+            # FRED + the NY Fed research families are in-place revisable (FRED
+            # revises months back; HHDC/MCT/LW/GSCPI/HPW rewrite whole
+            # histories): realtime holds the LATEST source value; the revision
+            # history lives in vintage rows (snapshotted on change by
+            # db.apply_realtime_revisions). Without this, the first print
+            # would be frozen forever.
+            if prefix in ("FRED:", "NYFED:"):
+                n += db.apply_realtime_revisions(conn, rows)
             ok += 1
             rows_new += n
         except Exception as ex:

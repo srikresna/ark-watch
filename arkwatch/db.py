@@ -486,3 +486,50 @@ def insert_observations(conn: sqlite3.Connection, rows: list[tuple]) -> int:
         conn.execute("ROLLBACK")
         raise
     return cur.rowcount
+
+
+def apply_realtime_revisions(conn: sqlite3.Connection, rows: list[tuple]) -> int:
+    """In-place revision handling for revisable sources (FRED, NY Fed research).
+
+    raw_observations is INSERT OR IGNORE (first print wins); for sources that
+    revise values in place, realtime must hold the source's LATEST value with
+    the previous one snapshotted as a vintage row dated today. Extracted from
+    the harvest's FRED branch (2026-09-19) so the NY Fed research datasets —
+    HHDC/MCT/LW/GSCPI/HPW rewrite whole histories — share the same contract.
+
+    rows: (series_id, ts, value, source) — same shape insert_observations takes.
+    Returns the number of revision snapshots written (0 = nothing changed).
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    today = _dt.now(_UTC).date().isoformat()
+    now = _dt.now(_UTC).isoformat(timespec="seconds")
+    n = 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for sid, ts, val, src in rows:
+            cur_v = conn.execute(
+                "SELECT value FROM raw_observations WHERE series_id=? "
+                "AND ts=? AND source=? AND vintage_ts='realtime'",
+                (sid, ts, src),
+            ).fetchone()
+            if cur_v is not None and abs(cur_v[0] - val) > 1e-12:
+                # Preserve the OLD value as a vintage row dated today
+                conn.execute(
+                    "INSERT OR IGNORE INTO raw_observations"
+                    "(series_id,ts,release_ts,value,vintage_ts,source,"
+                    "precision_k,fetched_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (sid, ts, "na", cur_v[0], today, src, None, now),
+                )
+                conn.execute(
+                    "UPDATE raw_observations SET value=?, fetched_at=? "
+                    "WHERE series_id=? AND ts=? AND source=? AND vintage_ts='realtime'",
+                    (val, now, sid, ts, src),
+                )
+                n += 1
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return n

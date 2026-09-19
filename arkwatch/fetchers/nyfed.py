@@ -170,6 +170,10 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     from datetime import timedelta
 
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    from . import nyfedresearch
+
+    if nyfedresearch.knows(key):
+        return nyfedresearch.fetch_window(series_id, days)
     start = (datetime.now(UTC).date() - timedelta(days=int(days * 1.8))).isoformat()
     all_fields = UNSECURED_ALL_SERIES | SECURED_ALL_SERIES
     if key in all_fields:
@@ -209,6 +213,13 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
 
 def fetch_latest(series_id: str) -> dict:
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    # research/survey datasets (HHDC/SCE/GSCPI/ESMS/ACM/HPW/LW/MCT) live in
+    # their own module but keep the NYFED: registry family — delegate (lazy
+    # import keeps the modules loadable independently)
+    from . import nyfedresearch
+
+    if nyfedresearch.knows(key):
+        return nyfedresearch.fetch_latest(series_id)
     all_fields = UNSECURED_ALL_SERIES | SECURED_ALL_SERIES
     if key in all_fields:
         path = (

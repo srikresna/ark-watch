@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--dry", action="store_true", help="count without writing")
-    p.add_argument("--source", choices=["fred", "tga", "cal"], default="fred")
+    p.add_argument("--source", choices=["fred", "tga", "cal", "sep", "nyfedresearch"], default="fred")
     args = p.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -198,6 +198,42 @@ def main(argv: list[str] | None = None) -> int:
         n_reg = sync_registry(conn)
         print(f"registry synced: {n_reg} entries")
         result = backfill_cal(conn, dry=args.dry)
+        conn.close()
+    elif args.source == "sep":
+        # the daemon's Sunday dot-plot entry points here (commit b091fd0
+        # referenced this choice before it existed — added 2026-09-19)
+        from ..fetchers import sep
+
+        conn = db.get_conn(args.db, allow_init=True)
+        sync_registry(conn)
+        sep.save_dot_series(conn)
+        conn.close()
+        result = {}
+    elif args.source == "nyfedresearch":
+        # NY Fed research expansion (2026-09-19): full-history ingest of the
+        # 8 research datasets + revision pickup — HHDC/MCT/LW/GSCPI/HPW
+        # rewrite whole histories, so the weekly re-run lands revisions as
+        # vintage snapshots (never blocking, always idempotent)
+        from ..fetchers import nyfedresearch
+
+        conn = db.get_conn(args.db, allow_init=True)
+        sync_registry(conn)
+        if args.dry:
+            print("  (dry run — full parse, no writes)")
+            for fam in nyfedresearch.FAMILY_PARSERS:
+                rows = nyfedresearch._family_rows(fam)
+                for k, v in sorted(rows.items()):
+                    if nyfedresearch.knows(k):
+                        print(f"  NYFED:{k:26s} {len(v):4d} obs · latest {v[-1] if v else 'NONE'}")
+            result = {}
+        else:
+            nyfedresearch.save_history(conn)
+            result = {
+                f"NYFED:{k}": len(rows)
+                for fam in nyfedresearch.FAMILY_PARSERS
+                for k, rows in nyfedresearch._family_rows(fam).items()
+                if nyfedresearch.knows(k)
+            }
         conn.close()
     else:
         fred_targets = [e for e in reg if e["series_id"].startswith("FRED:")]

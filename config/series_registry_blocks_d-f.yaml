@@ -102,6 +102,158 @@ series:
   active: 1
   # Sahm-rule input; labor state in the brief.
 
+# --- NY Fed research expansion 2026-09-19 (Empire State + HPW → block D) ---------
+# ESMS = the most-traded regional mfg survey; SA diffusion CSV (in the allseries
+# file the suffix NSA means 'No-change Share, SA' — NOT 'not seasonally adjusted';
+# only the diffusion file is ingested). surveyDate stamps the survey month's END
+# (2026-09-30 for the survey released Sep 15) — normalized to month START.
+# HPW = z-SCORE units (mean 0/sd 1), ~6wk stale at release (JOLTS lag) — never
+# presented as 'current month' tightness.
+
+- series_id: NYFED:ESMS_HEADLINE
+  name: Empire State Manufacturing general business conditions (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "monthly on/around the 15th, 08:30 ET"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv GACDISA"
+  secondary_source: null           # NSA file exists — SA is the published headline
+  tolerance: null
+  active: 1
+  # First regional-mfg read of each month (leads Philly Fed by days); pairs
+  # with CAL:ISM_MFG_PMI. 2026-09 = 7.6 vs 2026-08 = 20.6 (live-verified).
+
+- series_id: NYFED:ESMS_NEW_ORDERS
+  name: Empire State new orders (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv NOCDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:ESMS_SHIPMENTS
+  name: Empire State shipments (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv SHCDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:ESMS_PRICES_PAID
+  name: Empire State prices paid (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0                 # live max high: 2026-09 = 63.1
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv PPCDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # First PPI-adjacent signal of the month — pipeline prices.
+
+- series_id: NYFED:ESMS_PRICES_RECEIVED
+  name: Empire State prices received (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv PRCDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # RECEIVED−PAID margin spread = pricing-power gauge.
+
+- series_id: NYFED:ESMS_EMPLOYMENT
+  name: Empire State employment (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv NECDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:ESMS_AVG_WORKWEEK
+  name: Empire State average workweek (SA diffusion)
+  block: D
+  tier: 0
+  unit: diffusion index
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:ESMS_HEADLINE"
+  expected_start: "2001-07-01"
+  sanity_min: -60.0
+  sanity_max: 70.0
+  primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv AWCDISA"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Hours lead headcount — the quiet layoff channel.
+
+- series_id: NYFED:HPW_IDX_M
+  name: Heise-Pearce-Weber Labor Market Tightness Index (monthly)
+  block: D
+  tier: 0
+  unit: idx                       # z-SCORE normalized mean 0 / sd 1 — NOT percent
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "monthly, business day after JOLTS (~09:00 ET, ~6wk lag); revised at ECI"
+  expected_start: "2000-12-01"
+  sanity_min: -5.0
+  sanity_max: 5.0
+  primary_source: "NYFED:HPW_monthly_share.csv col HPW"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Composite of 27 tightness measures incl. vacancies — do NOT quote as
+  # percent (site translation Jul-2026: -0.08 ↔ ECI wage ~2.9% annual).
+  # Research product, not an official NY Fed/FOMC estimate.
+
 - series_id: FRED:PAYEMS
   name: "Total Nonfarm Payrolls (SA)"
   block: D
@@ -283,6 +435,121 @@ series:
   # ADDED 2026-09-17 (anomaly-hunt round 1, Pri-1): the sentiment headline had
   # 120 calendar actuals but no series — the 1y-inflation-expectations leg
   # existed while the sentiment level itself was invisible to series analysis.
+
+# --- NY Fed research expansion 2026-09-19 (SCE → block D) ------------------------
+# Survey of Consumer Expectations, core module XLSX. Columns mapped BY LABEL
+# (row idx 3): job-loss and quit probabilities share one sheet — a positional
+# read swaps them. Values cross-checked against the Sep-08-2026 press release
+# (1y 3.6 / 3y 3.2 / 5y 3.0 / job loss 13.8 / job finding 45.4 — exact match).
+# Panel rotation (vs Michigan's changing mix) + discrete probabilities (vs
+# Likert) — the steadier expectations read.
+
+- series_id: NYFED:SCE_INFL_1Y
+  name: SCE median 1-year ahead inflation expectations
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "monthly, 1st-2nd week of M+1 (day varies)"
+  expected_start: "2013-06-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Inflation expectations' (Median one-year ahead)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:SCE_INFL_3Y
+  name: SCE median 3-year ahead inflation expectations
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:SCE_INFL_1Y"
+  expected_start: "2013-06-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Inflation expectations' (Median three-year ahead)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The Fed's preferred horizon for anchoring checks — 3y is where anchored
+  # expectations should be inert to energy shocks.
+
+- series_id: NYFED:SCE_INFL_5Y
+  name: SCE median 5-year ahead inflation expectations
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:SCE_INFL_1Y"
+  expected_start: "2022-01-01"      # 5y module starts later (live: 202201 first row)
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Five-year ahead Infl Exp'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:SCE_EARN
+  name: SCE median expected earnings growth (next 12 months)
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:SCE_INFL_1Y"
+  expected_start: "2013-06-01"
+  sanity_min: -5.0
+  sanity_max: 15.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Earnings growth' (Median expected earnings growth)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:SCE_JOBLOSS
+  name: SCE mean probability of losing a job (next 12 months)
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:SCE_INFL_1Y"
+  expected_start: "2013-06-01"
+  sanity_min: 0.0
+  sanity_max: 40.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Job separation expectation' (Mean prob of losing)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Wage-side labor fear gauge — leads quits/consumption pullbacks. Aug-2026
+  # = 13.8% lowest since Feb-2026 (press release cross-check).
+
+- series_id: NYFED:SCE_JOBFIND
+  name: SCE mean probability of finding a job if laid off (next 3 months)
+  block: D
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: M
+  ts_convention: report_month
+  release_schedule: "with NYFED:SCE_INFL_1Y"
+  expected_start: "2013-06-01"
+  sanity_min: 0.0
+  sanity_max: 100.0
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Job finding expectations'"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # JOBLOSS÷JOBFIND ≈ worker-side tightness — pairs with NYFED:HPW_IDX_M.
 
 - series_id: FRED:DGORDER
   name: "Manufacturers' New Orders: Durable Goods (millions USD, SA)"
@@ -1533,6 +1800,145 @@ series:
 # =====================================================================
 # STRESS, VOL & SENTIMENT
 # =====================================================================
+
+# --- NY Fed research expansion 2026-09-19 (HHDC → block F) ------------------------
+# Quarterly Report on Household Debt & Credit (Consumer Credit Panel/Equifax).
+# PER-HOUSEHOLD bureau data (vs charge-off's per-BANK view — both retained:
+# they measure different populations). Traps honored at parse: 'Total' cells are
+# FORMULAS (data_only=True); Page 3 balances in $TRILLIONS vs originations $BN;
+# columns mapped BY HEADER (page column order differs between vintages);
+# student-loan flow distorted by COVID forbearance 2020-2025.
+
+- series_id: NYFED:HHDC_TOTAL_DEBT
+  name: Total US household debt outstanding (NY Fed CCP/Equifax)
+  block: F
+  tier: 0
+  unit: bn_usd
+  value_format: level
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "quarterly ~5-6wk after quarter end (Feb/May/Aug/Nov, ~11:00 ET)"
+  expected_start: "2003-03-01"
+  sanity_min: 4000.0
+  sanity_max: 25000.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 3 Data' Total ×1000 (trillions→bn)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The credit-stock headline: 2026Q2 = $18.77T (−$13bn QoQ — press-release
+  # cross-check exact).
+
+- series_id: NYFED:HHDC_DQ90_FLOW_CC
+  name: HHDC credit card balances flowing into 90+ day delinquency (percent)
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' CREDIT CARD"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # The canary series — CC 90+ flow tops every consumer-credit cycle turn
+  # (2026Q2 = 6.97%; pre-GFC baseline ~3-4%). FLOW (quarterly transition),
+  # not the stock.
+
+- series_id: NYFED:HHDC_DQ90_FLOW_AUTO
+  name: HHDC auto loan balances flowing into 90+ day delinquency (percent)
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' AUTO"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: NYFED:HHDC_DQ90_FLOW_MORTGAGE
+  name: HHDC mortgage balances flowing into 90+ day delinquency (percent)
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' MORTGAGE"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Sub-2% is normal; >3% = 2008-class stress territory.
+
+- series_id: NYFED:HHDC_DQ90_FLOW_STUDENT
+  name: HHDC student loan balances flowing into 90+ day delinquency (percent)
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 30.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' STUDENT LOAN"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # TRAP: structurally distorted by COVID forbearance 2020-2023 + reporting
+  # catch-up after resumption (2025Q4 16.19% → 2026Q2 7.83%) — treat the
+  # 2020-2025 window with care in any z-score window.
+
+- series_id: NYFED:HHDC_ORIG_MORTGAGE
+  name: HHDC new mortgage originations ($bn, quarterly)
+  block: F
+  tier: 0
+  unit: bn_usd
+  value_format: level
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 1500.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 6 Data' Total"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Credit SUPPLY gauge — originations collapse before delinquency rises.
+
+- series_id: NYFED:HHDC_ORIG_AUTO
+  name: HHDC new auto loan originations ($bn, quarterly)
+  block: F
+  tier: 0
+  unit: bn_usd
+  value_format: level
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
+  expected_start: "2003-03-01"
+  sanity_min: 0.0
+  sanity_max: 1500.0
+  primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 8 Data' Total"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # NOTE: CC/student originations are NOT in the workbook (separate frozen
+  # dataset — do not claim them).
 
 - series_id: FRED:BAMLH0A0HYM2
   name: "ICE BofA US High Yield OAS"
