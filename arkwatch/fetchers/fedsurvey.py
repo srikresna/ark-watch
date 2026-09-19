@@ -13,8 +13,9 @@ directly into the NLP analysis layer (nlp.py analyze_tone/extract_data).
 """
 from __future__ import annotations
 
-import re
+import contextlib
 import html as _html
+import re
 
 import requests
 
@@ -205,6 +206,7 @@ def fetch_chargeoff() -> list[dict]:
     """
     import io
     import zipfile
+
     from defusedxml.ElementTree import fromstring as parse_xml
 
     url = f"{BASE}/releases/chargeoff/data/FRB_CHGDEL_xml.zip"
@@ -253,15 +255,13 @@ def fetch_chargeoff() -> list[dict]:
             ts = obs.get("TIME_PERIOD", "")
             val = obs.get("OBS_VALUE", "")
             if ts and val:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     out.append({
                         "series": label,
                         "ts": ts,
                         "value": float(val),
                         "unit": "pct",
                     })
-                except (ValueError, TypeError):
-                    pass
     return out
 
 

@@ -9,8 +9,8 @@ transcript PDF appears on the Fed website later the same day.
 """
 from __future__ import annotations
 
-import os
 import re
+
 import requests
 
 PDF_BASE = "https://www.federalreserve.gov/mediacenter/files/FOMCpresconf"

@@ -82,7 +82,7 @@ def _parse_fed_funds_median(text: str) -> dict[str, float]:
     # cells: numeric-or-dash tokens in column order
     cells = re.findall(r"(-?\d+\.\d)|(-)", after)
     vals: list[float | None] = []
-    for num, dash in cells:
+    for num, _dash in cells:
         vals.append(float(num) if num else None)
 
     # The Median row columns = ALL calendar years from the header + Longer
@@ -93,7 +93,7 @@ def _parse_fed_funds_median(text: str) -> dict[str, float]:
     #  the events table independently confirms longer=3.2 from the 2029
     #  column being absent from the Sep-2026 SEP horizon)
     out: dict[str, float] = {}
-    for yr, v in zip(years, vals[: len(years)]):
+    for yr, v in zip(years, vals[: len(years)], strict=False):
         if v is not None:
             out[yr] = v
     # longer run = the first cell AFTER the last mapped year
