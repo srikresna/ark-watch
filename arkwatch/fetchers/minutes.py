@@ -161,8 +161,11 @@ FOMC MINUTES TEXT:
         ZAI_ENDPOINT,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
         json={
-            "model": "glm-4.6",
-            "messages": [{"role": "user", "content": prompt}],
+            "model": "glm-5.3",
+            "messages": [
+                {"role": "system", "content": "You are a central bank policy analyst. Respond ONLY with valid JSON, no markdown."},
+                {"role": "user", "content": prompt},
+            ],
             "thinking": {"type": "disabled"},
             "max_tokens": 500,
             "temperature": 0.3,
