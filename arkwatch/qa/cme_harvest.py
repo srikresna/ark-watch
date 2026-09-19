@@ -39,6 +39,32 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
             ).fetchone()[0]
             n = _save_settlements(conn, rows)
             n += _reconcile_gaps(conn, code, rows, db_max_pre)
+            # ROUND-10 queue: EMPTY-blind walkback — fetch_settlements can
+            # return [] when its internal date-walk lands on nothing; a
+            # product whose DB frontier is stale then silently keeps the
+            # hole (live: Friday 09-18 settlements missing after both
+            # Saturday runs). One explicit retry with the last completed
+            # trading day as trade_date.
+            if not rows and db_max_pre:
+                from datetime import UTC as _U
+                from datetime import date as _d
+                from datetime import datetime as _dt
+                from datetime import timedelta as _td
+
+                probe = _dt.now(_U).date() - _td(days=1)
+                while probe.weekday() >= 5:
+                    probe -= _td(days=1)
+                if probe.isoformat() > db_max_pre:
+                    try:
+                        retry = cme.fetch_settlements(
+                            code, trade_date=_dt(probe.year, probe.month, probe.day, tzinfo=_U)
+                        )
+                        landed = [r for r in retry if r["trade_date"] == probe.isoformat()]
+                        if landed:
+                            n += _save_settlements(conn, landed)
+                            print(f"  ↻ {code}: EMPTY-blind recovered {len(landed)} rows @ {probe}")
+                    except Exception as ex2:
+                        print(f"  ⚠ {code} EMPTY-blind retry: {str(ex2)[:70]}")
             out[code] = n
         except Exception as ex:
             out[code] = -1

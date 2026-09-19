@@ -247,7 +247,32 @@ def run_loop():
     except Exception:
         _head = "?"
     logger.info(f"=== daemon start @ {_head} ===")
-    last_run: dict[str, str] = {}
+    # ROUND-10 queue: last_run persists across restarts (a deploy-restart
+    # used to replay every already-succeeded daily job and page the owner
+    # for a clean harvest). Date-scoped file — yesterday's keys are pruned.
+    STATE = ROOT / "data" / "daemon_state.json"
+
+    def _load_state() -> dict[str, str]:
+        import json as _json
+
+        try:
+            raw = _json.loads(STATE.read_text())
+            today = datetime.now(WIB).date().isoformat()
+            return {k: v for k, v in raw.items() if k.endswith(f"@{today}")}
+        except Exception:
+            return {}
+
+    def _save_state(d: dict[str, str]) -> None:
+        import json as _json
+
+        try:
+            STATE.write_text(_json.dumps(d))
+        except Exception as ex:
+            logger.warning(f"state persist failed: {ex}")
+
+    last_run = _load_state()
+    if last_run:
+        logger.info(f"state restored: {len(last_run)} job(s) already ran today — no replay")
     next_retry: dict[str, float] = {}  # cmd → monotonic retry time (non-blocking)
     log_day = datetime.now(UTC).date()
     last_watch = 0.0
@@ -274,6 +299,7 @@ def run_loop():
             for cmd, desc, key in _due_jobs(now_wib, last_run):
                 ok = _run_job(cmd, desc)
                 last_run[key] = "1"
+                _save_state(last_run)
                 if not ok:
                     next_retry[key] = time.monotonic() + RETRY_DELAY_S
                     logger.warning(f"  retry {cmd} in {RETRY_DELAY_S // 60} minutes")
