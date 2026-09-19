@@ -218,6 +218,47 @@ def _run_job(cmd: str, desc: str) -> bool:
         return False
 
 
+STATE_PATH = ROOT / "data" / "daemon_state.json"
+
+
+def _load_state(path: Path | None = None) -> dict[str, str]:
+    """Today's SUCCEEDED jobs from the persisted day-state file.
+
+    ROUND-10: last_run survives restarts (a deploy-restart used to replay
+    every already-succeeded daily job and page the owner for a clean
+    harvest). Date-scoped — yesterday's keys are pruned on load.
+
+    ROUND-11: only success ("1") entries restore. A FAILED job's key is
+    deliberately absent so a restart re-runs it once: the 10-minute retry
+    schedule is in-memory and dies with the process (live 2026-09-19
+    05:26 UTC: a deploy 64 seconds into verify's retry killed it, while
+    the persisted already-ran key cancelled the day's only automatic
+    recovery — the failure stood until the next day's schedule)."""
+    import json as _json
+
+    try:
+        raw = _json.loads((path or STATE_PATH).read_text())
+        today = datetime.now(WIB).date().isoformat()
+        return {
+            k: v
+            for k, v in raw.items()
+            if k.endswith(f"@{today}") and v == "1"
+        }
+    except Exception:
+        return {}
+
+
+def _save_state(d: dict[str, str], path: Path | None = None) -> None:
+    """Persist the day-state — successes only, mirroring _load_state."""
+    import json as _json
+
+    try:
+        succ = {k: v for k, v in d.items() if v == "1"}
+        (path or STATE_PATH).write_text(_json.dumps(succ))
+    except Exception as ex:
+        logger.warning(f"state persist failed: {ex}")
+
+
 def run_loop():
     # Lockfile prevents duplicate instances
     if LOCKFILE.exists():
@@ -249,27 +290,9 @@ def run_loop():
     logger.info(f"=== daemon start @ {_head} ===")
     # ROUND-10 queue: last_run persists across restarts (a deploy-restart
     # used to replay every already-succeeded daily job and page the owner
-    # for a clean harvest). Date-scoped file — yesterday's keys are pruned.
-    STATE = ROOT / "data" / "daemon_state.json"
-
-    def _load_state() -> dict[str, str]:
-        import json as _json
-
-        try:
-            raw = _json.loads(STATE.read_text())
-            today = datetime.now(WIB).date().isoformat()
-            return {k: v for k, v in raw.items() if k.endswith(f"@{today}")}
-        except Exception:
-            return {}
-
-    def _save_state(d: dict[str, str]) -> None:
-        import json as _json
-
-        try:
-            STATE.write_text(_json.dumps(d))
-        except Exception as ex:
-            logger.warning(f"state persist failed: {ex}")
-
+    # for a clean harvest). Date-scoped file — yesterday's keys are pruned;
+    # failures stay unpersisted so a restart re-runs them once (see
+    # _load_state).
     last_run = _load_state()
     if last_run:
         logger.info(f"state restored: {len(last_run)} job(s) already ran today — no replay")
@@ -288,7 +311,14 @@ def run_loop():
                     cmd = rkey.split("-", 1)[1].split("@")[0]
                     desc = f"RETRY {cmd}"
                     del next_retry[rkey]
-                    if not _run_job(cmd, desc):
+                    if _run_job(cmd, desc):
+                        # ROUND-11: upgrade the day-state — the original
+                        # failure left the key unpersisted; a healed retry
+                        # must close it or a later restart would replay a
+                        # job that already recovered
+                        last_run[rkey] = "1"
+                        _save_state(last_run)
+                    else:
                         logger.error(
                             f"{cmd}: retry failed — manual attention needed "
                             f"(the next SCHEDULED run of this job is the natural "
@@ -298,7 +328,10 @@ def run_loop():
             # Scheduled jobs — per-entry key (built by _due_jobs, identical format)
             for cmd, desc, key in _due_jobs(now_wib, last_run):
                 ok = _run_job(cmd, desc)
-                last_run[key] = "1"
+                # ROUND-11: "0" marks failed-in-this-process (blocks the
+                # 30-second loop from re-firing it) but is NOT persisted —
+                # a restart re-runs a failed job exactly once
+                last_run[key] = "1" if ok else "0"
                 _save_state(last_run)
                 if not ok:
                     next_retry[key] = time.monotonic() + RETRY_DELAY_S
