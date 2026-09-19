@@ -103,7 +103,10 @@ def backfill_fred(conn, entries, *, dry: bool = False) -> dict[str, int]:
 def backfill_cal(conn, *, dry: bool = False) -> dict[str, int]:
     """ROUND-4: the CAL: history load was an uncommitted one-off — commit the
     route: idempotent family walk + fetch_log rows (the round-2 visibility
-    convention), so a missed month is always re-healable."""
+    convention), so a missed month is always re-healable.
+
+    ROUND-11: also loads the FOMC dot plot series (sep.py web-scrapes
+    federalreserve.gov SEP pages — quarterly cadence, all vintages)."""
     from ..fetchers import caldist
 
     out: dict[str, int] = {}
@@ -125,6 +128,15 @@ def backfill_cal(conn, *, dry: bool = False) -> dict[str, int]:
                 )
             except Exception:
                 pass
+
+    # FOMC dot plot (sep.py — web-scrape, quarterly cadence)
+    try:
+        from ..fetchers import sep
+
+        sep.save_dot_series(conn)
+    except Exception as ex:
+        print(f"  ⚠ sep: {str(ex)[:90]}")
+
     return out
 
 

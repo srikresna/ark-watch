@@ -65,6 +65,9 @@ SCHEDULE = [
     # truth, upsert repairs fetch-day stamps)
     (21, 15, "sunday", "f4 backfill-first", "First-print vintage heal (ALFRED truth)"),
     (21, 30, "sunday", "f4 replay", "Point-in-time regime replay refresh"),
+    # ROUND-11: the dot plot refreshes 4x/year with SEP meetings — a quarterly
+    # cadence job re-fetches all vintages (idempotent; the web is the source)
+    (5, 0, "sunday", "backfill --source sep", "FOMC dot plot refresh (quarterly cadence)"),
 ]
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle

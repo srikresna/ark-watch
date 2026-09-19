@@ -458,6 +458,54 @@ series:
   # (60 high-importance actuals with no covering series). Household income
   # level — the consumer-demand leg paired with UMCSENT/RSAFS.
 
+- series_id: "CAL:FOMC_DOT_2026"
+  name: "FOMC dot plot median — end-2026 target (from federalreserve.gov SEP)"
+  block: A
+  tier: 4
+  unit: "pct (fed funds target)"
+  value_format: pct
+  freq: Q
+  ts_convention: report_month
+  release_schedule: "4x/year with SEP meetings (Mar/Jun/Sep/Dec, 14:00 ET)"
+  expected_start: "2021-06-01"
+  sanity_min: 0.0
+  sanity_max: 8.0
+  primary_source: "CAL:federalreserve.gov/fomcprojtabl"
+  active: 1
+  calendar_family: "INTEREST RATE PROJECTION CURRENT"
+
+- series_id: "CAL:FOMC_DOT_2027"
+  name: "FOMC dot plot median — end-2027 target (from federalreserve.gov SEP)"
+  block: A
+  tier: 4
+  unit: "pct (fed funds target)"
+  value_format: pct
+  freq: Q
+  ts_convention: report_month
+  release_schedule: "4x/year with SEP meetings"
+  expected_start: "2021-06-01"
+  sanity_min: 0.0
+  sanity_max: 8.0
+  primary_source: "CAL:federalreserve.gov/fomcprojtabl"
+  active: 1
+  calendar_family: "INTEREST RATE PROJECTION 1ST YR"
+
+- series_id: "CAL:FOMC_DOT_2028"
+  name: "FOMC dot plot median — end-2028 target (from federalreserve.gov SEP)"
+  block: A
+  tier: 4
+  unit: "pct (fed funds target)"
+  value_format: pct
+  freq: Q
+  ts_convention: report_month
+  release_schedule: "4x/year with SEP meetings"
+  expected_start: "2021-06-01"
+  sanity_min: 0.0
+  sanity_max: 8.0
+  primary_source: "CAL:federalreserve.gov/fomcprojtabl"
+  active: 1
+  calendar_family: "INTEREST RATE PROJECTION 2ND YR"
+
 - series_id: FRED:GDPNOW
   name: "GDPNow — real GDP QoQ annualized nowcast"
   block: D
