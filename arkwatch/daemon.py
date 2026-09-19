@@ -68,6 +68,11 @@ SCHEDULE = [
     # ROUND-11: the dot plot refreshes 4x/year with SEP meetings — a quarterly
     # cadence job re-fetches all vintages (idempotent; the web is the source)
     (5, 0, "sunday", "backfill --source sep", "FOMC dot plot refresh (quarterly cadence)"),
+    # Fed surveys + reports: SLOOS/Beige Book/SCOOS/FSR/Minutes/Press Conf.
+    # Weekly check (quarterly/monthly sources — "unchanged" is the normal
+    # outcome ~95% of days; new data triggers fetch + NLP + store).
+    # ALSO runs daily: press conf + minutes land on FOMC days, not Sundays.
+    (6, 50, "daily", "fedsurvey", "Fed surveys + FOMC comms (SLOOS/BeigeBook/Minutes/PressConf NLP)"),
 ]
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle

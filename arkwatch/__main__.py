@@ -18,6 +18,10 @@ def main() -> int:
         from .qa.coverage import main as coverage_main
 
         return coverage_main(sys.argv[2:])
+    if cmd == "fedsurvey":
+        from .qa.fedsurvey_harvest import main as fedsurvey_main
+
+        return fedsurvey_main(sys.argv[2:])
     if cmd == "backfill":
         from .qa.backfill import main as backfill_main
 
