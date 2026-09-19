@@ -11,11 +11,10 @@ meeting's END date. Minutes publish ~3 weeks after the meeting.
 """
 from __future__ import annotations
 
+import html as _html
 import json
 import os
 import re
-import html as _html
-from datetime import UTC, datetime
 
 import requests
 
