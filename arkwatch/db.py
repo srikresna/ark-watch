@@ -413,8 +413,9 @@ def get_conn(path: str | Path, *, allow_init: bool = False) -> sqlite3.Connectio
         else:
             conn.close()
             raise RuntimeError(
-                f"DB schema v{current} < code v{SCHEMA_VERSION} — run migrations "
-                "(arkwatch db migrate) before continuing."
+                f"DB schema v{current} < code v{SCHEMA_VERSION} — run any CLI "
+                "job once (e.g. `python -m arkwatch harvest`) to auto-apply "
+                "pending migrations before continuing."
             )
     elif current > SCHEMA_VERSION:
         conn.close()
