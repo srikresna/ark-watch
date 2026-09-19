@@ -47,7 +47,6 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
             # trading day as trade_date.
             if not rows and db_max_pre:
                 from datetime import UTC as _U
-                from datetime import date as _d
                 from datetime import datetime as _dt
                 from datetime import timedelta as _td
 
