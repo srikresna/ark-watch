@@ -73,8 +73,8 @@ class TestNlpOutageResilience:
         assert out["minutes"].startswith("nlp-failed")
         assert out["pressconf"].startswith("nlp-failed")
         # structural survived the outage
-        assert _row(conn, "fedsurvey_sloos_bias") is not None  # tightened > eased
-        assert _row(conn, "fedsurvey_minutes_bias") is not None  # dissent stored
+        assert _row(conn, "fedsurvey_sloos_bias")[0] == 1  # tightened > eased
+        assert _row(conn, "fedsurvey_minutes_bias")[0] == 1  # hawkish dissent = +1, not 0
         # tone rows must NOT exist — they are the completion marker
         assert _row(conn, "fedsurvey_sloos_tone") is None
         assert _row(conn, "fedsurvey_minutes_tone") is None

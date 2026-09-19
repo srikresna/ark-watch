@@ -57,7 +57,15 @@ def _store_row(conn, signal_id: str, ts: str, value, note: str) -> None:
 
 
 def _bias_value(metrics: dict) -> int:
-    return 1 if metrics.get("net_bias") == "tightening" else (-1 if metrics.get("net_bias") == "easing" else 0)
+    """Structural bias → +1/0/-1. The two vocabularies are the same axis:
+    SLOOS says tightening/easing, minutes dissent says hawkish/dovish —
+    without the synonym map a 'hawkish' dissent stored as 0 (live 2026-09-19)."""
+    bias = (metrics.get("net_bias") or "").lower()
+    if bias in ("tightening", "hawkish"):
+        return 1
+    if bias in ("easing", "dovish"):
+        return -1
+    return 0
 
 
 def _check_new(available_ts: str, stored_ts: str) -> bool:
