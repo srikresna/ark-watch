@@ -12,8 +12,6 @@ meeting's END date. Minutes publish ~3 weeks after the meeting.
 from __future__ import annotations
 
 import html as _html
-import json
-import os
 import re
 
 import requests
@@ -135,146 +133,28 @@ def parse_minutes(date_iso: str) -> dict:
     }
 
 
-def _get_nlp_config() -> dict:
-    """Resolve NLP provider from env — multi-provider by design.
-
-    Supported providers (set NLP_PROVIDER):
-      zai        — z.ai GLM via Anthropic Messages API (default)
-      openai     — OpenAI GPT via chat completions (needs OPENAI_API_KEY)
-      anthropic  — Anthropic Claude via Messages API (needs ANTHROPIC_API_KEY)
-      custom     — any OpenAI-compatible endpoint (needs NLP_BASE_URL + NLP_API_KEY)
-
-    Override-able per-call via env vars — swap providers without code changes.
-    """
-    provider = os.environ.get("NLP_PROVIDER", "zai").lower()
-    model = os.environ.get("NLP_MODEL", "")
-    base_url = os.environ.get("NLP_BASE_URL", "")
-    api_key = os.environ.get("NLP_API_KEY", "")
-
-    if provider == "zai":
-        return {
-            "endpoint": base_url or "https://api.z.ai/api/anthropic/v1/messages",
-            "api_key": api_key or os.environ.get("ZAI_API_KEY") or os.environ.get("Z_AI_API_KEY", ""),
-            "model": model or "glm-5.3",
-            "format": "anthropic",  # Anthropic Messages API
-        }
-    if provider == "openai":
-        return {
-            "endpoint": base_url or "https://api.openai.com/v1/chat/completions",
-            "api_key": api_key or os.environ.get("OPENAI_API_KEY", ""),
-            "model": model or "gpt-4o",
-            "format": "openai",
-        }
-    if provider == "anthropic":
-        return {
-            "endpoint": base_url or "https://api.anthropic.com/v1/messages",
-            "api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", ""),
-            "model": model or "claude-sonnet-5",
-            "format": "anthropic",
-        }
-    if provider == "custom":
-        if not base_url:
-            raise MinutesError("NLP_PROVIDER=custom requires NLP_BASE_URL")
-        return {
-            "endpoint": base_url,
-            "api_key": api_key,
-            "model": model or "default",
-            "format": os.environ.get("NLP_FORMAT", "openai"),  # openai | anthropic
-        }
-    raise MinutesError(f"unknown NLP_PROVIDER: {provider} (zai|openai|anthropic|custom)")
 
 
-def _call_llm(cfg: dict, system: str, user: str) -> str:
-    """Route to the correct API format and extract the text response."""
-    if cfg["format"] == "anthropic":
-        r = requests.post(
-            cfg["endpoint"],
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": cfg["api_key"],
-                "anthropic-version": "2023-06-01",
-            },
-            json={
-                "model": cfg["model"],
-                "max_tokens": 4096,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
-            timeout=(10, 180),
-        )
-        if r.status_code != 200:
-            raise MinutesError(f"NLP: HTTP {r.status_code} — {r.text[:100]}")
-        blocks = r.json().get("content", [])
-        return next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")
-
-    # openai format (default for most providers)
-    r = requests.post(
-        cfg["endpoint"],
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cfg['api_key']}",
-        },
-        json={
-            "model": cfg["model"],
-            "max_tokens": 4096,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        },
-        timeout=(10, 180),
-    )
-    if r.status_code != 200:
-        raise MinutesError(f"NLP: HTTP {r.status_code} — {r.text[:100]}")
-    return r.json()["choices"][0]["message"]["content"]
 
 
 def nlp_sentiment(text: str, api_key: str | None = None) -> dict:
-    """NLP sentiment — multi-provider (z.ai GLM / OpenAI / Anthropic / custom).
+    """Minutes tone analysis — thin wrapper over the canonical NLP layer.
 
-    Returns {"score": float, "summary": str, "key_concerns": [str]}.
-    Score: −100 (max dovish) .. +100 (max hawkish).
+    AUDIT 2026-09-20: the fedsurvey_harvest rewrite (db61aff) replaced this
+    function's only caller with nlp.analyze_tone, leaving this near-duplicate
+    implementation dead — two prompts that could drift apart invisibly. It
+    stays as a delegation (the agent-harness plan references the API) so there
+    is exactly ONE provider/prompt implementation: nlp.py.
 
-    Provider selection via NLP_PROVIDER env (default: zai). Model, endpoint,
-    and key all overridable — see _get_nlp_config(). The api_key parameter
-    overrides the env-resolved key (backward-compat for direct calls).
+    api_key (backward-compat for direct calls) is honored via NLP_API_KEY.
     """
-    cfg = _get_nlp_config()
+    import os as _os
+
     if api_key:
-        cfg["api_key"] = api_key
-    if not cfg["api_key"]:
-        raise MinutesError(
-            f"NLP_API_KEY not set for provider '{os.environ.get('NLP_PROVIDER', 'zai')}'"
-        )
+        _os.environ["NLP_API_KEY"] = api_key
+    from .nlp import analyze_tone
 
-    discussion = text[:12000]
-    prompt = f"""Analyze this FOMC minutes text for monetary policy tone.
-
-Rate the overall tone on a scale from -100 (maximally dovish: rate cuts, easing concern) to +100 (maximally hawkish: inflation fighting, tightening bias).
-
-Also identify the top 3 specific concerns discussed.
-
-Respond in this exact JSON format:
-{{"score": <number>, "summary": "<one sentence>", "key_concerns": ["<concern1>", "<concern2>", "<concern3>"]}}
-
-FOMC MINUTES TEXT:
-{discussion}"""
-
-    content = _call_llm(
-        cfg,
-        system="You are a central bank policy analyst. Respond ONLY with valid JSON, no markdown.",
-        user=prompt,
-    )
-    if not content:
-        raise MinutesError("NLP: empty response")
-    # extract JSON from response (model may wrap in markdown)
-    jm = re.search(r"\{.*\}", content, re.DOTALL)
-    if not jm:
-        raise MinutesError(f"z.ai: no JSON in response — {content[:100]}")
-    try:
-        return json.loads(jm.group())
-    except json.JSONDecodeError:
-        return {"score": 0.0, "summary": content[:200], "key_concerns": []}
+    return analyze_tone(text, source_type="minutes")
 
 
 def minutes_dates() -> list[str]:

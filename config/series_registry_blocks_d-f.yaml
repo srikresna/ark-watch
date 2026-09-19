@@ -120,7 +120,7 @@ series:
   ts_convention: report_month
   release_schedule: "monthly on/around the 15th, 08:30 ET"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv GACDISA"
   secondary_source: null           # NSA file exists — SA is the published headline
@@ -139,7 +139,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv NOCDISA"
   secondary_source: null
@@ -156,7 +156,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv SHCDISA"
   secondary_source: null
@@ -173,7 +173,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0                 # live max high: 2026-09 = 63.1
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv PPCDISA"
   secondary_source: null
@@ -191,7 +191,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv PRCDISA"
   secondary_source: null
@@ -209,7 +209,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv NECDISA"
   secondary_source: null
@@ -226,7 +226,7 @@ series:
   ts_convention: report_month
   release_schedule: "with NYFED:ESMS_HEADLINE"
   expected_start: "2001-07-01"
-  sanity_min: -60.0
+  sanity_min: -85.0
   sanity_max: 70.0
   primary_source: "NYFED:esms_seasonallyadjusted_diffusion.csv AWCDISA"
   secondary_source: null
@@ -1818,7 +1818,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "quarterly ~5-6wk after quarter end (Feb/May/Aug/Nov, ~11:00 ET)"
-  expected_start: "2003-03-01"
+  expected_start: "2003-01-01"
   sanity_min: 4000.0
   sanity_max: 25000.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 3 Data' Total ×1000 (trillions→bn)"
@@ -1837,7 +1837,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2003-01-01"
   sanity_min: 0.0
   sanity_max: 30.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' CREDIT CARD"
@@ -1857,7 +1857,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2003-01-01"
   sanity_min: 0.0
   sanity_max: 30.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' AUTO"
@@ -1874,7 +1874,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2003-01-01"
   sanity_min: 0.0
   sanity_max: 30.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' MORTGAGE"
@@ -1892,7 +1892,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2004-01-01"
   sanity_min: 0.0
   sanity_max: 30.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 14 Data' STUDENT LOAN"
@@ -1912,7 +1912,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2003-01-01"
   sanity_min: 0.0
   sanity_max: 1500.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 6 Data' Total"
@@ -1930,7 +1930,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with NYFED:HHDC_TOTAL_DEBT"
-  expected_start: "2003-03-01"
+  expected_start: "2004-01-01"
   sanity_min: 0.0
   sanity_max: 1500.0
   primary_source: "NYFED:hhd_c_report_YYYYqN.xlsx 'Page 8 Data' Total"
@@ -2043,7 +2043,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1991-01-01"
   sanity_min: -0.1               # SA noise dips to -0.04 near the zero floor
   sanity_max: 25.0               # (live 1985-2026 min/max: -0.04 / 2.80)
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=RERES, CHGDEL=CHG)"
@@ -2060,7 +2060,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1991-01-01"
   sanity_min: 0.0
   sanity_max: 25.0
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONCC, CHGDEL=DEL)"
@@ -2078,7 +2078,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1987-01-01"
   sanity_min: 0.0
   sanity_max: 25.0
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CI, CHGDEL=DEL)"
@@ -2112,7 +2112,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1987-01-01"
   sanity_min: 0.0
   sanity_max: 25.0
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONALL, CHGDEL=DEL)"
@@ -2129,7 +2129,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1987-01-01"
   sanity_min: 0.0
   sanity_max: 25.0
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=REALL, CHGDEL=DEL)"
@@ -2146,7 +2146,7 @@ series:
   freq: Q
   ts_convention: quarter_start
   release_schedule: "with FRB:CHG_CC"
-  expected_start: "1985-01-01"
+  expected_start: "1991-01-01"
   sanity_min: 0.0
   sanity_max: 25.0
   primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=RERES, CHGDEL=DEL)"

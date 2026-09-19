@@ -205,7 +205,9 @@ def fetch_chargeoff() -> list[dict]:
 
     Quarterly SDMX XML (CHGDEL_data.xml inside a zip). Returns the key
     consumer credit series: charge-off + delinquency rates for credit card,
-    auto, real estate, and all loans (ALL banks, NSA).
+    consumer, real estate, C&I, and all loans (ALL banks, SEASONALLY
+    ADJUSTED — audit 2026-09-20: the docstring long said NSA while the
+    filter keeps SA rows; SA is what we store).
     """
     import io
     import zipfile
@@ -314,10 +316,6 @@ def _chgdel_rows() -> list[tuple[str, str, float]]:
     return _chgdel_cache
 
 
-def frb_knows(key: str) -> bool:
-    return key in FRB_CHGDEL_SERIES
-
-
 def frb_fetch_latest(series_id: str) -> dict:
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     label = FRB_CHGDEL_SERIES.get(key)
@@ -330,16 +328,19 @@ def frb_fetch_latest(series_id: str) -> dict:
     return {"ts": ts, "value": v}
 
 
-def frb_fetch_window(series_id: str, days: int = 10) -> list[dict]:
+def frb_fetch_window(series_id: str, days: int = 10, *, today: str | None = None) -> list[dict]:
+    """`today` (ISO) injectable for the same time-bomb reason as
+    nyfedresearch.fetch_window."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     label = FRB_CHGDEL_SERIES.get(key)
     if label is None:
         raise FedSurveyError(f"frb: unrouted series {series_id}")
     from datetime import UTC, datetime, timedelta
 
+    now = datetime.now(UTC) if today is None else datetime.fromisoformat(today + "T00:00:00+00:00")
     # quarterly release ~2 months after quarter end — a 10-day window would
     # starve it; 420d always reaches the latest quarter
-    cutoff = (datetime.now(UTC) - timedelta(days=max(days, 420))).date().isoformat()
+    cutoff = (now - timedelta(days=max(days, 420))).date().isoformat()
     return [
         {"ts": ts, "value": v}
         for lb, ts, v in _chgdel_rows()
@@ -377,8 +378,8 @@ def fetch_latest(series_id: str) -> dict:
     return frb_fetch_latest(series_id)
 
 
-def fetch_window(series_id: str, days: int = 10) -> list[dict]:
-    return frb_fetch_window(series_id, days)
+def fetch_window(series_id: str, days: int = 10, **kw) -> list[dict]:
+    return frb_fetch_window(series_id, days, **kw)
 
 
 # --- Convenience: analyze any survey with NLP ----------------------------------------

@@ -300,7 +300,10 @@ def _gscpi() -> dict[str, list[tuple[str, float]]]:
             continue
         v = _f(row[cur])
         if v is not None:
-            vals.append((_dd_mon_yyyy(row[0]), round(v, 4)))
+            # source labels are month-END ('31-Aug-2026') — normalize to month
+            # START: the report_month convention every other monthly series
+            # uses (audit 2026-09-20: GSCPI was the sole day-28..31 violator)
+            vals.append((_month_start(_dd_mon_yyyy(row[0])), round(v, 4)))
     if not vals:
         raise NyFedResearchError("gscpi: no rows in current vintage column")
     return {"GSCPI": vals}
@@ -577,14 +580,18 @@ def fetch_latest(series_id: str) -> dict:
     return {"ts": ts, "value": v}
 
 
-def fetch_window(series_id: str, days: int = 10) -> list[dict]:
+def fetch_window(series_id: str, days: int = 10, *, today: str | None = None) -> list[dict]:
+    """`today` (ISO) is injectable so tests pin the cutoff instead of racing
+    the wall clock (audit 2026-09-20: the floor tests were time bombs —
+    frozen 2026 quarters vs a moving 'now' would fail spuriously in 2027)."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     family = SERIES_FAMILY.get(key)
     if family is None:
         raise NyFedResearchError(f"nyfedresearch: unrouted series {series_id}")
     from datetime import UTC, timedelta
 
-    cutoff = (datetime.now(UTC) - timedelta(days=max(days, FLOOR_DAYS[family]))).date().isoformat()
+    now = datetime.now(UTC) if today is None else datetime.fromisoformat(today + "T00:00:00+00:00")
+    cutoff = (now - timedelta(days=max(days, FLOOR_DAYS[family]))).date().isoformat()
     return [{"ts": ts, "value": v} for ts, v in _family_rows(family).get(key, []) if ts >= cutoff]
 
 

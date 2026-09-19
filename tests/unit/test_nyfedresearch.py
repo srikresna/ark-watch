@@ -95,9 +95,10 @@ class TestGscpi:
         )
         monkeypatch.setattr(nr, "_download", lambda k: text.encode())
         out = nr._gscpi()
-        assert ("2026-07-31", 0.94) in out["GSCPI"]
-        assert ("2026-07-31", 0.79) not in out["GSCPI"]  # superseded print dropped
-        assert out["GSCPI"][-1] == ("2026-08-31", 1.0625)
+        # month-END source labels normalize to month START (report_month)
+        assert ("2026-07-01", 0.94) in out["GSCPI"]
+        assert ("2026-07-01", 0.79) not in out["GSCPI"]  # superseded print dropped
+        assert out["GSCPI"][-1] == ("2026-08-01", 1.0625)
 
 
 # --- Empire ------------------------------------------------------------------------
@@ -232,12 +233,16 @@ class TestLw:
 class TestRouting:
     def test_window_floor_reaches_latest_quarter(self, monkeypatch):
         """days=10 must not starve a quarterly family — the floor (420d) has
-        to reach 2026-04-01 from 2026-09-19 (live today)."""
+        to reach 2026-04-01 from the injected 'today' (fixed, not wall-clock —
+        audit 2026-09-20: the live-clock version was a 2027 time bomb)."""
         monkeypatch.setattr(nr, "_parsed_cache", {
             "hhdc": {"HHDC_TOTAL_DEBT": [("2026-04-01", 18770.5)]}
         })
-        pts = nr.fetch_window("NYFED:HHDC_TOTAL_DEBT", days=10)
+        pts = nr.fetch_window("NYFED:HHDC_TOTAL_DEBT", days=10, today="2026-09-19")
         assert pts == [{"ts": "2026-04-01", "value": 18770.5}]
+        # and the floor actually cuts: a 2024 quarter is outside the 420d floor
+        pts2 = nr.fetch_window("NYFED:HHDC_TOTAL_DEBT", days=10, today="2026-09-19")
+        assert all(p["ts"] >= "2025-07-01" for p in pts2)
 
     def test_knows_and_unrouted(self):
         assert nr.knows("GSCPI") and nr.knows("HHDC_TOTAL_DEBT")
@@ -252,8 +257,86 @@ class TestRouting:
         missing = [f"NYFED:{k}" for k in nr.SERIES_FAMILY if f"NYFED:{k}" not in reg_ids]
         assert not missing, f"unregistered series: {missing}"
 
+    def test_delegation_seam_nyfed_to_nyfedresearch(self, monkeypatch):
+        """The seam that makes all 32 research series reachable through
+        ROUTES['NYFED:'] — audit 2026-09-20: nothing pinned it (a refactor
+        dropping the knows() gate would leave 32 series erroring at harvest
+        with every test green)."""
+        from arkwatch.fetchers import nyfed
+
+        monkeypatch.setattr(nr, "_parsed_cache", {
+            "gscpi": {"GSCPI": [("2026-08-01", 1.06)]}
+        })
+        assert nyfed.fetch_latest("NYFED:GSCPI") == {"ts": "2026-08-01", "value": 1.06}
+        w = nyfed.fetch_window("NYFED:GSCPI", days=10)
+        assert w == [{"ts": "2026-08-01", "value": 1.06}]
+        # markets-API series must NOT be captured by the research gate
+        assert not nr.knows("OBFR")
+
 
 # --- revision contract (shared with FRED) ------------------------------------------------
+
+
+class TestHhdcParser:
+    def _workbook(self, tmp_path):
+        """Minimal HHDC-shaped workbook: 3 pages + footnote + formulas are
+        absent (openpyxl writes uncalculated) — numeric cells only; the
+        data_only=True path stays covered by the live probe."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Page 3 Data"
+        ws.append(["Total Debt Balance and Its Composition"])
+        ws.append(["Trillions of $"])
+        ws.append(["Return to Table of Contents"])
+        ws.append([None, "Mortgage", "HE Revolving", "Auto Loan", "Credit Card",
+                   "Student Loan", "Other", "Total"])
+        ws.append(["03:Q1", 4.942, 0.242, 0.641, 0.688, 0.2407, 0.4776, 7.2313])
+        ws.append(["26:Q2", 12.9, 0.4585, 1.713, 1.263, 1.651, 0.568, 18.7705])
+        ws.append(["* 26:Q2 report includes a revision to 26:Q1 balances"])
+        ws14 = wb.create_sheet("Page 14 Data")
+        ws14.append(["New Seriously Delinquent* Balances by Loan Type"])
+        ws14.append(["Percent"])
+        ws14.append([None])
+        ws14.append([None, "AUTO", "CC", "MORTGAGE", "HELOC", "STUDENT LOAN", "OTHER", "ALL"])
+        ws14.append(["03:Q1", 2.179, 8.273, 1.443, 0.805, None, 4.828, 2.536])
+        ws14.append(["26:Q2", 3.0, 6.97, 1.52, 1.15, 7.83, 5.19, 2.57])
+        ws6 = wb.create_sheet("Page 6 Data")
+        ws6.append(["Mortgage Origination Volume by Riskscore"])
+        ws6.append(["Billions of $"])
+        ws6.append([None, "<620", "620-659", "660-719", "720-759", "760+", None, "TOTAL"])
+        ws6.append(["26:Q2", 30, 40, 100, 160, 274, None, 504.64])
+        ws8 = wb.create_sheet("Page 8 Data")
+        ws8.append(["Auto Loan Origination Volume by Riskscore"])
+        ws8.append(["Billions of $"])
+        ws8.append([None, "<620", "620-659", "660-719", "720-759", "760+", None, "TOTAL"])
+        ws8.append(["26:Q2", 80, 35, 55, 25, 15, None, 210.76])
+        path = tmp_path / "hhdc.xlsx"
+        wb.save(path)
+        return path.read_bytes()
+
+    def test_pages_footnote_and_units(self, tmp_path, monkeypatch):
+        """Page 3 trillions→bn ×1000 at ONE site; footnote row skipped; the
+        flow column is 'CC' (not 'CREDIT CARD'); originations stay $bn;
+        quarter labels 'YY:Qn' → quarter-start ISO."""
+        payload = self._workbook(tmp_path)
+
+        def fake_get(url, **kw):
+            if "databank.html" in url:
+                return type("R", (), {"status_code": 200, "text": 'x hhd_c_report_2026q2.xlsx y'})()
+            return type("R", (), {"status_code": 200, "content": payload})()
+
+        monkeypatch.setattr(nr.requests, "get", fake_get)
+        monkeypatch.setattr(nr, "_bytes_cache", {})
+        out = nr._hhdc()
+        assert out["HHDC_TOTAL_DEBT"] == [
+            ("2003-01-01", 7231.3),   # ×1000, single conversion site
+            ("2026-04-01", 18770.5),
+        ]
+        assert out["HHDC_DQ90_FLOW_CC"][-1] == ("2026-04-01", 6.97)
+        assert out["HHDC_DQ90_FLOW_STUDENT"][-1] == ("2026-04-01", 7.83)
+        assert out["HHDC_DQ90_FLOW_MORTGAGE"][0] == ("2003-01-01", 1.443)
+        assert out["HHDC_ORIG_MORTGAGE"] == [("2026-04-01", 504.64)]  # bn, no ×1000
+        assert out["HHDC_ORIG_AUTO"] == [("2026-04-01", 210.76)]
 
 
 class TestRealtimeRevisions:
@@ -282,4 +365,28 @@ class TestRealtimeRevisions:
         assert vintage[0] == 0.94      # the old print is preserved as vintage
         # idempotent: re-applying the same value snapshots nothing
         assert db.apply_realtime_revisions(conn, [("NYFED:GSCPI", "2026-07-31", 1.06, "NYFED")]) == 0
+        conn.close()
+
+    def test_fred_five_tuple_rows_do_not_crash(self, tmp_path):
+        """AUDIT 2026-09-20 (the regression the green suite missed): the
+        harvest's FRED path passes 5-tuples (…, 'FRED', realtime_start) —
+        strict 4-name unpacking errored EVERY FRED series at harvest. This
+        test runs the exact row shape harvest builds."""
+        conn = db.get_conn(tmp_path / "t.db", allow_init=True)
+        conn.execute(
+            "INSERT INTO series_registry(series_id,name,block,tier,unit,value_format,freq,"
+            "ts_convention,primary_source,active) VALUES ('FRED:TEST','t','A',0,"
+            "'pct','pct','D','obs_day','test',1)"
+        )
+        conn.commit()
+        five = [("FRED:TEST", "2026-09-18", 4.5, "FRED", "2026-09-19")]
+        assert db.insert_observations(conn, five) == 1
+        # revised print in the SAME 5-tuple shape the harvest passes
+        n = db.apply_realtime_revisions(conn, [("FRED:TEST", "2026-09-18", 4.6, "FRED", "2026-09-20")])
+        assert n == 1
+        rt = conn.execute(
+            "SELECT value FROM raw_observations WHERE series_id='FRED:TEST' "
+            "AND vintage_ts='realtime'"
+        ).fetchone()
+        assert rt[0] == 4.6
         conn.close()

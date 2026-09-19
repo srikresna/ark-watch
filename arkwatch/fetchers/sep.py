@@ -142,22 +142,34 @@ def series_rows() -> list[dict]:
 
 
 # CAL: routing interface (fetch_latest / fetch_window)
-def fetch_latest(series_id: str) -> dict:
+def _dot_rows(series_id: str) -> list[dict]:
+    """series_rows filtered to the REQUESTED projection year — the bare
+    version mixed all years into every series (CAL:FOMC_DOT_2026's latest
+    could have been the 2028 median; audit 2026-09-20)."""
     if not series_id.startswith("CAL:FOMC_DOT"):
         raise SepError(f"sep: unrouted {series_id}")
+    want = series_id.rsplit("_", 1)[-1] if "_" in series_id[4:] else None
     rows = series_rows()
+    if want is not None:
+        rows = [r for r in rows if r["series_suffix"] == want]
     if not rows:
-        raise SepError("sep: no rows parsed")
-    return {"ts": rows[-1]["ts"], "value": rows[-1]["value"]}
+        raise SepError(f"sep: no rows for {series_id}")
+    return rows
+
+
+def fetch_latest(series_id: str) -> dict:
+    # series_rows walks sep_dates() NEWEST-FIRST, so [-1] was the OLDEST
+    # vintage (live-caught: CAL:FOMC_DOT_2026 returned the 2023-09 SEP).
+    # max-by-ts is order-immune.
+    r = max(_dot_rows(series_id), key=lambda x: x["ts"])
+    return {"ts": r["ts"], "value": r["value"]}
 
 
 def fetch_window(series_id: str, days: int = 10) -> list[dict]:
     from datetime import timedelta
 
-    if not series_id.startswith("CAL:FOMC_DOT"):
-        raise SepError(f"sep: unrouted {series_id}")
     cutoff = (datetime.now(UTC).date() - timedelta(days=max(days, 2000))).isoformat()
-    return [{"ts": r["ts"], "value": r["value"]} for r in series_rows() if r["ts"] >= cutoff]
+    return [{"ts": r["ts"], "value": r["value"]} for r in _dot_rows(series_id) if r["ts"] >= cutoff]
 
 
 def save_dot_series(conn) -> int:

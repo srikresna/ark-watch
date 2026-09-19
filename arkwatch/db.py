@@ -497,7 +497,12 @@ def apply_realtime_revisions(conn: sqlite3.Connection, rows: list[tuple]) -> int
     the harvest's FRED branch (2026-09-19) so the NY Fed research datasets —
     HHDC/MCT/LW/GSCPI/HPW rewrite whole histories — share the same contract.
 
-    rows: (series_id, ts, value, source) — same shape insert_observations takes.
+    rows: same shape insert_observations takes — 4-tuples (series_id, ts,
+    value, source) or 5-tuples with a trailing release_ts (the harvest's FRED
+    path carries realtime_start as element 5; AUDIT 2026-09-20: strict
+    4-name unpacking crashed on those — every FRED series would have errored
+    at harvest, silently killing the revision contract. Element access, not
+    unpack — exactly like the pre-extraction inline block).
     Returns the number of revision snapshots written (0 = nothing changed).
     """
     from datetime import UTC as _UTC
@@ -508,7 +513,8 @@ def apply_realtime_revisions(conn: sqlite3.Connection, rows: list[tuple]) -> int
     n = 0
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for sid, ts, val, src in rows:
+        for r in rows:
+            sid, ts, val, src = r[0], r[1], r[2], r[3]
             cur_v = conn.execute(
                 "SELECT value FROM raw_observations WHERE series_id=? "
                 "AND ts=? AND source=? AND vintage_ts='realtime'",

@@ -31,6 +31,7 @@ from ..fetchers import (
     misc,
     nyfed,
     philly,
+    sep,
     treasury,
 )
 
@@ -48,6 +49,7 @@ ROUTES = {
     "NYFED:": nyfed,
     "ECB:": ecb,
     "FRB:": fedsurvey,  # Fed Board quantitative releases (charge-off/delinquency SDMX)
+    "CAL:FOMC_DOT": sep,  # longer prefix FIRST — startswith routing is order-sensitive
     "CAL:": caldist,  # calendar-derived series (events.actual → series; DB read)
 }
 # Fetchers exposing early history (depth gate); others show depth=· until backfilled

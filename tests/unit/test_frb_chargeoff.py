@@ -71,9 +71,37 @@ class TestChgdelParse:
         )
         cur = fedsurvey.fetch_latest("FRB:CHG_CC")
         assert cur == {"ts": "2026-04-01", "value": 6.97}
-        # days=10 must not starve a quarterly family (floor 420)
-        pts = fedsurvey.fetch_window("FRB:CHG_CC", days=10)
+        # days=10 must not starve a quarterly family (floor 420) — 'today'
+        # injected (audit: the wall-clock version was a 2027 time bomb)
+        pts = fedsurvey.fetch_window("FRB:CHG_CC", days=10, today="2026-09-19")
         assert [p["ts"] for p in pts] == ["2026-01-01", "2026-04-01"]
+
+
+class TestSepDotRouting:
+    def test_dot_series_filter_by_year(self, monkeypatch):
+        """CAL:FOMC_DOT_2027 must return the 2027 median, not whatever row is
+        last across all years (audit 2026-09-20: the bare version mixed
+        years, and the family wasn't in ROUTES at all — 3 series erroring
+        at every harvest)."""
+        from arkwatch.fetchers import sep
+        from arkwatch.qa.verify_sources import ROUTES
+
+        fake_rows = [
+            {"ts": "2026-06-17", "series_suffix": "2026", "value": 3.9},
+            {"ts": "2026-06-17", "series_suffix": "2027", "value": 3.6},
+            {"ts": "2026-09-16", "series_suffix": "2026", "value": 3.7},
+            {"ts": "2026-09-16", "series_suffix": "2027", "value": 3.4},
+            # oldest-first ordering ALSO covered: max-by-ts must not care
+            {"ts": "2023-09-20", "series_suffix": "2026", "value": 2.9},
+        ]
+        monkeypatch.setattr(sep, "series_rows", lambda: sorted(fake_rows, key=lambda r: r["ts"], reverse=True))
+        assert sep.fetch_latest("CAL:FOMC_DOT_2026") == {"ts": "2026-09-16", "value": 3.7}
+        assert sep.fetch_latest("CAL:FOMC_DOT_2027") == {"ts": "2026-09-16", "value": 3.4}
+        # routing: the longer prefix must win over CAL: → caldist
+        assert ROUTES["CAL:FOMC_DOT"] is sep
+        sid = "CAL:FOMC_DOT_2027"
+        prefix = next(p for p in ROUTES if sid.startswith(p))
+        assert prefix == "CAL:FOMC_DOT"
 
 
 class TestRegistryParity:

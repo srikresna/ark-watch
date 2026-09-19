@@ -208,7 +208,13 @@ def main(argv: list[str] | None = None) -> int:
 
         conn = db.get_conn(args.db, allow_init=True)
         sync_registry(conn)
-        sep.save_dot_series(conn)
+        n = sep.save_dot_series(conn)
+        try:
+            from .fetch_log import log_collection
+
+            log_collection(conn, "backfill", "CAL:FOMC_DOT_ALL", None, n)
+        except Exception:
+            pass
         conn.close()
         result = {}
     elif args.source == "frb":
@@ -228,7 +234,13 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  FRB:{key:10s} {len(by_label[label]):4d} obs · latest {max(by_label[label])}")
             result = {}
         else:
-            fedsurvey.frb_save_history(conn)
+            n = fedsurvey.frb_save_history(conn, verbose=False)
+            try:
+                from .fetch_log import log_collection
+
+                log_collection(conn, "backfill", "FRB:CHGDEL_ALL", None, n)
+            except Exception:
+                pass
             result = {}
         conn.close()
     elif args.source == "nyfedresearch":
@@ -249,7 +261,13 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  NYFED:{k:26s} {len(v):4d} obs · latest {v[-1] if v else 'NONE'}")
             result = {}
         else:
-            nyfedresearch.save_history(conn)
+            n = nyfedresearch.save_history(conn, verbose=False)
+            try:
+                from .fetch_log import log_collection
+
+                log_collection(conn, "backfill", "NYFEDRESEARCH_ALL", None, n)
+            except Exception:
+                pass
             result = {
                 f"NYFED:{k}": len(rows)
                 for fam in nyfedresearch.FAMILY_PARSERS
