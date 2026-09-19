@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import db
@@ -39,31 +39,37 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
             ).fetchone()[0]
             n = _save_settlements(conn, rows)
             n += _reconcile_gaps(conn, code, rows, db_max_pre)
-            # ROUND-10 queue: EMPTY-blind walkback — fetch_settlements can
-            # return [] when its internal date-walk lands on nothing; a
-            # product whose DB frontier is stale then silently keeps the
-            # hole (live: Friday 09-18 settlements missing after both
-            # Saturday runs). One explicit retry with the last completed
-            # trading day as trade_date.
-            if not rows and db_max_pre:
-                from datetime import UTC as _U
-                from datetime import datetime as _dt
-                from datetime import timedelta as _td
-
-                probe = _dt.now(_U).date() - _td(days=1)
+            # ROUND-10 queue: settlement walkback. ROUND-11: the trigger is
+            # "the frontier did not advance", not "the fetch returned
+            # nothing" — fetch_settlements never returns [] (it walks trade
+            # dates and RAISES when all are empty), so the shipped
+            # `if not rows` guard was unreachable dead code while the real
+            # failure mode went unhandled: a healthy fetch of STALE-dated
+            # rows (live 2026-09-19 01:16-04:40 UTC: three Saturday runs
+            # returned the 09-17 strip for 0 new rows while Friday 09-18
+            # was not yet published; the hole healed at 05:15 only via the
+            # deploy-replay's ordinary fetch). One explicit retry for the
+            # last completed trading day closes the window the scheduled
+            # runs miss.
+            fetched_max = max((r["trade_date"] for r in rows), default=None)
+            if db_max_pre and (fetched_max is None or fetched_max <= db_max_pre):
+                probe = datetime.now(UTC).date() - timedelta(days=1)
                 while probe.weekday() >= 5:
-                    probe -= _td(days=1)
+                    probe -= timedelta(days=1)
                 if probe.isoformat() > db_max_pre:
                     try:
                         retry = cme.fetch_settlements(
-                            code, trade_date=_dt(probe.year, probe.month, probe.day, tzinfo=_U)
+                            code,
+                            trade_date=datetime(
+                                probe.year, probe.month, probe.day, tzinfo=UTC
+                            ),
                         )
                         landed = [r for r in retry if r["trade_date"] == probe.isoformat()]
                         if landed:
                             n += _save_settlements(conn, landed)
-                            print(f"  ↻ {code}: EMPTY-blind recovered {len(landed)} rows @ {probe}")
+                            print(f"  ↻ {code}: walkback recovered {len(landed)} rows @ {probe}")
                     except Exception as ex2:
-                        print(f"  ⚠ {code} EMPTY-blind retry: {str(ex2)[:70]}")
+                        print(f"  ⚠ {code} walkback retry: {str(ex2)[:70]}")
             out[code] = n
         except Exception as ex:
             out[code] = -1
