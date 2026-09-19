@@ -206,6 +206,11 @@ def format_brief(probs: list[MeetingProb], asof: str | None = None) -> str:
     else:
         action = f"hold {p.prob_hold:.0%}"
     tail = f" (ZQ {asof[5:]})" if asof else ""
+    # ROUND-10 outage-sim: a multi-day CME outage froze the strip while the
+    # line kept rendering a probability with no staleness marker — 5 trading
+    # days is the strip's meaningful freshness (same convention as ECBWatch)
+    if asof and (datetime.now(UTC).date() - date.fromisoformat(asof)).days > 7:
+        tail += " ⚠strip stale"
     if max(FOMC_SCHEDULE) < datetime.now(UTC).date() + timedelta(days=90):
         tail += " ⚠ vendored schedule <90 days"
     return f"{action} ({p.meeting_date.strftime('%b')} → {p.implied_rate:.2f}%){tail}"

@@ -375,6 +375,10 @@ def format_brief(rows: list[ECBMeetingProb], diag: dict | None = None,
     tail = ""
     if asof:
         tail += f", ESR {asof[5:]}"
+    # ROUND-10 outage-sim: the strip_stale flag existed but was WRITE-ONLY —
+    # consume it (mirror of the FedWatch stale marker)
+    if diag and "strip_stale" in diag.get("flags", []):
+        tail += " ⚠strip stale"
     if diag and "degraded" in diag.get("flags", []):
         tail += f" ⚠ fit {diag.get('rms_bp', '?')}bp"
     if ECB_GC_DECISIONS and max(ECB_GC_DECISIONS) < datetime.now(UTC).date() + timedelta(days=90):

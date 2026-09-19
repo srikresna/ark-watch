@@ -210,7 +210,14 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
     with status ∈ 'ok'|'stale'|'error'; feeds the ⚠(stale Nd) suffix on
     changed rows and the health.csv attachment when pct_bad > 25%.
     """
-    today = datetime.now(UTC).date().isoformat()
+    # ROUND-10: anchor the fetch_log subqueries to the WIB day (the brief's
+    # canonical 07:00 WIB slot = 00:00 UTC — a UTC-day anchor saw 0 of the
+    # morning's 69 ERRORs, a false-clean Quality line)
+    wib_day_start = (
+        datetime.now(WIB).replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+        .isoformat(timespec="seconds")
+    )
     now_d = datetime.now(UTC).date()
     rows = conn.execute(
         "SELECT r.series_id, r.freq,"
@@ -221,7 +228,7 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
         " (SELECT COUNT(*) FROM fetch_log f WHERE f.target=r.series_id AND f.ts>=?"
         "   AND f.status='ERROR')"
         " FROM series_registry r WHERE r.active=1",
-        (today, today),
+        (wib_day_start, wib_day_start),
     ).fetchall()
     n_ok = n_warn = n_fail = 0
     detail: list[tuple] = []
@@ -861,7 +868,15 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
 
         xccy_rows = compute_xccy(conn)
         if xccy_rows:
-            lines.append(f"XCCY: {xccy_rows[0].contract} {xccy_rows[0].basis_bps:+.1f}bp")
+            # ROUND-10 outage-sim: mark a stale spot/futures pairing (the
+            # basis freezes unmarked during a multi-day data outage)
+            _xv = xccy_rows[0]
+            _stale = (
+                " ⚠stale" if getattr(_xv, "stale_days", 0) > 7 else ""
+            )
+            lines.append(
+                f"XCCY: {_xv.contract} {_xv.basis_bps:+.1f}bp{_stale}"
+            )
     except Exception:
         pass
 

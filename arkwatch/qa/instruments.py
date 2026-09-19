@@ -55,6 +55,23 @@ def insert_prices(conn, symbol: str, source: str, rows: list[dict]) -> int:
     ]
     if not payload:
         return 0
+    # ROUND-10: tombstone filter — the persistent-wedge repair NULLs a
+    # poison close, but the vendor keeps serving it and the COALESCE upsert
+    # (first NON-NULL wins) refilled it every sweep: a treadmill of
+    # detect→NULL→refill. Quarantined (symbol, ts, source) rows are skipped
+    # at payload build so the poison never re-lands.
+    try:
+        tomb = {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                "SELECT symbol, ts, source FROM price_quarantine"
+            ).fetchall()
+        }
+    except Exception:
+        tomb = set()  # pre-v17 DB (no table) — no quarantine yet
+    payload = [p for p in payload if (p[0], p[1], p[2]) not in tomb]
+    if not payload:
+        return 0
     conn.execute("BEGIN IMMEDIATE")
     try:
         cur = conn.executemany(
@@ -167,16 +184,25 @@ def _cross_validate(conn, db_path: str) -> int:
                     # forever (09-16 metals ~1-2.6% off, futures legs
                     # CME-exact). A wedge this size on a CLOSED bar has no
                     # innocent explanation (carry <1%): NULL the spot close
-                    # (the COALESCE upsert never overwrites NULL → clean
-                    # degradation; the reader-side NULL gates handle the
-                    # gap) rather than let a wrong price poison every
-                    # return/z/backtest downstream.
+                    # AND tombstone it. ROUND-10 correction of the ROUND-9
+                    # claim: the COALESCE upsert is first-NON-NULL-wins — an
+                    # incoming vendor value ALWAYS refills a stored NULL, so
+                    # NULL alone was a refill treadmill (observed live:
+                    # detect→NULL→refill every sweep). The quarantine row
+                    # makes insert_prices skip the poison (symbol, ts,
+                    # source) forever, independent of any lookback window.
                     conn.execute(
                         "UPDATE instrument_prices SET close=NULL"
                         " WHERE symbol=? AND source='EODHD' AND ts=?",
                         (spot, ts),
                     )
-                    print(f"  ⚠ xval REPAIR: {spot} {ts} close=NULL (wedge {w:.2%})")
+                    conn.execute(
+                        "INSERT OR IGNORE INTO price_quarantine(symbol, ts, source, reason)"
+                        " VALUES (?,?,?,?)",
+                        (spot, ts, "EODHD", f"xval wedge {w:.2%} vs {fut}"),
+                    )
+                    conn.commit()
+                    print(f"  ⚠ xval REPAIR+QUARANTINE: {spot} {ts} (wedge {w:.2%})")
     for sym in ("BTCUSD", "ETHUSD", "VIX", "US500", "US30", "US100", "DXY"):
         rows = conn.execute(
             "SELECT a.ts, a.close, b.close FROM instrument_prices a"

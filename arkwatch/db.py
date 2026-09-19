@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -354,6 +354,19 @@ ALTER TABLE flows_daily ADD COLUMN funding_eth REAL;
 -- series covers, so the HOUST/PERMIT gap class is structurally visible
 -- (qa/coverage.py: calendar families with actuals but no covering series).
 ALTER TABLE series_registry ADD COLUMN calendar_family TEXT;
+""",
+    17: """-- v17: price_quarantine (round-10) — tombstones for poison price
+-- bars: the persistent-wedge repair NULLs a vendor-wrong close, but the
+-- vendor keeps serving it and the COALESCE upsert refills NULLs; the
+-- tombstone makes insert_prices skip the (symbol, ts, source) forever.
+CREATE TABLE price_quarantine (
+  symbol TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  source TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (symbol, ts, source)
+);
 """,
 }
 

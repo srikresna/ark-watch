@@ -234,7 +234,19 @@ def run_loop():
     LOCKFILE.write_text(str(__import__("os").getpid()))
 
     _setup_logging()
-    logger.info("=== daemon start ===")
+    # ROUND-10: stamp the code revision at start + every log rotation — the
+    # soak lens was misled by an assumed-HEAD daemon (the restart only
+    # landed the new code at 10:37 WIB while the 08:30 job ran pre-fix)
+    import subprocess as _sp
+
+    try:
+        _head = _sp.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        _head = "?"
+    logger.info(f"=== daemon start @ {_head} ===")
     last_run: dict[str, str] = {}
     next_retry: dict[str, float] = {}  # cmd → monotonic retry time (non-blocking)
     log_day = datetime.now(UTC).date()
