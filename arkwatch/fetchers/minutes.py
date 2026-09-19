@@ -20,7 +20,9 @@ import requests
 
 BASE = "https://www.federalreserve.gov/monetarypolicy/fomcminutes"
 CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-ZAI_ENDPOINT = "https://api.z.ai/api/paas/v4/chat/completions"
+# Anthropic-compatible endpoint (owner's Claude Code plan — same token,
+# same billing pool as the interactive session)
+ZAI_ENDPOINT = "https://api.z.ai/api/anthropic/v1/messages"
 
 # Hawkish/dovish keyword pairs for the structural tone score
 _HAWKISH = (
@@ -138,6 +140,9 @@ def nlp_sentiment(text: str, api_key: str | None = None) -> dict:
 
     Returns {"score": float, "summary": str, "key_concerns": [str]}.
     Score: −100 (max dovish) .. +100 (max hawkish).
+
+    Uses the Anthropic Messages API format (the owner's Claude Code plan
+    endpoint — same token, same billing pool as the interactive session).
     """
     key = api_key or os.environ.get("ZAI_API_KEY") or os.environ.get("Z_AI_API_KEY")
     if not key:
@@ -159,23 +164,30 @@ FOMC MINUTES TEXT:
 
     r = requests.post(
         ZAI_ENDPOINT,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+        },
         json={
             "model": "glm-5.3",
-            "messages": [
-                {"role": "system", "content": "You are a central bank policy analyst. Respond ONLY with valid JSON, no markdown."},
-                {"role": "user", "content": prompt},
-            ],
-            "thinking": {"type": "enabled"},
             "max_tokens": 4096,
-            "temperature": 0.6,
+            "system": "You are a central bank policy analyst. Respond ONLY with valid JSON, no markdown.",
+            "messages": [{"role": "user", "content": prompt}],
         },
         timeout=(10, 180),
     )
     if r.status_code != 200:
         raise MinutesError(f"z.ai: HTTP {r.status_code} — {r.text[:100]}")
 
-    content = r.json()["choices"][0]["message"]["content"]
+    # Anthropic Messages response: content[] contains a "thinking" block
+    # (GLM-5.3 always thinks) followed by a "text" block — we want the text
+    blocks = r.json().get("content", [])
+    content = next(
+        (b.get("text", "") for b in blocks if b.get("type") == "text"), ""
+    )
+    if not content:
+        raise MinutesError(f"z.ai: no text block in response — types={[b.get('type') for b in blocks]}")
     # extract JSON from response (model may wrap in markdown)
     jm = re.search(r"\{.*\}", content, re.DOTALL)
     if not jm:
