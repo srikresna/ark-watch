@@ -72,6 +72,8 @@ SCHEDULE = [
     # whole histories — the daily window can't see revisions older than its
     # floor, so a weekly full-history re-ingest lands them as vintage rows
     (5, 10, "sunday", "backfill --source nyfedresearch", "NY Fed research full-history refresh (revisions)"),
+    # FRB charge-off/delinquency — same whole-history re-release pattern
+    (5, 15, "sunday", "backfill --source frb", "Fed Board charge-off refresh (revisions)"),
     # Fed surveys + reports: SLOOS/Beige Book/SCOOS/FSR/Minutes/Press Conf.
     # Weekly check (quarterly/monthly sources — "unchanged" is the normal
     # outcome ~95% of days; new data triggers fetch + NLP + store).

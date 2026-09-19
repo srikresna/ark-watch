@@ -178,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--dry", action="store_true", help="count without writing")
-    p.add_argument("--source", choices=["fred", "tga", "cal", "sep", "nyfedresearch"], default="fred")
+    p.add_argument(
+        "--source", choices=["fred", "tga", "cal", "sep", "nyfedresearch", "frb"], default="fred"
+    )
     args = p.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -209,6 +211,26 @@ def main(argv: list[str] | None = None) -> int:
         sep.save_dot_series(conn)
         conn.close()
         result = {}
+    elif args.source == "frb":
+        # Fed Board charge-off/delinquency (FRB: family) — quarterly SDMX,
+        # re-released whole-history; the weekly re-run lands revisions
+        from ..fetchers import fedsurvey
+
+        conn = db.get_conn(args.db, allow_init=True)
+        sync_registry(conn)
+        if args.dry:
+            print("  (dry run — full parse, no writes)")
+            by_label: dict[str, list] = {}
+            for lb, ts, v in fedsurvey._chgdel_rows():
+                by_label.setdefault(lb, []).append((ts, v))
+            for key, label in sorted(fedsurvey.FRB_CHGDEL_SERIES.items()):
+                if label in by_label:
+                    print(f"  FRB:{key:10s} {len(by_label[label]):4d} obs · latest {max(by_label[label])}")
+            result = {}
+        else:
+            fedsurvey.frb_save_history(conn)
+            result = {}
+        conn.close()
     elif args.source == "nyfedresearch":
         # NY Fed research expansion (2026-09-19): full-history ingest of the
         # 8 research datasets + revision pickup — HHDC/MCT/LW/GSCPI/HPW

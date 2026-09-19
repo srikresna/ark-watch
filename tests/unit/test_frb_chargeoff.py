@@ -1,0 +1,90 @@
+"""Offline unit tests for the FRB: charge-off/delinquency family.
+
+Pins the gap-closure wiring (2026-09-19): the fetcher had existed since
+commit 906e960 but was never routed — no registry rows, no harvest path.
+These tests keep it wired:
+  - SDMX zip parse → quarter-start ts + label mapping
+  - ROUTES parity: every FRB_CHGDEL_SERIES key has a registry row
+  - window floor: a 10-day default still reaches the latest quarter
+"""
+
+from __future__ import annotations
+
+import io
+import zipfile
+
+from arkwatch.fetchers import fedsurvey
+
+# SDMX-shaped fixture with the LIVE TIME_PERIOD convention: quarter-END ISO
+# dates ('2026-06-30'), discovered when the first live ingest parsed zero rows
+# (the research notes had assumed '2026-Q2').
+_SDMX = """<?xml version="1.0" encoding="UTF-8"?>
+<message:StructureSpecificData xmlns:message="http://www.sdmx.org">
+  <DataSet>
+    <Series LOANTYPE="CONCC" CHGDEL="CHG" COMPONENT="RATIO" SIZE="ALL" SA="SA">
+      <Obs TIME_PERIOD="2026-03-31" OBS_VALUE="7.10"/>
+      <Obs TIME_PERIOD="2026-06-30" OBS_VALUE="6.97"/>
+    </Series>
+    <Series LOANTYPE="CI" CHGDEL="DEL" COMPONENT="RATIO" SIZE="ALL" SA="SA">
+      <Obs TIME_PERIOD="2026-Q2" OBS_VALUE="1.9"/>
+    </Series>
+    <Series LOANTYPE="CONCC" CHGDEL="CHG" COMPONENT="NUM" SIZE="ALL" SA="SA">
+      <Obs TIME_PERIOD="2026-06-30" OBS_VALUE="1234567890"/>
+    </Series>
+    <Series LOANTYPE="CONCC" CHGDEL="CHG" COMPONENT="RATIO" SIZE="ALL" SA="NSA">
+      <Obs TIME_PERIOD="2026-06-30" OBS_VALUE="99.9"/>
+    </Series>
+  </DataSet>
+</message:StructureSpecificData>
+"""
+
+
+def _fixture_zip() -> bytes:
+    """The zip carries the XSD schema FIRST — the parser must find the data
+    file by name ('data' in it), not by first-entry position (live trap)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("CHGDEL_schema.xsd", "<xs:schema/>")
+        zf.writestr("CHGDEL_data.xml", _SDMX)
+    return buf.getvalue()
+
+
+class TestChgdelParse:
+    def test_rows_quarter_start_and_filters(self, monkeypatch):
+        monkeypatch.setattr(fedsurvey, "_chgdel_cache", None)  # reset process cache
+        monkeypatch.setattr(
+            "arkwatch.fetchers.fedsurvey.requests.get",
+            lambda *a, **k: type("R", (), {"status_code": 200, "content": _fixture_zip()})(),
+        )
+        rows = fedsurvey._chgdel_rows()
+        assert ("chgoff_chg_credit_card", "2026-04-01", 6.97) in rows
+        assert ("chgoff_chg_credit_card", "2026-01-01", 7.10) in rows
+        assert ("chgoff_del_commercial_industrial", "2026-04-01", 1.9) in rows
+        # NUM (dollar) and NSA rows must NOT survive the filters
+        assert not any(v > 90 for _, _, v in rows)
+
+    def test_fetch_latest_and_window_floor(self, monkeypatch):
+        monkeypatch.setattr(fedsurvey, "_chgdel_cache", None)
+        monkeypatch.setattr(
+            "arkwatch.fetchers.fedsurvey.requests.get",
+            lambda *a, **k: type("R", (), {"status_code": 200, "content": _fixture_zip()})(),
+        )
+        cur = fedsurvey.fetch_latest("FRB:CHG_CC")
+        assert cur == {"ts": "2026-04-01", "value": 6.97}
+        # days=10 must not starve a quarterly family (floor 420)
+        pts = fedsurvey.fetch_window("FRB:CHG_CC", days=10)
+        assert [p["ts"] for p in pts] == ["2026-01-01", "2026-04-01"]
+
+
+class TestRegistryParity:
+    def test_every_frb_series_is_registered(self):
+        """The gap this wiring closed: fetcher keys without registry rows are
+        invisible to the harvest (and raw_observations FK-fails)."""
+        from arkwatch.qa.verify_sources import ROUTES, load_registry
+
+        assert "FRB:" in ROUTES  # routed to the fedsurvey module
+        reg_ids = {e["series_id"] for e in load_registry()}
+        missing = [f"FRB:{k}" for k in fedsurvey.FRB_CHGDEL_SERIES if f"FRB:{k}" not in reg_ids]
+        assert not missing, f"unregistered FRB series: {missing}"
+        # and the harvest contract: the module must expose the entrypoints
+        assert callable(fedsurvey.fetch_latest) and callable(fedsurvey.fetch_window)

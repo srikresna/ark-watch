@@ -1940,6 +1940,220 @@ series:
   # NOTE: CC/student originations are NOT in the workbook (separate frozen
   # dataset — do not claim them).
 
+# --- FRB charge-off & delinquency (Fed Board SDMX → FRB: family, block F) ----------
+# The per-BANK credit view (HHDC above = per-HOUSEHOLD bureau view — different
+# populations, both retained). Quarterly SDMX zip, filters RATIO/ALL-banks/SA.
+# GAP CLOSURE 2026-09-19: the fetcher existed since commit 906e960 but was
+# never wired (no registry rows, no harvest route) — a claim-vs-tree defect
+# caught while auditing the "federalreserve.gov complete?" question.
+
+- series_id: FRB:CHG_CC
+  name: "Charge-off rate, credit card loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "quarterly, ~2 months after quarter end (Fed Board CHGDEL)"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONCC, CHGDEL=CHG, RATIO)"
+  secondary_source: null         # FRED CORCCACBS mirrors it (future cross-check)
+  tolerance: null
+  active: 1
+  # Banks writing off dead CC debt — the supply-side twin of HHDC_DQ90_FLOW_CC.
+
+- series_id: FRB:CHG_CI
+  name: "Charge-off rate, commercial & industrial loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CI, CHGDEL=CHG)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Corporate credit stress — the business-cycle leg (CC = consumer leg).
+
+- series_id: FRB:CHG_ALL
+  name: "Charge-off rate, all loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=TOTAL, CHGDEL=CHG)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:CHG_CONS
+  name: "Charge-off rate, all consumer loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONALL, CHGDEL=CHG)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:CHG_RE
+  name: "Charge-off rate, all real estate loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: -0.1               # SA noise dips to -0.01 near the zero floor
+  sanity_max: 25.0               # (live 1985-2026 min/max: -0.01 / 2.76)
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=REALL, CHGDEL=CHG)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:CHG_RRE
+  name: "Charge-off rate, residential real estate loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: -0.1               # SA noise dips to -0.04 near the zero floor
+  sanity_max: 25.0               # (live 1985-2026 min/max: -0.04 / 2.80)
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=RERES, CHGDEL=CHG)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:DEL_CC
+  name: "Delinquency rate, credit card loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONCC, CHGDEL=DEL)"
+  secondary_source: null         # FRED DRCCLACBS mirrors it
+  tolerance: null
+  active: 1
+  # STOCK of 30+ day delinquency (vs HHDC's 90+ FLOW) — level vs velocity pair.
+
+- series_id: FRB:DEL_CI
+  name: "Delinquency rate, commercial & industrial loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CI, CHGDEL=DEL)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:DEL_ALL
+  name: "Delinquency rate, all loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=TOTAL, CHGDEL=DEL)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:DEL_CONS
+  name: "Delinquency rate, all consumer loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=CONALL, CHGDEL=DEL)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:DEL_RE
+  name: "Delinquency rate, all real estate loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=REALL, CHGDEL=DEL)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRB:DEL_RRE
+  name: "Delinquency rate, residential real estate loans, all banks (SA)"
+  block: F
+  tier: 0
+  unit: pct_lt
+  value_format: pct
+  freq: Q
+  ts_convention: quarter_start
+  release_schedule: "with FRB:CHG_CC"
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 25.0
+  primary_source: "FRB:FRB_CHGDEL_xml.zip SDMX (LOANTYPE=RERES, CHGDEL=DEL)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
 - series_id: FRED:BAMLH0A0HYM2
   name: "ICE BofA US High Yield OAS"
   block: F

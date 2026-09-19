@@ -25,6 +25,7 @@ from ..fetchers import (
     cleve,
     ecb,
     eodhd,
+    fedsurvey,
     fiscal,
     fred,
     misc,
@@ -46,6 +47,7 @@ ROUTES = {
     "ATL:": atl,
     "NYFED:": nyfed,
     "ECB:": ecb,
+    "FRB:": fedsurvey,  # Fed Board quantitative releases (charge-off/delinquency SDMX)
     "CAL:": caldist,  # calendar-derived series (events.actual → series; DB read)
 }
 # Fetchers exposing early history (depth gate); others show depth=· until backfilled

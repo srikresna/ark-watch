@@ -5,10 +5,13 @@ Sources handled (all from federalreserve.gov):
   Beige Book — Regional economic conditions (8x/year, HTML summary + PDF)
   SCOOS  — Senior Credit Officer Opinion Survey (quarterly, narrative HTML)
   FSR    — Financial Stability Report (semi-annual, PDF)
-  SHED   — Survey of Household Economics (annual, HTML)
-  MPR    — Monetary Policy Report (semi-annual, PDF)
+  CHGDEL — Charge-off & Delinquency rates (quarterly SDMX; the FRB: registry
+           family — quantitative series through the standard harvest)
 
-Each source returns {'text': str, 'ts': str, 'meta': dict} that plugs
+Planned, NOT yet implemented (docstring-honesty fix 2026-09-19): SHED (annual),
+MPR (semi-annual).
+
+Each narrative source returns {'text': str, 'ts': str, 'meta': dict} that plugs
 directly into the NLP analysis layer (nlp.py analyze_tone/extract_data).
 """
 from __future__ import annotations
@@ -265,8 +268,120 @@ def fetch_chargeoff() -> list[dict]:
     return out
 
 
-# --- Convenience: analyze any survey with NLP ----------------------------------------
+# --- FRB: charge-off / delinquency registry family (standard harvest path) --------
 
+# registry key → SDMX parse label (chgoff_{chg|del}_{loan_type})
+FRB_CHGDEL_SERIES = {
+    "CHG_CC": "chgoff_chg_credit_card",
+    "CHG_CONS": "chgoff_chg_consumer",
+    "CHG_RE": "chgoff_chg_real_estate",
+    "CHG_RRE": "chgoff_chg_residential_re",
+    "CHG_CI": "chgoff_chg_commercial_industrial",
+    "CHG_ALL": "chgoff_chg_all_loans",
+    "DEL_CC": "chgoff_del_credit_card",
+    "DEL_CONS": "chgoff_del_consumer",
+    "DEL_RE": "chgoff_del_real_estate",
+    "DEL_RRE": "chgoff_del_residential_re",
+    "DEL_CI": "chgoff_del_commercial_industrial",
+    "DEL_ALL": "chgoff_del_all_loans",
+}
+
+_chgdel_cache: list[dict] | None = None
+
+
+def _chgdel_rows() -> list[tuple[str, str, float]]:
+    """Parsed charge-off rows (process-cached): [(label, quarter_start, value)]."""
+    global _chgdel_cache
+    if _chgdel_cache is None:
+        import re as _re
+
+        out = []
+        for r in fetch_chargeoff():
+            # live TIME_PERIOD (2026-09-19): quarter-END ISO dates ('1985-03-31');
+            # also tolerates '2026-Q2'/'2026Q2' forms
+            m = _re.match(r"(\d{4})-(\d{2})-\d{2}", r["ts"])
+            if m:
+                y, month = int(m.group(1)), int(m.group(2))
+            else:
+                mq = _re.match(r"(\d{4})-?Q(\d)", r["ts"])
+                if not mq:
+                    continue
+                y, month = int(mq.group(1)), (int(mq.group(2)) - 1) * 3 + 1
+            out.append((r["series"], f"{y}-{(month - 1) // 3 * 3 + 1:02d}-01", r["value"]))
+        if not out:
+            raise FedSurveyError("charge-off: no quarterly rows parsed")
+        _chgdel_cache = out
+    return _chgdel_cache
+
+
+def frb_knows(key: str) -> bool:
+    return key in FRB_CHGDEL_SERIES
+
+
+def frb_fetch_latest(series_id: str) -> dict:
+    key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    label = FRB_CHGDEL_SERIES.get(key)
+    if label is None:
+        raise FedSurveyError(f"frb: unrouted series {series_id}")
+    rows = [(ts, v) for lb, ts, v in _chgdel_rows() if lb == label]
+    if not rows:
+        raise FedSurveyError(f"frb: {key}: no rows")
+    ts, v = max(rows)
+    return {"ts": ts, "value": v}
+
+
+def frb_fetch_window(series_id: str, days: int = 10) -> list[dict]:
+    key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    label = FRB_CHGDEL_SERIES.get(key)
+    if label is None:
+        raise FedSurveyError(f"frb: unrouted series {series_id}")
+    from datetime import UTC, datetime, timedelta
+
+    # quarterly release ~2 months after quarter end — a 10-day window would
+    # starve it; 420d always reaches the latest quarter
+    cutoff = (datetime.now(UTC) - timedelta(days=max(days, 420))).date().isoformat()
+    return [
+        {"ts": ts, "value": v}
+        for lb, ts, v in _chgdel_rows()
+        if lb == label and ts >= cutoff
+    ]
+
+
+def frb_save_history(conn, *, verbose: bool = True) -> int:
+    """Full-history ingest of every REGISTERED FRB: series (FK-safe)."""
+    from .. import db
+    from ..qa.verify_sources import load_registry
+
+    reg_ids = {e["series_id"] for e in load_registry()}
+    by_label: dict[str, list[tuple[str, float]]] = {}
+    for lb, ts, v in _chgdel_rows():
+        by_label.setdefault(lb, []).append((ts, v))
+    total = 0
+    for key, label in sorted(FRB_CHGDEL_SERIES.items()):
+        sid = f"FRB:{key}"
+        if sid not in reg_ids or label not in by_label:
+            continue
+        rows = [(sid, ts, v, "FRB") for ts, v in by_label[label]]
+        n_new = db.insert_observations(conn, rows)
+        n_rev = db.apply_realtime_revisions(conn, rows)
+        total += n_new + n_rev
+        if verbose:
+            latest = max(by_label[label])
+            print(f"  {sid:16s} {len(rows):4d} obs (new {n_new}, revised {n_rev}) — latest {latest}")
+    conn.commit()
+    return total
+
+
+def fetch_latest(series_id: str) -> dict:
+    """Harvest entrypoint for the FRB: family (see verify_sources ROUTES)."""
+    return frb_fetch_latest(series_id)
+
+
+def fetch_window(series_id: str, days: int = 10) -> list[dict]:
+    return frb_fetch_window(series_id, days)
+
+
+# --- Convenience: analyze any survey with NLP ----------------------------------------
 
 def analyze_survey(source: str, yyyymm: str | None = None) -> dict:
     """Fetch + NLP-analyze any Federal Reserve survey/report.
