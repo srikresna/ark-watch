@@ -767,6 +767,29 @@ series:
   active: 1
   calendar_family: "INTEREST RATE PROJECTION 1ST YR"
 
+- series_id: "CAL:FOMC_LONGER"
+  name: "FOMC dot plot median — longer run (terminal-rate anchor, events-sourced)"
+  block: A
+  tier: 4
+  unit: "pct (fed funds target)"
+  value_format: pct
+  freq: Q
+  ts_convention: month_start        # the SEP release month (event ts)
+  release_schedule: "4x/year with SEP meetings (Mar/Jun/Sep/Dec, 14:00 ET)"
+  expected_start: "2026-09-01"      # calendar feed began carrying the family
+                                    # at the Sep-2026 SEP (3.2%) — shallow by
+                                    # construction, grows +4/year
+  sanity_min: 0.0
+  sanity_max: 8.0
+  primary_source: "CAL:events family INTEREST RATE PROJECTION LONGER (calendar actuals)"
+  active: 1
+  calendar_family: "INTEREST RATE PROJECTION LONGER"
+  # WIRED 2026-09-20 (owner request): the fomcprojtabl table has NO longer-run
+  # column (probed across all 22 live vintages), so the terminal-rate anchor
+  # can ONLY come from calendar event actuals — the caldist machinery, not the
+  # sep.py scrape. Different model from the FOMC_DOT_* vintage series by
+  # necessity; ts = release month, not per-vintage release dates.
+
 - series_id: "CAL:FOMC_DOT_2029"
   name: "FOMC dot plot median — end-2029 target (from federalreserve.gov SEP)"
   block: A

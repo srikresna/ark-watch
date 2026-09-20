@@ -24,6 +24,9 @@ from pathlib import Path
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
 
 # series_id suffix → (indicator_key family, release convention)
+# convention "m_minus_1" = reference month is the month BEFORE release (ISM);
+# anything else = the release month itself (FOMC projections: the SEP release
+# IS the observation).
 FAMILIES = {
     "ISM_MFG_PMI": ("ISM MANUFACTURING PMI", "m_minus_1"),
     "ISM_SVC_PMI": ("ISM SERVICES PMI", "m_minus_1"),
@@ -31,6 +34,12 @@ FAMILIES = {
     "ISM_SVC_PRICES": ("ISM SERVICES PRICES", "m_minus_1"),
     "ISM_MFG_EMPLOYMENT": ("ISM MANUFACTURING EMPLOYMENT", "m_minus_1"),
     "ISM_MFG_NEW_ORDERS": ("ISM MANUFACTURING NEW ORDERS", "m_minus_1"),
+    # FOMC longer-run median (terminal-rate anchor). The fomcprojtabl table
+    # has NO longer-run column (live-probed across all 22 vintages — audit
+    # 2026-09-20), so the events family is the ONLY machine-readable source.
+    # History starts where the calendar feed began carrying it (2026-09-16,
+    # 3.2%); grows +4/year automatically as SEPs release.
+    "FOMC_LONGER": ("INTEREST RATE PROJECTION LONGER", "release_month"),
 }
 
 _MONTHS = {
@@ -107,12 +116,16 @@ def fetch_window(series_id: str, days: int = 10) -> list[dict]:
     ROUND-4: the effective window is max(days, 62) — reference-month ts means
     the newest monthly point is 32-62d old, so a literal 10d trailing window
     could NEVER contain it and every run silently degraded to fetch_latest
-    (a missed middle month would then be permanently unhealable)."""
+    (a missed middle month would then be permanently unhealable).
+
+    Release-month families (FOMC projections) are at best quarterly: SEPs
+    space up to ~100d apart, so their floor is 130d (a 62d floor would badge
+    EMPTY for weeks each mid-cycle — audit 2026-09-20)."""
     from datetime import UTC, datetime, timedelta
 
-    days_eff = max(days, 62)
-    cutoff = (datetime.now(UTC).date() - timedelta(days=days_eff)).isoformat()
     fam = FAMILIES.get(series_id.split(":", 1)[1] if ":" in series_id else series_id)
     if fam is None:
         raise CalDistError(f"caldist: unrouted series {series_id}")
+    days_eff = max(days, 62 if fam[1] == "m_minus_1" else 130)
+    cutoff = (datetime.now(UTC).date() - timedelta(days=days_eff)).isoformat()
     return [p for p in family_rows(*fam) if p["ts"] >= cutoff]
