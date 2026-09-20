@@ -42,6 +42,9 @@ SCHEDULE = [
     # 07:00 brief
     (6, 10, "daily", "fiscalx", "Fiscaldata expansion: auctions + DTS transactions + interest expense/rates"),
     (6, 20, "daily", "instruments sweep", "Last 7 days of prices"),
+    # energy channel 2026-09-21: curve signals after the price sweep (CL2
+    # month-resolution + cracks + Brent-WTI spot spread)
+    (6, 25, "daily", "energy", "Energy curve: WTI backwardation + cracks + Brent-WTI"),
     (6, 30, "daily", "nyfed ops", "Desk operations tsy/ambs + fxs swap-line watch"),
     (6, 40, "daily", "calendar", "Union-4 calendar"),
     (6, 45, "daily", "surprise", "σ engine + surprise_z + ESI"),
