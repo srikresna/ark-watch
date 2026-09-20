@@ -1133,7 +1133,7 @@
   release_schedule: business days; T+1
   expected_start: "1997-01-07"
   sanity_min: 0.0
-  sanity_max: 30.0               # 2005 peak ~15.4; 2022 ~9.7; margin
+  sanity_max: 45.0               # stored max 30.72 (2005); never clip a real spike
   primary_source: FRED:DHHNGSP
   secondary_source: "EODHD:NG.COMM (front future — basis can differ)"
   tolerance: null

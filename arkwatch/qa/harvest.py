@@ -176,13 +176,14 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
                     err = f"SCHEMA_DRIFT {prev[0]}→{fp}"
                     print(f"  ⚠ {sid_full}: RESPONSE SCHEMA CHANGED ({err})")
             n = db.insert_observations(conn, rows)
-            # FRED + the NY Fed research families + FRB charge-off are in-place
-            # revisable (FRED revises months back; HHDC/MCT/LW/GSCPI/HPW
-            # rewrite whole histories; CHGDEL re-releases quarterly): realtime
-            # holds the LATEST source value; the revision history lives in
-            # vintage rows (snapshotted on change by db.apply_realtime_revisions).
-            # Without this, the first print would be frozen forever.
-            if prefix in ("FRED:", "NYFED:", "FRB:"):
+            # FRED + the NY Fed research families + FRB charge-off + CAL event
+            # aggregates are in-place revisable (FRED revises months back;
+            # HHDC/MCT/LW/GSCPI/HPW rewrite whole histories; CHGDEL re-releases
+            # quarterly; CAL sum/last families ACCRETE intra-month — the audit
+            # P0 2026-09-21: without the revision path the month's first
+            # PARTIAL print froze forever): realtime holds the LATEST value;
+            # the revision history lives in vintage rows.
+            if prefix in ("FRED:", "NYFED:", "FRB:", "CAL:"):
                 n += db.apply_realtime_revisions(conn, rows)
             ok += 1
             rows_new += n

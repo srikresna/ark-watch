@@ -2314,7 +2314,7 @@ series:
   release_schedule: file refreshed Mondays — up to 7d tail lag by design
   expected_start: "1985-01-01"
   sanity_min: 0.0
-  sanity_max: 800.0
+  sanity_max: 1500.0             # stored max 1045.6 (9/11-era); never clip a real extreme
   primary_source: "GEO:matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls (GPRD col)"
   secondary_source: null
   tolerance: null

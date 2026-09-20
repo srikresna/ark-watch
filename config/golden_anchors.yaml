@@ -140,6 +140,95 @@ golden_anchors:
     tolerance: 0.05      # WTI spot, 2dp; ~2 day publication lag
     provenance: "live-test verified 2026-08-27, FRED DCOILWTICO"
 
+  # --- Energy + geopolitics channel (live-verified 2026-09-21) -------
+  # NOTE: anchor_date values are the LAST STABLE PRINT before the known
+  # vendor-side EIA/FRED daily-spot stall that started 2026-09-16; these
+  # anchors check the STORED value at that date, not freshness.
+
+  - series_id: DCOILBRENTEU
+    anchor_date: "2026-09-15"
+    expected: 130.80
+    tolerance: 0.05
+    provenance: "live-test verified 2026-09-21, FRED Brent spot"
+
+  - series_id: DHHNGSP
+    anchor_date: "2026-09-15"
+    expected: 2.97
+    tolerance: 0.02
+    provenance: "live-test verified 2026-09-21, FRED Henry Hub spot"
+
+  - series_id: GASREGW
+    anchor_date: "2026-09-14"
+    expected: 4.319
+    tolerance: 0.005     # weekly retail survey, 3dp
+    provenance: "live-test verified 2026-09-21, FRED weekly gasoline"
+
+  - series_id: GASDESW
+    anchor_date: "2026-09-14"
+    expected: 6.285
+    tolerance: 0.005
+    provenance: "live-test verified 2026-09-21, FRED weekly diesel"
+
+  - series_id: PWHEAMTUSDM
+    anchor_date: "2026-07-01"
+    expected: 228.74
+    tolerance: 0.30
+    provenance: "live-test verified 2026-09-21, FRED global wheat"
+
+  - series_id: PMAIZMTUSDM
+    anchor_date: "2026-07-01"
+    expected: 213.19
+    tolerance: 0.30
+    provenance: "live-test verified 2026-09-21, FRED global corn"
+
+  - series_id: GPR
+    anchor_date: "2026-08-01"
+    expected: 117.92
+    tolerance: 0.10
+    provenance: "live-test verified 2026-09-21, Caldara-Iacoviello monthly xls"
+
+  - series_id: GPRD
+    anchor_date: "2026-09-14"
+    expected: 189.53
+    tolerance: 0.10
+    provenance: "live-test verified 2026-09-21, GPR daily xls (Monday refresh)"
+
+  - series_id: FAO_FFPI
+    anchor_date: "2026-08-01"
+    expected: 133.3
+    tolerance: 0.05
+    provenance: "live-test verified 2026-09-21, FAO CSV"
+
+  - series_id: FAO_CEREALS
+    anchor_date: "2026-08-01"
+    expected: 116.3
+    tolerance: 0.05
+    provenance: "live-test verified 2026-09-21, FAO CSV cereals col"
+
+  - series_id: HARPEX
+    anchor_date: "2026-09-18"
+    expected: 2450.42
+    tolerance: 0.50
+    provenance: "live-test verified 2026-09-21, harperpetersen embedded JSON"
+
+  - series_id: BDI
+    anchor_date: "2026-09-18"
+    expected: 3370
+    tolerance: 1
+    provenance: "live-test verified 2026-09-21, EODHD BDIY.INDX"
+
+  - series_id: EIA_CRUDE_STOCKS_CHG
+    anchor_date: "2026-08-01"
+    expected: 17.472
+    tolerance: 0.01
+    provenance: "live-recomputed 2026-09-21 from events: 17.422+4.405+0.095-4.45 (4 weekly releases)"
+
+  - series_id: BAKER_HUGHES_OIL_RIGS
+    anchor_date: "2026-09-01"
+    expected: 450
+    tolerance: 0.5
+    provenance: "live-verified 2026-09-21, calendar actuals (2026-09-11 release)"
+
   # --- Growth ---------------------------------------------------------
 
   - series_id: ICSA
