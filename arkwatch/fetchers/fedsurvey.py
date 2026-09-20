@@ -8,8 +8,11 @@ Sources handled (all from federalreserve.gov):
   CHGDEL — Charge-off & Delinquency rates (quarterly SDMX; the FRB: registry
            family — quantitative series through the standard harvest)
 
-Planned, NOT yet implemented (docstring-honesty fix 2026-09-19): SHED (annual),
-MPR (semi-annual).
+Evaluated and DECLINED (owner decision 2026-09-20 — NOT planned, do not
+re-research without new cause): SHED (annual household survey, ~6mo lag —
+low trading value at this cadence); MPR (semi-annual Congress report —
+narrative overlaps the already-collected Minutes/FSR NLP coverage). The
+earlier 'planned' label was itself claim-drift: an intent nobody decided.
 
 Each narrative source returns {'text': str, 'ts': str, 'meta': dict} that plugs
 directly into the NLP analysis layer (nlp.py analyze_tone/extract_data).
