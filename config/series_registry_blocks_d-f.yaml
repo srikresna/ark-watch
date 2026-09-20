@@ -2524,9 +2524,8 @@ series:
   freq: W
   ts_convention: week_ending_fri
   release_schedule: "weekly (Friday as_of; NY Fed releases the following week via EODHD; OBSERVED LAG ~2wk — e.g. latest 2026-08-21 still current @ 2026-09-04. NOT stalled: the fetch works, the source is simply behind)"
-  expected_start: "2004-12-03"       # derived backward from metadata total = 1,129 weekly
-                                    # obs (last obs 2026-08-21) ≈ 2004-12; exact date via
-                                    # page[offset]
+  expected_start: "2005-01-07"       # live-verified first obs (1,129 weekly rows walked
+                                    # 2026-09-20; last obs 2026-08-21)
   sanity_min: 0.0                    # index scale 0-1 (live obs: market 0.21 / IG 0.27 /
                                     # HY 0.08)
   sanity_max: 1.0                    # same
@@ -2534,18 +2533,54 @@ series:
   secondary_source: null             # NY Fed CMDI is not on FRED — EODHD is the only
                                     # automated route
   tolerance: null
-  active: 0
-  # DEACTIVATED 2026-09-17 (round-2 audit): PHANTOM FEED — the EODHD
-  # window-fetcher logs OK with rows=0 ('unsupported series CMDI' swallowed
-  # as WINDOW_FALLBACK); 1 obs stored vs 1,129 expected. The endpoint needs
-  # paginated page[offset] handling that was never implemented. Reactivate
-  # only after implementing the pagination + a 2004→now backfill; until
-  # then long credit history rides on BAML OAS + FRED (the ICE-license 3y
-  # window is documented). Empty-fetch logging as EMPTY (not OK) lives in
-  # the harvest path.
+  active: 1
+  # REACTIVATED 2026-09-20 (owner GO): pagination walk implemented
+  # (page[limit]=100 until short page — probe-verified walking back to
+  # 2005-01-07, 1,129 weeks live-fetched). The 2026-09-17 deactivation was
+  # the PHANTOM FEED class: no pagination -> 1 obs vs 1,129 expected, with
+  # fetch_log reading OK. Window path now carries FULL history (8,000d
+  # floor): the daily 06:00 harvest backfills all weeks once, then appends
+  # each new week (total gap-heal); lag-aware 45d dead-feed guard.
   # Credit distress is LEADING — companion to the lagging BAML spreads; 21+ years of
   # history (1,129 weeks); the IG-vs-HY divergence is informative.
-  # Pagination via page[offset]/page[limit] (default 20 rows/page).
+
+- series_id: EODHD:CMDI_IG
+  name: "NY Fed Corporate Market Distress Index — investment grade"
+  block: F
+  tier: 1
+  unit: "distress index (0-1 scale)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: "with EODHD:CMDI (weekly, ~2wk observed lag)"
+  expected_start: "2005-01-07"
+  sanity_min: 0.0
+  sanity_max: 1.0
+  primary_source: "EODHD:/credit-risk/corporate/cmdi (ig_cmdi column)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Big-safe-company leg of the distress pair — HY rising faster than IG is
+  # the market selectively repricing risk (early warning).
+
+- series_id: EODHD:CMDI_HY
+  name: "NY Fed Corporate Market Distress Index — high yield"
+  block: F
+  tier: 1
+  unit: "distress index (0-1 scale)"
+  value_format: fraction
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: "with EODHD:CMDI (weekly, ~2wk observed lag)"
+  expected_start: "2005-01-07"
+  sanity_min: 0.0
+  sanity_max: 1.0
+  primary_source: "EODHD:/credit-risk/corporate/cmdi (hy_cmdi column)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # Risky-company leg (live 0.08 vs IG 0.27): HY tends to lag in calm and
+  # explode in stress — the IG−HY spread itself is a gauge.
 
 # =====================================================================
 # PHYSICAL: daily physical-stock series.

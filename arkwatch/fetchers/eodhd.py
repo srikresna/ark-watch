@@ -89,6 +89,59 @@ def fetch_sentiments(tickers: str = "btc-usd.cc,eth-usd.cc") -> dict[str, list[d
     return out
 
 
+CMDI_COLUMNS = {"CMDI": "market_cmdi", "CMDI_IG": "ig_cmdi", "CMDI_HY": "hy_cmdi"}
+
+_cmdi_cache: list[dict] | None = None
+
+
+def fetch_cmdi_all() -> list[dict]:
+    """Full CMDI history, pagination-walked (REACTIVATION 2026-09-20).
+
+    The endpoint pages at 20 rows by default (page[limit]/page[offset]) —
+    the 2026-09-17 deactivation was exactly this missing walk: 1 obs stored
+    vs 1,129 expected. Walks 100/page until a short page, ascending by date.
+    Process-cached: one walk serves all three series."""
+    global _cmdi_cache
+    if _cmdi_cache is not None:
+        return _cmdi_cache
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        page = _get("/credit-risk/corporate/cmdi",
+                    {"page[limit]": 100, "page[offset]": offset})
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < 100:
+            break
+        offset += 100
+        if offset > 5000:  # runaway backstop (full history is ~12 pages)
+            raise EodhdError("cmdi: pagination exceeded 5,000 rows — refusing")
+    if len(rows) < 500:
+        raise EodhdError(f"cmdi: suspiciously short history ({len(rows)} rows)")
+    rows.sort(key=lambda r: r["as_of_date"])
+    _cmdi_cache = rows
+    return rows
+
+
+def _cmdi_window(series_id: str, days: int) -> list[dict]:
+    """Weekly series with a ~2wk release lag — the window floor must reach
+    the FULL history (8,000d): the daily harvest then backfills all 1,129
+    weeks on first run and appends each new week after (gap-heal total)."""
+    from datetime import UTC, datetime, timedelta
+
+    key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    col = CMDI_COLUMNS.get(key)
+    if col is None:
+        raise EodhdError(f"cmdi: unrouted series {series_id}")
+    cutoff = (datetime.now(UTC).date() - timedelta(days=max(days, 8000))).isoformat()
+    return [
+        {"ts": r["as_of_date"][:10], "value": float(r[col])}
+        for r in fetch_cmdi_all()
+        if r.get(col) is not None and r["as_of_date"][:10] >= cutoff
+    ]
+
+
 def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     """GAP-HEAL (audit P1-1): the funding-stress response already carries a
     ~19-day window per code — landing only the max row left shutdown-day
@@ -99,6 +152,18 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     expected noise — an empty list is the honest 'no window support' signal
     and the harvest falls back silently, as designed."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    if key in CMDI_COLUMNS:
+        out = _cmdi_window(series_id, days)
+        # dead-feed guard, lag-aware: the source publishes ~2wk behind, so
+        # 45d is the honest 'stale' line for a weekly cadence (the phantom
+        # class this reactivation closed: OK-logs over missing data)
+        from datetime import UTC, date, datetime
+
+        if out:
+            newest = date.fromisoformat(out[-1]["ts"])
+            if (datetime.now(UTC).date() - newest).days > 45:
+                raise EodhdError(f"cmdi window stale: newest {out[-1]['ts']}")
+        return out
     if not key.startswith("FS_"):
         return []
     code = key[3:]
@@ -134,10 +199,12 @@ def fetch_latest(series_id: str) -> dict:
         r0 = max(rows, key=lambda r: r["date"])
         return {"ts": r0["date"], "value": float(r0["value_bps"])}
 
-    if key == "CMDI":
+    if key in CMDI_COLUMNS:
+        # default page carries the NEWEST rows (probe-verified) — page-1 max
+        # is the latest print; the full walk lives in the window path
         rows = _get("/credit-risk/corporate/cmdi")
         r0 = max(rows, key=lambda r: r["as_of_date"][:10])
-        return {"ts": r0["as_of_date"][:10], "value": float(r0["market_cmdi"])}
+        return {"ts": r0["as_of_date"][:10], "value": float(r0[CMDI_COLUMNS[key]])}
 
     if key == "CDS_US":
         rows = [
