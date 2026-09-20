@@ -202,8 +202,9 @@ _STALE_DAYS = {"D": 5, "W": 14, "M": 95, "Q": 190, "A": 550}
 # STALE on their first day wired. Longest prefix wins (sorted below).
 _STALE_OVERRIDE = {
     "FRB:": 300,       # charge-off/delinquency release lags
-    "EODHD:CMDI": 35,  # weekly cadence + ~2wk source lag (more specific prefix
-                       # than EODHD: — longest-prefix-wins above)
+    "EODHD:CMDI": 45,  # weekly cadence; OBSERVED lag 2-4wk (2026-09-20: newest
+                       # 30d old, feed alive) — 35d had only ~5d headroom and
+                       # would have false-flagged all 3 series on 2026-09-26
 }
 
 

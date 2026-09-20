@@ -59,11 +59,11 @@ class TestCmdi:
         with pytest.raises(eodhd.EodhdError, match="pagination exceeded"):
             eodhd.fetch_cmdi_all()
 
-    def test_three_series_columns_and_floor(self, monkeypatch):
-        # 129 weekly rows ENDING 14d ago (the source's normal lag) — the
-        # oldest sits ~2.5 years back: far beyond any daily window, proving
-        # the floor carries history; and recent enough not to trip the guard
-        newest = datetime.now(UTC) - timedelta(days=14)
+    def test_three_series_columns_and_full_walk(self, monkeypatch):
+        # 129 weekly rows ENDING 30d ago (the OBSERVED worst lag) — the
+        # window must return the ENTIRE walk (audit: the old 8,000d rolling
+        # floor would have expired 2026-12-03; date math is now gone)
+        newest = datetime.now(UTC) - timedelta(days=30)
         rows = []
         for i in range(129):
             d = (newest - timedelta(weeks=128 - i)).date().isoformat()
@@ -75,21 +75,23 @@ class TestCmdi:
                          ("EODHD:CMDI_IG", 0.27),
                          ("EODHD:CMDI_HY", 0.08)):
             pts = eodhd.fetch_window(sid, days=10)
-            assert pts and pts[0]["ts"] == oldest      # floor reaches full history
+            assert pts and pts[0]["ts"] == oldest      # the walk IS the window
             if val is not None:
                 assert pts[0]["value"] == val
         # unrouted key still honestly unsupported (empty, not an error)
         assert eodhd.fetch_window("EODHD:NOPE", days=10) == []
 
     def test_stale_guard_lag_aware(self, monkeypatch):
-        newest = (datetime.now(UTC) - timedelta(days=14)).date().isoformat()  # normal lag
+        # OBSERVED worst alive-lag is 30d (2026-09-20) — must NOT trip;
+        # the guard fires only on a genuinely dead feed (>60d)
+        newest = (datetime.now(UTC) - timedelta(days=30)).date().isoformat()
         monkeypatch.setattr(eodhd, "_cmdi_cache", [{
             "as_of_date": newest, "market_cmdi": 0.21, "ig_cmdi": 0.27, "hy_cmdi": 0.08,
         }])
         pts = eodhd.fetch_window("EODHD:CMDI", days=10)
-        assert len(pts) == 1  # 14d old print must NOT trip the 45d guard
+        assert len(pts) == 1  # 30d old print must NOT trip the 60d guard
 
-        dead = (datetime.now(UTC) - timedelta(days=60)).date().isoformat()
+        dead = (datetime.now(UTC) - timedelta(days=70)).date().isoformat()
         monkeypatch.setattr(eodhd, "_cmdi_cache", [{
             "as_of_date": dead, "market_cmdi": 0.21, "ig_cmdi": 0.27, "hy_cmdi": 0.08,
         }])

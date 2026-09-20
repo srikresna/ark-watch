@@ -2523,7 +2523,7 @@ series:
   value_format: fraction
   freq: W
   ts_convention: week_ending_fri
-  release_schedule: "weekly (Friday as_of; NY Fed releases the following week via EODHD; OBSERVED LAG ~2wk — e.g. latest 2026-08-21 still current @ 2026-09-04. NOT stalled: the fetch works, the source is simply behind)"
+  release_schedule: "weekly (Friday as_of via EODHD; OBSERVED LAG 2-4wk — 2026-09-20: newest print 2026-08-21 = 30d old with the feed alive. NOT stalled; brief stale-threshold 45d, fetcher dead-feed guard 60d — layering: brief fires first)"
   expected_start: "2005-01-07"       # live-verified first obs (1,129 weekly rows walked
                                     # 2026-09-20; last obs 2026-08-21)
   sanity_min: 0.0                    # index scale 0-1 (live obs: market 0.21 / IG 0.27 /
@@ -2538,9 +2538,10 @@ series:
   # (page[limit]=100 until short page — probe-verified walking back to
   # 2005-01-07, 1,129 weeks live-fetched). The 2026-09-17 deactivation was
   # the PHANTOM FEED class: no pagination -> 1 obs vs 1,129 expected, with
-  # fetch_log reading OK. Window path now carries FULL history (8,000d
-  # floor): the daily 06:00 harvest backfills all weeks once, then appends
-  # each new week (total gap-heal); lag-aware 45d dead-feed guard.
+  # fetch_log reading OK. Window path returns the FULL walk (audit: the
+  # original 8,000d rolling floor would have EXPIRED 2026-12-03 and silently
+  # shaved rebuild history) — the walk itself is the window, no date math to
+  # age out; daily harvest backfills all weeks once, then appends weekly.
   # Credit distress is LEADING — companion to the lagging BAML spreads; 21+ years of
   # history (1,129 weeks); the IG-vs-HY divergence is informative.
 

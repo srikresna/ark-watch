@@ -125,20 +125,24 @@ def fetch_cmdi_all() -> list[dict]:
 
 
 def _cmdi_window(series_id: str, days: int) -> list[dict]:
-    """Weekly series with a ~2wk release lag — the window floor must reach
-    the FULL history (8,000d): the daily harvest then backfills all 1,129
-    weeks on first run and appends each new week after (gap-heal total)."""
-    from datetime import UTC, datetime, timedelta
+    """Full-history window for a weekly series with a multi-week release lag.
 
+    AUDIT 2026-09-20: the original 8,000d rolling floor EXPIRED on
+    2026-12-03 (2005-01-07 + 8,000d) — after that a cold-start rebuild
+    would silently start at the cutoff with every gate green, a dated
+    recurrence of the phantom class. The fix removes date math entirely:
+    the pagination walk IS the window (whatever the vendor serves, we
+    land), so total gap-heal holds by construction and no magic number
+    can age out. `days` is accepted for the fetch_window contract and
+    deliberately ignored."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     col = CMDI_COLUMNS.get(key)
     if col is None:
         raise EodhdError(f"cmdi: unrouted series {series_id}")
-    cutoff = (datetime.now(UTC).date() - timedelta(days=max(days, 8000))).isoformat()
     return [
         {"ts": r["as_of_date"][:10], "value": float(r[col])}
         for r in fetch_cmdi_all()
-        if r.get(col) is not None and r["as_of_date"][:10] >= cutoff
+        if r.get(col) is not None
     ]
 
 
@@ -154,14 +158,16 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     if key in CMDI_COLUMNS:
         out = _cmdi_window(series_id, days)
-        # dead-feed guard, lag-aware: the source publishes ~2wk behind, so
-        # 45d is the honest 'stale' line for a weekly cadence (the phantom
-        # class this reactivation closed: OK-logs over missing data)
+        # dead-feed guard, lag-aware: OBSERVED lag is 2-4wk (2026-09-20:
+        # newest print 30d old while the feed is alive) — 60d is double the
+        # observed worst, so it only fires on a genuinely dead feed (the
+        # raise lands as a fetch_log WINDOW_FALLBACK note; the owner-facing
+        # early signal is the brief stale suffix at 45d, which fires first)
         from datetime import UTC, date, datetime
 
         if out:
             newest = date.fromisoformat(out[-1]["ts"])
-            if (datetime.now(UTC).date() - newest).days > 45:
+            if (datetime.now(UTC).date() - newest).days > 60:
                 raise EodhdError(f"cmdi window stale: newest {out[-1]['ts']}")
         return out
     if not key.startswith("FS_"):
