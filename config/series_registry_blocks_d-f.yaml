@@ -1064,7 +1064,9 @@ series:
   ts_convention: month_start
   release_schedule: "±mid-month (Atlanta Fed WGT)"
   expected_start: "1997-01-01"       # monthly XLSX 1997→present, 19 sheets
-  sanity_min: 0.0                    # modern nominal wage growth is never negative; parse guard
+  sanity_min: 1.0                    # audit 2026-09-21: 0.0 let literal zeros pass as a wage
+                                     # median (the broken parse stored 0.0 for months); history
+                                     # has never been below ~2 — 1.0 with margin
   sanity_max: 12.0                   # 2022 peak ~6-7%; margin for a wage spiral
   primary_source: "ATL:WGT XLSX (wage-growth-tracker)"
   secondary_source: null             # unique to the Atlanta Fed — official single-source + freshness

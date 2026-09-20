@@ -1,8 +1,17 @@
 """atl.py — Wage Growth Tracker (Atlanta Fed CHCS, XLSX).
 
 URL verified against the official Atlanta Fed page (see the URL constant).
-The workbook is multi-sheet (~19 sheets); the headline series is the
-unweighted median.
+The workbook is multi-sheet; the headline series is the unweighted median
+('Overall' column of the data_overall sheet).
+
+FIXED 2026-09-21 (owner health-sweep): the original wiring looked for a
+'data_overview' sheet THAT DOES NOT EXIST (the sheet is data_overall) and a
+'date' text header that is not there either (row 1 = column labels starting
+with an empty cell). The fallback chain landed on data_chart1 and a
+first-numeric-after-date scan that grabbed a zero-valued column — 0.0 rows
+stored as the wage-growth median, sailing through sanity_min=0.0. The parse
+now anchors on the 'Overall' header cell and coerces text numbers (the
+sheet ships values as STRINGS, e.g. '4.4').
 """
 
 from __future__ import annotations
@@ -27,17 +36,27 @@ class AtlError(RuntimeError):
 
 
 def _pick_sheet(wb) -> str:
-    # Actual sheet names: data_overview, data_chart1..3, WGT_1983, RG_...
-    # headline = data_overview (unweighted median); fall back to chart1,
-    # then to the first data_* sheet.
+    # Actual sheet names (live-probed 2026-09-21): data_overall, data_chart1..3,
+    # WGT_1983, Race, Education, ... — headline = data_overall.
     names = wb.sheetnames
-    for cand in ("data_overview", "data_chart1"):
+    for cand in ("data_overall", "data_overview"):
         if cand in names:
             return cand
     data_sheets = [n for n in names if str(n).lower().startswith("data")]
     if data_sheets:
         return data_sheets[0]
     raise AtlError(f"atl WGT: data-* sheet not found (available: {names[:8]})")
+
+
+def _f(v) -> float | None:
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str) and v.strip():
+        try:
+            return float(v.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def fetch_latest(series_id: str = "ATL:WGT") -> dict:
@@ -47,25 +66,26 @@ def fetch_latest(series_id: str = "ATL:WGT") -> dict:
     wb = load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
     ws = wb[_pick_sheet(wb)]
     rows = list(ws.iter_rows(values_only=True))
+    # header row = the one carrying the 'Overall' label; date column is the
+    # FIRST column (no 'date' text header exists in this sheet)
     header_i = next(
-        (
-            i
-            for i, row in enumerate(rows[:5])
-            if row and any(isinstance(c, str) and "date" in c.lower() for c in row)
-        ),
+        (i for i, row in enumerate(rows[:6])
+         if row and any(isinstance(c, str) and c.strip().lower() == "overall" for c in row)),
         None,
     )
     if header_i is None:
-        raise AtlError("atl WGT: 'date' header not found")
-    header = [str(c).lower() if c else "" for c in rows[header_i]]
-    di = next(i for i, c in enumerate(header) if "date" in c)
+        raise AtlError("atl WGT: 'Overall' header not found")
+    overall_col = next(
+        j for j, c in enumerate(rows[header_i])
+        if isinstance(c, str) and c.strip().lower() == "overall"
+    )
     last = None
     for row in rows[header_i + 1 :]:
-        if row and row[di] is not None:
-            for c in row[di + 1 :]:
-                if isinstance(c, (int, float)):
-                    last = (row[di], float(c))
-                    break
+        if not row or row[0] is None:
+            continue
+        v = _f(row[overall_col]) if overall_col < len(row) else None
+        if v is not None:
+            last = (row[0], v)
     if last is None:
         raise AtlError("atl WGT: no value rows")
     d, v = last
