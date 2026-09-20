@@ -14,8 +14,9 @@ header, not assumed.
 
 AUDIT round-2 correction (live-probed 2026-09-20): the CURRENT table format
 carries NO longer-run column — the Sep-2026 header reads 2021..2029 with the
-median ending 4.1/4.1/3.9/3.6 for 2026-29, and the old 'longer = last
-numeric column' inference never fires (len(vals) == len(years)). The
+median ending 4.1/4.1/3.9/3.6 for 2026-29, and the legacy 'longer = last
+numeric column' inference is inert (the post-Median window bleeds into the
+Lower-End row, whose leading dash blocks it — see the inline note). The
 longer-run median exists only in the calendar events family (INTEREST RATE
 PROJECTION LONGER) — a different data model; no CAL:FOMC_DOT_LONGER series
 is produced or promised until that wiring exists.
@@ -99,18 +100,23 @@ def _parse_fed_funds_median(text: str) -> dict[str, float]:
     for num, _dash in cells:
         vals.append(float(num) if num else None)
 
-    # The Median row columns = ALL calendar years from the header + Longer
-    # run. 'Longer run' is NOT in our section text (it sits in the <thead>
-    # HTML before the row label) — we infer it as the LAST numeric column.
-    # (live-verified Sep-2026: header 2021..2029, Median has 10 cells:
-    #  - × 5 (history) + 4.1 + 4.1 + 3.9 + 3.6 — the 3.6 IS the longer run;
-    #  the events table independently confirms longer=3.2 from the 2029
-    #  column being absent from the Sep-2026 SEP horizon)
+    # ROUND-3 CORRECTION (the round-1 note here asserted the opposite —
+    # live-probed twice): the Sep-2026 header reads 2021..2029 (9 year
+    # columns, 2029 PRESENT) and the Median row is 9 cells: 5 dashes
+    # (history) + 4.1/4.1/3.9/3.6 = the 2026/2027/2028/2029 medians. There
+    # is NO longer-run column in this table format — the longer-run median
+    # lives only in the calendar events family. The legacy longer-inference
+    # below is inert-but-retained: the 400-char window after 'Median'
+    # bleeds into the Lower-End row, and vals[len(years)] lands on that
+    # row's leading DASH (None), so 'longer' is never emitted on the live
+    # format. If a future SEP ever carries a genuine longer column, that
+    # dash alignment breaks FIRST — treat any 'longer' emission as a
+    # parse-drift signal, verify against the page before trusting it.
     out: dict[str, float] = {}
     for yr, v in zip(years, vals[: len(years)], strict=False):
         if v is not None:
             out[yr] = v
-    # longer run = the first cell AFTER the last mapped year
+    # legacy longer-run inference — see the note above (inert on live format)
     if len(vals) > len(years) and vals[len(years)] is not None:
         out["longer"] = vals[len(years)]
     return out

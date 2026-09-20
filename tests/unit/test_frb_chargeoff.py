@@ -77,6 +77,46 @@ class TestChgdelParse:
         assert [p["ts"] for p in pts] == ["2026-01-01", "2026-04-01"]
 
 
+class TestStaleOverride:
+    def test_frb_override_window(self, tmp_path):
+        """AUDIT round-3: the FRB: 300d override had zero coverage — reverting
+        it went undetected by the whole suite. Pin BOTH edges of the window:
+        262d (between Q-limit 190 and the 300 override) must be NOT stale;
+        beyond 300 must be stale."""
+        from datetime import UTC, datetime, timedelta
+
+        from arkwatch import db
+        from arkwatch.signals.brief import _health_detail
+
+        conn = db.get_conn(tmp_path / "t.db", allow_init=True)
+        conn.execute(
+            "INSERT INTO series_registry(series_id,name,block,tier,unit,value_format,freq,"
+            "ts_convention,primary_source,active) VALUES ('FRB:TEST','t','F',0,'pct','pct',"
+            "'Q','quarter_start','test',1)"
+        )
+        now = datetime.now(UTC)
+        for age, sid in ((262, "FRB:TEST"),):
+            ts = (now - timedelta(days=age)).date().isoformat()
+            conn.execute(
+                "INSERT INTO raw_observations(series_id,ts,release_ts,value,vintage_ts,"
+                "source,fetched_at) VALUES (?,?,'na',1.0,'realtime','FRB',?)",
+                (sid, ts, now.isoformat(timespec="seconds")),
+            )
+        conn.commit()
+        # detail carries only FAILING series — absence at 262d IS the 'ok'
+        detail = [d for d in _health_detail(conn)[4] if d[0] == "FRB:TEST"]
+        assert not detail, f"262d must NOT be stale under the 300d override: {detail}"
+
+        conn.execute(
+            "UPDATE raw_observations SET ts=?",
+            ((now - timedelta(days=320)).date().isoformat(),),
+        )
+        conn.commit()
+        detail2 = [d for d in _health_detail(conn)[4] if d[0] == "FRB:TEST"]
+        assert detail2 and detail2[0][1] == "stale", f"320d must be stale: {detail2}"
+        conn.close()
+
+
 class TestSepDotRouting:
     def test_dot_series_filter_by_year(self, monkeypatch):
         """CAL:FOMC_DOT_2027 must return the 2027 median, not whatever row is

@@ -199,7 +199,7 @@ _STALE_DAYS = {"D": 5, "W": 14, "M": 95, "Q": 190, "A": 550}
 # proxy for sources whose release cadence is irregular — FRB charge-off
 # publishes Q+2..Q+5 months erratically (Q2-2026 still unpublished as of
 # 2026-09-20 while Q1 is 262d old), which false-flagged all 12 FRB series
-# STALE on their first day wired. Prefix match, most specific wins.
+# STALE on their first day wired. Longest prefix wins (sorted below).
 _STALE_OVERRIDE = {
     "FRB:": 300,       # charge-off/delinquency release lags
 }
@@ -246,9 +246,9 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
         if last_obs:
             try:
                 age = (now_d - datetime.fromisoformat(str(last_obs)[:10]).date()).days
-                _fam = sid.split(":", 1)[0] + ":"
                 _limit = next(
-                    (v for k, v in _STALE_OVERRIDE.items() if sid.startswith(k)),
+                    (v for k, v in sorted(_STALE_OVERRIDE.items(), key=lambda kv: -len(kv[0]))
+                     if sid.startswith(k)),
                     None,
                 ) or _STALE_DAYS.get((freq or "D").upper(), 5)
                 stale = age > _limit

@@ -208,15 +208,24 @@ def main(argv: list[str] | None = None) -> int:
 
         conn = db.get_conn(args.db, allow_init=True)
         sync_registry(conn)
-        n = sep.save_dot_series(conn)
-        try:
-            from .fetch_log import log_collection
+        if args.dry:
+            rows = sep.series_rows()
+            for suffix in sorted({r["series_suffix"] for r in rows}):
+                pts = [r for r in rows if r["series_suffix"] == suffix]
+                print(f"  CAL:FOMC_DOT_{suffix:8s} {len(pts):3d} vintages · latest {pts[-1]}")
+            result = {}
+        else:
+            n = sep.save_dot_series(conn)
+            try:
+                from .fetch_log import log_collection
 
-            log_collection(conn, "backfill", "CAL:FOMC_DOT_ALL", None, n)
-        except Exception:
-            pass
+                # idempotent re-run: 0 new rows is the HEALTHY weekly case,
+                # not EMPTY (the fetch read thousands of observations)
+                log_collection(conn, "backfill", "CAL:FOMC_DOT_ALL", None, n, status="OK")
+            except Exception:
+                pass
+            result = {}
         conn.close()
-        result = {}
     elif args.source == "frb":
         # Fed Board charge-off/delinquency (FRB: family) — quarterly SDMX,
         # re-released whole-history; the weekly re-run lands revisions
@@ -238,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from .fetch_log import log_collection
 
-                log_collection(conn, "backfill", "FRB:CHGDEL_ALL", None, n)
+                # 0 new rows = healthy idempotent revision-picker re-run
+                log_collection(conn, "backfill", "FRB:CHGDEL_ALL", None, n, status="OK")
             except Exception:
                 pass
             result = {}
@@ -265,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from .fetch_log import log_collection
 
-                log_collection(conn, "backfill", "NYFEDRESEARCH_ALL", None, n)
+                # 0 new rows = healthy idempotent revision-picker re-run
+                log_collection(conn, "backfill", "NYFEDRESEARCH_ALL", None, n, status="OK")
             except Exception:
                 pass
             result = {

@@ -23,6 +23,10 @@
 #   quarter_start     = quarterly, ts = reference quarter
 #   release_date      = ts = the publication date itself (vintage keying,
 #                      e.g. FOMC dot plots: revisions live in the date)
+# sanity bounds SCOPE (audit r3): they gate the LATEST realtime value only
+#   (verify gate-2); older vintages/first-print layers may legitimately
+#   exceed them. Set bounds from the FULL stored realtime range, never from
+#   the current print (the ESMS/PI/PPCDF lessons).
 #   year_start        = annual, ts = reference year
 # Release times are written ET with season-aware WIB equivalents.
 #
@@ -408,7 +412,7 @@ series:
   release_schedule: "3rd Thursday 08:30 ET (Philadelphia Fed MBO survey)"
   expected_start: "1968-05-01"
   sanity_min: -70
-  sanity_max: 90
+  sanity_max: 95                   # audit r3: stored max 91.1 (1974-03) — was 90
   primary_source: "FRED:PPCDFSA066MSFRBPHI"
   secondary_source: null
   tolerance: null
@@ -717,7 +721,8 @@ series:
   ts_convention: report_month
   release_schedule: "BEA Personal Income & Outlays ~30th of the following month, 08:30 ET"
   expected_start: "1959-01-01"
-  sanity_min: 400.0                    # live min era-consistent (~470 in 1959)
+  sanity_min: 390.0                    # audit r3: stored realtime min 391.8 (1959-01)
+                                       # — the old 400.0 + '~470 in 1959' note was wrong
   sanity_max: 35000.0                  # live 2026-07 = 27,114.8 + growth headroom
   primary_source: FRED:PI
   secondary_source: null               # calendar PERSONAL INCOME MOM actuals
