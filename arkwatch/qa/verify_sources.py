@@ -106,7 +106,7 @@ def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: fl
         from datetime import datetime
         from datetime import timedelta as _td
 
-        today = datetime.utcnow().date()
+        today = datetime.now(UTC).date()
         r = _rq.get(
             "https://financialmodelingprep.com/stable/treasury-rates",
             params={
@@ -167,7 +167,7 @@ def _crossval_fmp_indicator(series_id: str, fred_value: float, fred_ts: str,
         from datetime import datetime
         from datetime import timedelta as _td
 
-        today = datetime.utcnow().date()
+        today = datetime.now(UTC).date()
         r = _rq.get(
             "https://financialmodelingprep.com/stable/economic-indicators",
             params={

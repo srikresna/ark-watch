@@ -157,7 +157,7 @@ def _repo_daily(base_path: str, *, full_allotment: bool) -> dict[str, float]:
     return daily
 
 
-def fetch_window(series_id: str, days: int = 12) -> list[dict]:
+def fetch_window(series_id: str, days: int = 12, *, today: str | None = None) -> list[dict]:
     """GAP-HEAL (audit P1-1, 2026-09-13): return EVERY observation in a
     ~`days`-business-day window, not just the latest — a PC-shutdown night
     that misses a publication day left a permanent hole because these
@@ -166,14 +166,15 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
 
     One search.json call per family (unsecured/secured) covers all rate
     series; SOFR percentiles ride their own last/N endpoint; SRF/ONRRP
-    aggregate the 14-day operations window they already fetch."""
+    aggregate the 14-day operations window they already fetch.
+    `today` (ISO) forwards to the research families' injectable clock."""
     from datetime import timedelta
 
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
     from . import nyfedresearch
 
     if nyfedresearch.knows(key):
-        return nyfedresearch.fetch_window(series_id, days)
+        return nyfedresearch.fetch_window(series_id, days, today=today)
     start = (datetime.now(UTC).date() - timedelta(days=int(days * 1.8))).isoformat()
     all_fields = UNSECURED_ALL_SERIES | SECURED_ALL_SERIES
     if key in all_fields:

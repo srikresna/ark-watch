@@ -122,9 +122,15 @@ def _setup_logging():
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
     logger.setLevel(logging.INFO)
     logger.addHandler(fh)
-    sh = logging.StreamHandler()
-    sh.setFormatter(logging.Formatter("daemon: %(message)s"))
-    logger.addHandler(sh)
+    # stderr mirror only for interactive runs — under systemd the unit's
+    # StandardError=append doubles EVERY line into logs/daemon-err.log which
+    # nothing rotates (audit round-2: 800KB duplicate log after ~2 months)
+    import sys as _sys
+
+    if _sys.stderr.isatty():
+        sh = logging.StreamHandler()
+        sh.setFormatter(logging.Formatter("daemon: %(message)s"))
+        logger.addHandler(sh)
 
 
 def _heartbeat():
@@ -175,7 +181,10 @@ def _alert_job_failed(cmd: str, detail: str) -> None:
             f"Daemon job '{cmd}' failed: {detail[:110]}",
             "A scheduled job failed (see logs/daemon-*.log + fetch_log for detail)",
             f"Run `python -m arkwatch {cmd}` on the server to diagnose",
-            cooldown_key=f"job_failed@{cmd}@{datetime.now(UTC).date().isoformat()}",
+            # WIB-dated (audit round-2): the operational day is WIB — a UTC
+            # key let a second failure episode of the same job inside one WIB
+            # day stay silenced across the UTC-date flip (and vice versa)
+            cooldown_key=f"job_failed@{cmd}@{datetime.now(WIB).date().isoformat()}",
         )
         conn.close()
     except Exception as ex:  # the alert must never break the loop

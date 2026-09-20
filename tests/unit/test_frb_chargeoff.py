@@ -103,6 +103,23 @@ class TestSepDotRouting:
         prefix = next(p for p in ROUTES if sid.startswith(p))
         assert prefix == "CAL:FOMC_DOT"
 
+    def test_source_pinning_kills_dual_label(self, monkeypatch):
+        """AUDIT round-2 P1: the harvest derived source from the ROUTES prefix
+        ('CAL:FOMC_DOT'.rstrip(':') is a NO-OP — no trailing colon), stamping a
+        second source label while sep's backfill writes 'CAL' → every vintage
+        stored twice (source is a PK leg). The module-level SOURCE pin must
+        win in _window_or_latest."""
+        from arkwatch.fetchers import sep
+        from arkwatch.qa.harvest import _window_or_latest
+
+        monkeypatch.setattr(
+            sep, "series_rows",
+            lambda: [{"ts": "2026-09-16", "series_suffix": "2026", "value": 4.1}],
+        )
+        rows, first, err = _window_or_latest(sep, "CAL:FOMC_DOT_2026", "CAL:FOMC_DOT")
+        assert rows == [("CAL:FOMC_DOT_2026", "2026-09-16", 4.1, "CAL")]
+        assert err is None and first is not None
+
 
 class TestRegistryParity:
     def test_every_frb_series_is_registered(self):

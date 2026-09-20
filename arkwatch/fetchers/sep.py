@@ -10,14 +10,22 @@ Parse strategy (live-verified 2026-09-19 across 4 vintages): strip tags in
 the Federal Funds Rate section, then locate the Median row's numbers. The
 row layout shifts by projection-horizon (a Sep-2026 page projects
 2026-2029, a Dec-2025 page 2025-2028) — years are read from the table
-header, not assumed. Longer run is the last numeric column.
+header, not assumed.
+
+AUDIT round-2 correction (live-probed 2026-09-20): the CURRENT table format
+carries NO longer-run column — the Sep-2026 header reads 2021..2029 with the
+median ending 4.1/4.1/3.9/3.6 for 2026-29, and the old 'longer = last
+numeric column' inference never fires (len(vals) == len(years)). The
+longer-run median exists only in the calendar events family (INTEREST RATE
+PROJECTION LONGER) — a different data model; no CAL:FOMC_DOT_LONGER series
+is produced or promised until that wiring exists.
 
 Series produced (quarterly, ts = the SEP release date):
   CAL:FOMC_DOT_<YYYY>   — median federal funds rate for calendar year YYYY
-  CAL:FOMC_DOT_LONGER   — the longer-run median
-The 'current year' row is redundant with CAL:FOMC_DOT_<year> — one series
-per target year, keyed by release date, so the FULL revision history is
-preserved (the trading signal is the REVISION between SEPs, not the level).
+One series per REGISTERED target year, keyed by release date, so the FULL
+revision history is preserved (the trading signal is the REVISION between
+SEPs, not the level). New horizon years enter automatically (2029 began at
+the Sep-2026 SEP).
 """
 
 from __future__ import annotations
@@ -37,6 +45,12 @@ _cache: dict[str, dict] = {}
 
 class SepError(RuntimeError):
     pass
+
+
+# storage source label (audit round-2): the backfill has always written
+# source='CAL'; the daily harvest route 'CAL:FOMC_DOT' must stamp the SAME
+# label or every vintage lands twice (source is a PK leg)
+SOURCE = "CAL"
 
 
 def _fetch_page(date_iso: str) -> str:

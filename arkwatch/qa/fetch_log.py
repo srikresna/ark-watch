@@ -52,17 +52,23 @@ def log_collection(
     first_obj: dict | None,
     rows_n: int,
     err: str | None = None,
+    status: str | None = None,
 ) -> None:
     """One call per collection (settlements/cvol/voi/flows-extra): status is OK
     when rows_n > 0, ERROR when err, with a drift check against the previous
     fingerprint. Error text is REDACTED (ROUND-4 security: a failing URL can
-    echo an api key in a query param)."""
+    echo an api key in a query param).
+
+    status override (audit round-2): check-style callers whose rows_n=0 is a
+    HEALTHY no-news day (fedsurvey 'all sources unchanged', ~95% of days) pass
+    status='OK' explicitly — the EMPTY badge is reserved for fetches that
+    returned zero OBSERVATIONS (the suspicious case)."""
     from .harvest import _redact
 
     if err:
         err = _redact(err)
     fp = schema_fp(first_obj)
-    status = "ERROR" if err else ("OK" if rows_n > 0 else "EMPTY")
+    status = status or ("ERROR" if err else ("OK" if rows_n > 0 else "EMPTY"))
     if fp:
         prev = conn.execute(
             "SELECT schema_fp FROM fetch_log WHERE target=? AND schema_fp IS NOT NULL "

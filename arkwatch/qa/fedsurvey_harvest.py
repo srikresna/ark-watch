@@ -191,6 +191,9 @@ def harvest_all(conn) -> dict[str, str]:
     log_collection(
         conn, "fedsurvey", "FEDSURVEY:ALL", None, n_new,
         err=None if n_err == 0 else f"{n_err}/{len(out)} sources failed",
+        # a checked-and-unchanged day is HEALTHY, not EMPTY (audit round-2:
+        # the EMPTY badge belongs to fetches that returned zero observations)
+        status="OK" if n_err == 0 else None,
     )
     return out
 

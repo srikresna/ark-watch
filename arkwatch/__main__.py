@@ -100,14 +100,35 @@ def main() -> int:
         print("usage: arkwatch flows add wgc <tonnes> <YYYY-MM> [db]")
         return 2
     if cmd == "brief":
+        import sqlite3
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+
         from dotenv import load_dotenv
 
         from .signals.compute import run as brief_run
 
         load_dotenv()
-        md = brief_run(_DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2])
+        dbp = _DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2]
+        md = brief_run(dbp)
         print(md)
-        print("\n=== brief saved + outbox pending ===")
+        # honesty (audit round-2): Sundays deliberately SKIP generation and
+        # serve the stored brief — the old unconditional 'saved + pending'
+        # banner claimed a write that never happened
+        try:
+            conn = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
+            gen = conn.execute(
+                "SELECT 1 FROM brief_log WHERE date=?",
+                (_dt.now(_ZI("Asia/Jakarta")).date().isoformat(),),
+            ).fetchone()
+            conn.close()
+        except sqlite3.Error:
+            gen = True  # cannot tell — do not claim the skip either
+        print(
+            "\n=== brief saved + outbox pending ==="
+            if gen
+            else "\n=== Sunday skip — stored brief served (no new generation) ==="
+        )
         return 0
     if cmd == "send":
         from dotenv import load_dotenv

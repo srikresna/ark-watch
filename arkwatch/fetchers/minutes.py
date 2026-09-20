@@ -18,9 +18,8 @@ import requests
 
 BASE = "https://www.federalreserve.gov/monetarypolicy/fomcminutes"
 CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-# Anthropic-compatible endpoint (owner's Claude Code plan — same token,
-# same billing pool as the interactive session)
-ZAI_ENDPOINT = "https://api.z.ai/api/anthropic/v1/messages"
+# (endpoint/key routing lives in nlp.py since the round-2 dedup — the old
+# ZAI_ENDPOINT constant here was orphaned by the provider-stack deletion)
 
 # Hawkish/dovish keyword pairs for the structural tone score
 _HAWKISH = (
@@ -146,15 +145,25 @@ def nlp_sentiment(text: str, api_key: str | None = None) -> dict:
     stays as a delegation (the agent-harness plan references the API) so there
     is exactly ONE provider/prompt implementation: nlp.py.
 
-    api_key (backward-compat for direct calls) is honored via NLP_API_KEY.
+    api_key (backward-compat) is honored via NLP_API_KEY and RESTORED after
+    the call — the round-2 mutation version leaked it into the process env,
+    silently retargeting every later NLP call.
     """
     import os as _os
 
+    old = _os.environ.get("NLP_API_KEY")
     if api_key:
         _os.environ["NLP_API_KEY"] = api_key
-    from .nlp import analyze_tone
+    try:
+        from .nlp import analyze_tone
 
-    return analyze_tone(text, source_type="minutes")
+        return analyze_tone(text, source_type="minutes")
+    finally:
+        if api_key:
+            if old is None:
+                _os.environ.pop("NLP_API_KEY", None)
+            else:
+                _os.environ["NLP_API_KEY"] = old
 
 
 def minutes_dates() -> list[str]:

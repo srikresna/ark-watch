@@ -195,6 +195,14 @@ def _event_consensus(conn: sqlite3.Connection, date_iso: str, sid: str) -> float
 # lag before its next print (the flat M:45 false-flagged 30/115 series
 # that were sitting at the source frontier)
 _STALE_DAYS = {"D": 5, "W": 14, "M": 95, "Q": 190, "A": 550}
+# Per-family staleness overrides (audit round-2): freq is a poor staleness
+# proxy for sources whose release cadence is irregular — FRB charge-off
+# publishes Q+2..Q+5 months erratically (Q2-2026 still unpublished as of
+# 2026-09-20 while Q1 is 262d old), which false-flagged all 12 FRB series
+# STALE on their first day wired. Prefix match, most specific wins.
+_STALE_OVERRIDE = {
+    "FRB:": 300,       # charge-off/delinquency release lags
+}
 
 
 def _brief_health_check(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
@@ -238,7 +246,12 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
         if last_obs:
             try:
                 age = (now_d - datetime.fromisoformat(str(last_obs)[:10]).date()).days
-                stale = age > _STALE_DAYS.get((freq or "D").upper(), 5)
+                _fam = sid.split(":", 1)[0] + ":"
+                _limit = next(
+                    (v for k, v in _STALE_OVERRIDE.items() if sid.startswith(k)),
+                    None,
+                ) or _STALE_DAYS.get((freq or "D").upper(), 5)
+                stale = age > _limit
             except ValueError:
                 pass  # unparseable ts → conservatively stale
         if last_status == "ERROR" or stale:

@@ -268,7 +268,9 @@ class TestRouting:
             "gscpi": {"GSCPI": [("2026-08-01", 1.06)]}
         })
         assert nyfed.fetch_latest("NYFED:GSCPI") == {"ts": "2026-08-01", "value": 1.06}
-        w = nyfed.fetch_window("NYFED:GSCPI", days=10)
+        # today= must thread through the nyfed delegation (round-2: the seam
+        # swallowed it, leaving this very test a wall-clock time bomb)
+        w = nyfed.fetch_window("NYFED:GSCPI", days=10, today="2026-09-19")
         assert w == [{"ts": "2026-08-01", "value": 1.06}]
         # markets-API series must NOT be captured by the research gate
         assert not nr.knows("OBFR")

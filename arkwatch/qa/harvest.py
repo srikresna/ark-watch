@@ -43,12 +43,18 @@ def _redact(text: str) -> str:
     return _SECRET_RE.sub(r"\1=REDACTED", text)
 
 
-def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dict | None]:
+def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dict | None, str | None]:
     """GAP-HEAL (audit P1-1, 2026-09-13): fetchers exposing fetch_window land
     EVERY observation in the window — a shutdown night that missed a
     publication day heals on the next run (the latest-only contract froze
     those holes permanently; e.g. the 2026-09-04 one-day gap, 26 series).
-    Unsupported series fall back to fetch_latest."""
+    Unsupported series fall back to fetch_latest.
+
+    SOURCE PINNING (audit round-2, 2026-09-20): a module may declare
+    SOURCE='CAL' to keep ONE storage label when its ROUTES prefix differs
+    from its historical source — prefix.rstrip(':') on the longer
+    CAL:FOMC_DOT route stamped source='CAL:FOMC_DOT' while sep's backfill
+    writes 'CAL', silently storing every vintage twice (source is a PK leg)."""
     fw = getattr(mod, "fetch_window", None)
     pts = None
     window_err = None
@@ -62,16 +68,17 @@ def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dic
             # the caller's fetch_log error field
             pts = None
             window_err = f"WINDOW_FALLBACK {str(ex)[:60]}"
+    src = getattr(mod, "SOURCE", None) or prefix.rstrip(":")
     if pts:
         rows = [
-            (sid_full, p["ts"], p["value"], prefix.rstrip(":"))
+            (sid_full, p["ts"], p["value"], src)
             for p in pts
             if p.get("value") is not None
         ]
         first_obj = rows and {"ts": rows[-1][1], "value": rows[-1][2]} or None
         return rows, first_obj, None
     cur = mod.fetch_latest(sid_full)
-    rows = [(sid_full, cur["ts"], cur["value"], prefix.rstrip(":"))]
+    rows = [(sid_full, cur["ts"], cur["value"], src)]
     return rows, cur, window_err
 
 
