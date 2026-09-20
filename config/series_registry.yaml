@@ -1101,6 +1101,113 @@
   active: 1
   # WTI spot — energy pass-through channel into CPI headline; context for the OVX line.
 
+# --- Energy + geopolitics channel (owner GO 2026-09-21, research wf verified) ----
+
+- series_id: FRED:DCOILBRENTEU
+  name: Brent spot (Europe, FOB)
+  block: C
+  tier: 0
+  unit: usd_per_bbl
+  value_format: level
+  freq: D
+  ts_convention: obs_day
+  release_schedule: business days; T+1 (same EIA/FRED ingest as WTI)
+  expected_start: "1987-05-20"
+  sanity_min: 0.0
+  sanity_max: 250.0              # 2008 peak ~147; live crisis regime 130.80 with
+                                 # Brent-WTI $23.78 — headroom, never clip a real spike
+  primary_source: FRED:DCOILBRENTEU
+  secondary_source: null         # spot; futures basis differs (BZ.COMM gap $22 live)
+  tolerance: null
+  active: 1
+  # International/geopolitics leg; Brent-WTI spread = classic geo-disruption gauge.
+
+- series_id: FRED:DHHNGSP
+  name: Henry Hub natural gas spot
+  block: C
+  tier: 0
+  unit: usd_per_mmbtu
+  value_format: level
+  freq: D
+  ts_convention: obs_day
+  release_schedule: business days; T+1
+  expected_start: "1997-01-07"
+  sanity_min: 0.0
+  sanity_max: 30.0               # 2005 peak ~15.4; 2022 ~9.7; margin
+  primary_source: FRED:DHHNGSP
+  secondary_source: "EODHD:NG.COMM (front future — basis can differ)"
+  tolerance: null
+  active: 1
+  # Heaviest '.'-gap rate of the EIA dailies (2,059/7,746) — gaps are real, never fill.
+
+- series_id: FRED:GASREGW
+  name: US retail gasoline price (regular, pump incl. taxes)
+  block: C
+  tier: 0
+  unit: usd_per_gal
+  value_format: level
+  freq: W
+  ts_convention: week_ending_mon
+  release_schedule: weekly Monday survey, on FRED ~Tue 09:00 CT
+  expected_start: "1990-08-20"
+  sanity_min: 0.0
+  sanity_max: 8.0                # 2022 peak ~5.0; margin
+  primary_source: FRED:GASREGW
+  secondary_source: null         # pump price — not comparable to wholesale RBOB
+  tolerance: null
+  active: 1
+
+- series_id: FRED:GASDESW
+  name: US retail diesel price (pump incl. taxes)
+  block: C
+  tier: 0
+  unit: usd_per_gal
+  value_format: level
+  freq: W
+  ts_convention: week_ending_mon
+  release_schedule: weekly Monday survey, on FRED ~Tue 14:30 CT
+  expected_start: "1994-03-21"
+  sanity_min: 0.0
+  sanity_max: 10.0               # 2022 peak ~5.9; margin
+  primary_source: FRED:GASDESW
+  secondary_source: null         # GASDESLSW is identical on the tail — deliberately not double-registered
+  tolerance: null
+  active: 1
+
+- series_id: FRED:PWHEAMTUSDM
+  name: Global price of wheat
+  block: C
+  tier: 0
+  unit: usd_per_mt
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: monthly (IMF PSBR, ~mid following month)
+  expected_start: "1990-01-01"
+  sanity_min: 0.0
+  sanity_max: 900.0              # 2008/2022 peaks ~500; live 228.74 (+14.6% MoM — spike month)
+  primary_source: FRED:PWHEAMTUSDM
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: FRED:PMAIZMTUSDM
+  name: Global price of corn
+  block: C
+  tier: 0
+  unit: usd_per_mt
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: monthly (IMF PSBR)
+  expected_start: "1990-01-01"
+  sanity_min: 0.0
+  sanity_max: 900.0              # 2012 peak ~350; margin
+  primary_source: FRED:PMAIZMTUSDM
+  secondary_source: null
+  tolerance: null
+  active: 1
+
 - series_id: FRED:DALLAS_TRIM_1M
   name: Dallas trimmed-mean PCE 1-month inflation (annualized)
   block: C

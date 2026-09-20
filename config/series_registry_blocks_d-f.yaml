@@ -711,6 +711,80 @@ series:
   active: 1
   calendar_family: "ISM MANUFACTURING NEW ORDERS"
 
+# --- Energy fundamentals from calendar events (agg per family semantics) ----------
+
+- series_id: "CAL:EIA_CRUDE_STOCKS_CHG"
+  name: "EIA crude oil stocks change, monthly sum of weekly flows"
+  block: C
+  tier: 4
+  unit: "millions of barrels"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "weekly EIA Wednesday 10:30 ET; month = sum of week-ending months"
+  expected_start: "2021-08-01"
+  sanity_min: -150.0
+  sanity_max: 150.0
+  primary_source: "CAL:events[EIA CRUDE OIL STOCKS CHANGE] agg=sum"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "EIA CRUDE OIL STOCKS CHANGE"
+
+- series_id: "CAL:EIA_GASOLINE_STOCKS_CHG"
+  name: "EIA gasoline stocks change, monthly sum of weekly flows"
+  block: C
+  tier: 4
+  unit: "millions of barrels"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "weekly EIA Wednesday 10:30 ET"
+  expected_start: "2021-08-01"
+  sanity_min: -60.0
+  sanity_max: 60.0
+  primary_source: "CAL:events[EIA GASOLINE STOCKS CHANGE] agg=sum"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "EIA GASOLINE STOCKS CHANGE"
+
+- series_id: "CAL:EIA_DISTILLATE_STOCKS_CHG"
+  name: "EIA distillate stocks change, monthly sum of weekly flows"
+  block: C
+  tier: 4
+  unit: "millions of barrels"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "weekly EIA Wednesday 10:30 ET"
+  expected_start: "2021-08-01"
+  sanity_min: -60.0
+  sanity_max: 60.0
+  primary_source: "CAL:events[EIA DISTILLATE STOCKS CHANGE] agg=sum"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "EIA DISTILLATE STOCKS CHANGE"
+
+- series_id: "CAL:BAKER_HUGHES_OIL_RIGS"
+  name: "Baker Hughes US oil rig count, latest release of month"
+  block: C
+  tier: 4
+  unit: "rig count"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: "weekly Friday 13:00 ET; gappy feed — report gaps, never interpolate"
+  expected_start: "2024-11-01"
+  sanity_min: 0.0
+  sanity_max: 2000.0
+  primary_source: "CAL:events[BAKER HUGHES OIL RIG COUNT] agg=last"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  calendar_family: "BAKER HUGHES OIL RIG COUNT"
+
 - series_id: FRED:PI
   name: "Personal Income (SAAR, billions USD)"
   block: D
