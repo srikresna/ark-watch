@@ -22,6 +22,22 @@ class YahooError(RuntimeError):
     pass
 
 
+def fetch_meta(symbol: str) -> dict:
+    """Chart meta (shortName carries the tracked contract month, e.g. 'Crude Oil Nov 26')."""
+    r = requests.get(
+        f"{BASE}/{symbol}",
+        params={"interval": "1d", "range": "5d"},
+        headers=UA,
+        timeout=(10, 60),
+    )
+    if r.status_code != 200:
+        raise YahooError(f"yahoo {symbol}: HTTP {r.status_code}")
+    res = r.json().get("chart", {}).get("result")
+    if not res:
+        raise YahooError(f"yahoo {symbol}: empty response")
+    return res[0].get("meta", {})
+
+
 def fetch_daily(symbol: str, *, start_ts: int = 0, end_ts: int = 9999999999) -> list[dict]:
     """Returns [{ts:YYYY-MM-DD, open, high, low, close, volume}] ascending; null bars dropped."""
     global _last

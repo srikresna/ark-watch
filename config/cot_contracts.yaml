@@ -26,6 +26,17 @@
 
 contracts:
 
+- code: "067651"
+  name: "CRUDE OIL, LIGHT SWEET - NYMEX"
+  instrument: CL1
+  report_type: disagg
+  focus: mm_net
+  dataset: 72hh-3qpy
+  z_window_minggu: 156
+  min_obs: 150
+  crowded_z: 1.5
+  notes: "Energy channel 2026-09-21 — oil speculative positioning joins the metals book (Disagg money-manager net; TFF hosts financial contracts only, live-verified 0 rows)."
+
 - code: "088691"
   name: "GOLD - COMMODITY EXCHANGE INC."
   instrument: XAUUSD

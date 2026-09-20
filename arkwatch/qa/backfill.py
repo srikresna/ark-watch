@@ -179,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--dry", action="store_true", help="count without writing")
     p.add_argument(
-        "--source", choices=["fred", "tga", "cal", "sep", "nyfedresearch", "frb"], default="fred"
+        "--source", choices=["fred", "tga", "cal", "sep", "nyfedresearch", "frb", "geo"],
+        default="fred",
     )
     args = p.parse_args(argv)
 
@@ -289,6 +290,25 @@ def main(argv: list[str] | None = None) -> int:
                 for k, rows in nyfedresearch._family_rows(fam).items()
                 if nyfedresearch.knows(k)
             }
+        conn.close()
+    elif args.source == "geo":
+        from ..fetchers import geo as geo_mod
+
+        conn = db.get_conn(args.db, allow_init=True)
+        sync_registry(conn)
+        result = {}
+        if args.dry:
+            for key, fn in geo_mod.GEO_SERIES.items():
+                rows = fn()
+                print(f"  GEO:{key:12s} {len(rows):5d} obs · latest {rows[-1]}")
+        else:
+            for key, fn in geo_mod.GEO_SERIES.items():
+                rows = fn()
+                sid = f"GEO:{key}"
+                result[sid] = db.insert_observations(
+                    conn, [(sid, p["ts"], p["value"], "GEO") for p in rows]
+                )
+            conn.commit()
         conn.close()
     else:
         fred_targets = [e for e in reg if e["series_id"].startswith("FRED:")]

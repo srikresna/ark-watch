@@ -179,6 +179,10 @@ def main() -> int:
             w.writerows(rows)
         print(f"=== export block {block}: {len(rows)} rows → {out_csv} ===")
         return 0
+    if cmd == "energy":
+        from .qa.energy import main as energy_main
+
+        return energy_main(sys.argv[2:])
     if cmd == "watch":
         from .qa.watcher import main as watch_main
 

@@ -205,6 +205,8 @@ _STALE_OVERRIDE = {
     "EODHD:CMDI": 45,  # weekly cadence; OBSERVED lag 2-4wk (2026-09-20: newest
                        # 30d old, feed alive) — 35d had only ~5d headroom and
                        # would have false-flagged all 3 series on 2026-09-26
+    "GEO:GPRD": 14,    # daily file but refreshed Mondays only
+    "GEO:HARPEX": 14,  # weekly stamps
 }
 
 

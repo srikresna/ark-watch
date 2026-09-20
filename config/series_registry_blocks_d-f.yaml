@@ -2284,6 +2284,111 @@ series:
   tolerance: null
   active: 1
 
+# --- Geopolitics & freight (energy channel tier 4, owner GO 2026-09-21) ----------
+
+- series_id: "GEO:GPR"
+  name: "Geopolitical Risk index (Caldara-Iacoviello), monthly"
+  block: F
+  tier: 2
+  unit: "index (1985:2019=100)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: monthly (~start of month)
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 600.0
+  primary_source: "GEO:matteoiacoviello.com/gpr_files/data_gpr_export.xls (GPR col)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: "GEO:GPRD"
+  name: "Geopolitical Risk index, daily"
+  block: F
+  tier: 2
+  unit: "index (1985:2019=100)"
+  value_format: level
+  freq: D
+  ts_convention: obs_day
+  release_schedule: file refreshed Mondays — up to 7d tail lag by design
+  expected_start: "1985-01-01"
+  sanity_min: 0.0
+  sanity_max: 800.0
+  primary_source: "GEO:matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls (GPRD col)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+  # live 2026-09-14 = 189.5 (ACT 246) vs monthly 117.9 — daily is the early-warning leg
+
+- series_id: "GEO:HARPEX"
+  name: "Harper Petersen Container Ship Time Charter Index"
+  block: F
+  tier: 2
+  unit: "index points"
+  value_format: level
+  freq: W
+  ts_convention: week_ending_fri
+  release_schedule: weekly Friday
+  expected_start: "2024-09-20"       # page embeds only the trailing 24 months
+  sanity_min: 0.0
+  sanity_max: 12000.0
+  primary_source: "GEO:harperpetersen.com/harpex (embedded JSON, longest window)"
+  secondary_source: "EODHD:BDI (dry bulk — different segment, direction cross-check)"
+  tolerance: null
+  active: 1
+
+- series_id: "EODHD:BDI"
+  name: "Baltic Dry Index"
+  block: F
+  tier: 1
+  unit: "index points"
+  value_format: level
+  freq: D
+  ts_convention: obs_day
+  release_schedule: London business days
+  expected_start: "1985-01-02"
+  sanity_min: 0.0
+  sanity_max: 15000.0               # 2021 peak ~5650; margin
+  primary_source: "EODHD:/api/eod/BDIY.INDX"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: "GEO:FAO_FFPI"
+  name: "FAO Food Price Index (headline)"
+  block: C
+  tier: 2
+  unit: "index (2014-2016=100)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: monthly (first Thursday)
+  expected_start: "1990-01-01"
+  sanity_min: 0.0
+  sanity_max: 250.0                 # 2022 peak ~160; margin
+  primary_source: "GEO:fao.org food_price_indices_data.csv (Food Price Index col)"
+  secondary_source: null
+  tolerance: null
+  active: 1
+
+- series_id: "GEO:FAO_CEREALS"
+  name: "FAO Food Price Index — cereals subindex"
+  block: C
+  tier: 2
+  unit: "index (2014-2016=100)"
+  value_format: level
+  freq: M
+  ts_convention: report_month
+  release_schedule: monthly (first Thursday)
+  expected_start: "1990-01-01"
+  sanity_min: 0.0
+  sanity_max: 300.0                 # 2008/2022 grain spikes; margin
+  primary_source: "GEO:fao.org food_price_indices_data.csv (Cereals col)"
+  secondary_source: "FRED:PWHEAMTUSDM (wheat — different unit, direction cross-check)"
+  tolerance: null
+  active: 1
+
 - series_id: FRED:BAMLH0A0HYM2
   name: "ICE BofA US High Yield OAS"
   block: F

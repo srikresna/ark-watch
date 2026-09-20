@@ -28,6 +28,7 @@ from ..fetchers import (
     fedsurvey,
     fiscal,
     fred,
+    geo,
     misc,
     nyfed,
     philly,
@@ -49,6 +50,7 @@ ROUTES = {
     "NYFED:": nyfed,
     "ECB:": ecb,
     "FRB:": fedsurvey,  # Fed Board quantitative releases (charge-off/delinquency SDMX)
+    "GEO:": geo,        # free geopolitics/food indices (GPR, FAO, HARPEX)
     "CAL:FOMC_DOT": sep,  # longer prefix FIRST — startswith routing is order-sensitive
     "CAL:": caldist,  # calendar-derived series (events.actual → series; DB read)
 }

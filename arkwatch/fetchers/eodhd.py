@@ -91,6 +91,34 @@ def fetch_sentiments(tickers: str = "btc-usd.cc,eth-usd.cc") -> dict[str, list[d
 
 CMDI_COLUMNS = {"CMDI": "market_cmdi", "CMDI_IG": "ig_cmdi", "CMDI_HY": "hy_cmdi"}
 
+EOD_TICKERS = {"BDI": "BDIY.INDX"}
+
+
+def _eod_rows(ticker: str, days: int) -> list[dict]:
+    from datetime import UTC, datetime, timedelta
+
+    to = datetime.now(UTC).date()
+    fr = to - timedelta(days=days)
+    r = requests.get(
+        f"{BASE}/eod/{ticker}",
+        params={
+            "api_token": _token(), "fmt": "json",
+            "from": fr.isoformat(), "to": to.isoformat(),
+        },
+        headers=UA, timeout=(10, 30),
+    )
+    if r.status_code != 200:
+        raise EodhdError(f"EODHD eod/{ticker}: HTTP {r.status_code}")
+    rows = r.json()
+    if not isinstance(rows, list):
+        raise EodhdError(f"EODHD eod/{ticker}: unrecognized shape")
+    return [
+        {"ts": x["date"][:10], "value": float(x["close"])}
+        for x in rows
+        if x.get("close") is not None
+    ]
+
+
 _cmdi_cache: list[dict] | None = None
 
 
@@ -156,6 +184,8 @@ def fetch_window(series_id: str, days: int = 12) -> list[dict]:
     expected noise — an empty list is the honest 'no window support' signal
     and the harvest falls back silently, as designed."""
     key = series_id.split(":", 1)[1] if ":" in series_id else series_id
+    if key in EOD_TICKERS:
+        return _eod_rows(EOD_TICKERS[key], max(days * 2, 120))
     if key in CMDI_COLUMNS:
         out = _cmdi_window(series_id, days)
         # dead-feed guard, lag-aware: OBSERVED lag is 2-4wk (2026-09-20:
@@ -204,6 +234,12 @@ def fetch_latest(series_id: str) -> dict:
             raise EodhdError(f"funding-stress: code {code} missing from response")
         r0 = max(rows, key=lambda r: r["date"])
         return {"ts": r0["date"], "value": float(r0["value_bps"])}
+
+    if key in EOD_TICKERS:
+        rows = _eod_rows(EOD_TICKERS[key], 30)
+        if not rows:
+            raise EodhdError(f"eod {key}: empty window")
+        return rows[-1]
 
     if key in CMDI_COLUMNS:
         # default page carries the NEWEST rows (probe-verified) — page-1 max
