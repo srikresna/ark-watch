@@ -4,7 +4,7 @@ The SEP publishes 4x/year (Mar/Jun/Sep/Dec meetings) at:
   /monetarypolicy/fomcprojtabl{YYYYMMDD}.htm
 The page's Federal Funds Rate table carries the Actual row (history), the
 upper/lower 70% confidence interval bounds, and the Median row — the dot
-plot's median path for the current + 3 forward years + longer run.
+plot's median path for the current + 3 forward years.
 
 Parse strategy (live-verified 2026-09-19 across 4 vintages): strip tags in
 the Federal Funds Rate section, then locate the Median row's numbers. The
@@ -62,10 +62,12 @@ def _fetch_page(date_iso: str) -> str:
 
 
 def _parse_fed_funds_median(text: str) -> dict[str, float]:
-    """Parse the Federal Funds Rate → Median row → {year_or_'longer': value}.
+    """Parse the Federal Funds Rate → Median row → {year: value}.
 
-    The table structure (live-verified across 2021-2026 vintages):
-      header: 2021|2022|...|2029|Longer run   (actual years + projection years)
+    The table structure (live-verified across all 22 vintages 2021-2026):
+      header: 2021|2022|...|2029   (actual years + projection years — NO
+                                    Longer-run column in this table; that
+                                    median lives in the events family only)
       rows:   Actual|0.1|4.4|...|-|-|-|-|     (numbers + '-' placeholders)
               Upper CI|-|-|...|4.6|5.8|...
               Median|-|-|...|4.1|4.1|3.9|3.6|

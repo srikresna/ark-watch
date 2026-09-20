@@ -212,7 +212,11 @@ def main(argv: list[str] | None = None) -> int:
             rows = sep.series_rows()
             for suffix in sorted({r["series_suffix"] for r in rows}):
                 pts = [r for r in rows if r["series_suffix"] == suffix]
-                print(f"  CAL:FOMC_DOT_{suffix:8s} {len(pts):3d} vintages · latest {pts[-1]}")
+                # max-by-ts, order-immune — series_rows walks vintages
+                # NEWEST-FIRST, so pts[-1] is the OLDEST (round-4: the dry
+                # print mislabeled every series years staler than reality)
+                latest = max(pts, key=lambda r: r["ts"])
+                print(f"  CAL:FOMC_DOT_{suffix:8s} {len(pts):3d} vintages · latest {latest}")
             result = {}
         else:
             n = sep.save_dot_series(conn)
