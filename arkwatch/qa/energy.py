@@ -1,4 +1,9 @@
-"""energy.py — daily curve signals: WTI backwardation, cracks, Brent-WTI spot spread."""
+"""energy.py — daily curve signals from same-month dated contracts.
+
+Crack/bwd legs must share an expiry month: continuous contracts roll at
+different times per commodity, mixing months around rolls (the 2026-09-21
+crack jump 40.65→47.86). Primary = EODHD dated contracts; fallback = Yahoo
+dated contracts (free, same approach)."""
 from __future__ import annotations
 
 import argparse
@@ -16,15 +21,8 @@ MONTH_NAMES = {
 }
 
 
-def _front_month() -> tuple[int, int]:
-    from ..fetchers import yahoo
-
-    meta = yahoo.fetch_meta("CL=F")
-    parts = meta["shortName"].split()
-    for i, p in enumerate(parts):
-        if p in MONTH_NAMES and i + 1 < len(parts):
-            return MONTH_NAMES[p], int(parts[i + 1]) + 2000
-    raise RuntimeError(f"energy: cannot parse front month from {meta.get('shortName')!r}")
+class EnergyError(RuntimeError):
+    pass
 
 
 def next_month_code(month: int, yy: int) -> str:
@@ -32,38 +30,65 @@ def next_month_code(month: int, yy: int) -> str:
     return f"{MONTH_CODES[m - 1]}{y % 100:02d}"
 
 
-def _cl2_rows(days: int = 30) -> list[dict]:
+def _front_month() -> str:
+    """Month code (e.g. 'X26') of the active WTI front, from Yahoo meta."""
     from ..fetchers import yahoo
 
-    month, yy = _front_month()
-    ticker = f"CL{next_month_code(month, yy)}.NYM"
-    return yahoo.fetch_daily(ticker)[-days:]
+    meta = yahoo.fetch_meta("CL=F")
+    parts = meta["shortName"].split()
+    for i, p in enumerate(parts):
+        if p in MONTH_NAMES and i + 1 < len(parts):
+            m = MONTH_NAMES[p]
+            yy = int(parts[i + 1]) + 2000
+            return f"{MONTH_CODES[m - 1]}{yy % 100:02d}"
+    raise EnergyError(f"cannot parse front month from {meta.get('shortName')!r}")
 
 
-def _latest_price(conn, symbol: str, max_age_days: int = 5) -> tuple[str, float]:
-    """YAHOO-pinned completed-bar read. The table holds YAHOO+EODHD twins per
-    day whose continuous contracts track DIFFERENT expiry months during roll
-    windows (4-8% apart live) — an unpinned read mixes roll calendars."""
-    row = conn.execute(
-        "SELECT ts, close FROM instrument_prices WHERE symbol=? AND source='YAHOO' "
-        "AND close IS NOT NULL AND ts < date('now') ORDER BY ts DESC LIMIT 1",
-        (symbol,),
-    ).fetchone()
-    if not row:
-        raise RuntimeError(f"energy: no completed YAHOO bar for {symbol}")
-    age = (datetime.now(UTC).date() - datetime.fromisoformat(row[0][:10]).date()).days
-    if age > max_age_days:
-        raise RuntimeError(f"energy: {symbol} stale {age}d ({row[0]})")
-    return row[0][:10], float(row[1])
+def _eodhd_dated(root: str, code: str) -> dict | None:
+    import os
+
+    import requests as _rq
+
+    key = os.environ.get("EODHD_API_TOKEN", "")
+    if not key:
+        return None
+    try:
+        r = _rq.get(
+            f"https://eodhd.com/api/eod/{root}{code}-NYM.COMM",
+            params={"api_token": key, "fmt": "json", "days": "5"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=(10, 30),
+        )
+        rows = r.json() if r.status_code == 200 else []
+        if isinstance(rows, list) and rows:
+            last = rows[-1]
+            return {"ts": last["date"][:10], "close": float(last["close"]),
+                    "source": "EODHD"}
+    except Exception:
+        pass
+    return None
 
 
-def _same_date_legs(conn) -> tuple[str, dict[str, float]]:
-    legs = {s: _latest_price(conn, s) for s in ("CL1", "RB1", "HO1")}
-    dates = {d for d, _ in legs.values()}
-    if len(dates) != 1:
-        raise RuntimeError(f"energy: futures legs on different dates {sorted(dates)}")
-    d = dates.pop()
-    return d, {s: v for s, (_, v) in legs.items()}
+def _yahoo_dated(root: str, code: str) -> dict | None:
+    from ..fetchers import yahoo
+
+    try:
+        bars = yahoo.fetch_daily(f"{root}{code}.NYM")
+        if bars:
+            last = bars[-1]
+            return {"ts": last["ts"], "close": float(last["close"]),
+                    "source": "YAHOO"}
+    except Exception:
+        pass
+    return None
+
+
+def _leg(root: str, code: str) -> dict:
+    """EODHD primary, Yahoo fallback — both same-month dated."""
+    out = _eodhd_dated(root, code) or _yahoo_dated(root, code)
+    if out is None:
+        raise EnergyError(f"no data for {root}{code} (EODHD + Yahoo both failed)")
+    return out
 
 
 def _spot_pair(conn, days: int = 10) -> tuple[str, float, float]:
@@ -75,47 +100,50 @@ def _spot_pair(conn, days: int = 10) -> tuple[str, float, float]:
             (sid, days),
         ).fetchall()
         if not rows:
-            raise RuntimeError(f"energy: no spot for {sid}")
+            raise EnergyError(f"no spot for {sid}")
         series[sid] = {r[0]: r[1] for r in rows}
     common = set(series["FRED:DCOILBRENTEU"]) & set(series["FRED:DCOILWTICO"])
     if not common:
-        raise RuntimeError("energy: no common spot date in window")
+        raise EnergyError("no common spot date in window")
     ts = max(common)
     return ts, series["FRED:DCOILBRENTEU"][ts], series["FRED:DCOILWTICO"][ts]
 
 
-def _write_cl2(conn, rows: list[dict]) -> None:
-    """Rolling spread input, not a history series: keep only the recent tail —
-    at each roll the 'CL2' label re-binds to the new next-month, so older rows
-    under the same label would silently change meaning."""
-    for p in rows[-10:]:
+def compute(conn) -> dict[str, dict]:
+    front = _front_month()
+    second = next_month_code(
+        MONTH_CODES.index(front[0]) + 1, int(front[1:]) + 2000
+    )
+
+    cl1 = _leg("CL", front)
+    rb1 = _leg("RB", front)
+    ho1 = _leg("HO", front)
+    cl2 = _leg("CL", second)
+
+    dates = {cl1["ts"], rb1["ts"], ho1["ts"], cl2["ts"]}
+    if len(dates) > 2:
+        raise EnergyError(f"legs on too many dates: {sorted(dates)}")
+
+    ts_f = min(dates)
+    out: dict[str, dict] = {
+        "energy_crack_gas": {"ts": ts_f, "value": round(rb1["close"] * 42 - cl1["close"], 2)},
+        "energy_crack_ho": {"ts": ts_f, "value": round(ho1["close"] * 42 - cl1["close"], 2)},
+        "energy_wti_bwd": {"ts": ts_f, "value": round(cl1["close"] - cl2["close"], 2)},
+    }
+
+    ts_spot, brent, wti = _spot_pair(conn)
+    out["energy_brent_wti_spot"] = {"ts": ts_spot, "value": round(brent - wti, 2)}
+
+    for sym, leg_info in (("CL1", cl1), ("CL2", cl2)):
         conn.execute(
-            "INSERT OR REPLACE INTO instrument_prices(symbol, ts, source, open, high, low,"
-            " close, volume) VALUES ('CL2', ?, 'YAHOO', ?, ?, ?, ?, ?)",
-            (p["ts"], p.get("open"), p.get("high"), p.get("low"), p["close"], p.get("volume")),
+            "INSERT OR REPLACE INTO instrument_prices(symbol, ts, source, close)"
+            " VALUES (?,?,?,?)",
+            (sym, leg_info["ts"], leg_info["source"], leg_info["close"]),
         )
     conn.execute(
         "DELETE FROM instrument_prices WHERE symbol='CL2' AND ts NOT IN "
         "(SELECT ts FROM instrument_prices WHERE symbol='CL2' ORDER BY ts DESC LIMIT 10)"
     )
-
-
-def compute(conn) -> dict[str, dict]:
-    ts_f, px = _same_date_legs(conn)
-    out: dict[str, dict] = {
-        "energy_crack_gas": {"ts": ts_f, "value": round(px["RB1"] * 42 - px["CL1"], 2)},
-        "energy_crack_ho": {"ts": ts_f, "value": round(px["HO1"] * 42 - px["CL1"], 2)},
-    }
-    ts_spot, brent, wti = _spot_pair(conn)
-    out["energy_brent_wti_spot"] = {"ts": ts_spot, "value": round(brent - wti, 2)}
-
-    _write_cl2(conn, _cl2_rows())
-    row = conn.execute(
-        "SELECT ts, close FROM instrument_prices WHERE symbol='CL2' AND source='YAHOO' "
-        "AND close IS NOT NULL ORDER BY ts DESC LIMIT 1"
-    ).fetchone()
-    if row and row[0][:10] == ts_f:
-        out["energy_wti_bwd"] = {"ts": ts_f, "value": round(px["CL1"] - float(row[1]), 2)}
     conn.commit()
     return out
 
