@@ -1,0 +1,172 @@
+"""Cross-source market news collection with deterministic clustering."""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from .. import db as _db
+from .fetch_log import log_collection
+
+SESSION = requests.Session()
+SESSION.mount("https://", HTTPAdapter(max_retries=Retry(total=1, connect=1, read=1, status=1, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504), allowed_methods=("GET",), respect_retry_after_header=True)))
+TOPICS = ("fed", "inflation", "oil", "bitcoin", "ethereum", "war", "tariff", "yield", "treasury", "jobs", "china")
+
+
+def _time(value: str | None) -> str:
+    raw = value or ""
+    try:
+        if re.fullmatch(r"\d{8}T\d{6}Z", raw):
+            dt = datetime.strptime(raw, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.replace(tzinfo=dt.tzinfo or UTC).astimezone(UTC).isoformat(timespec="seconds")
+    except ValueError as ex:
+        raise ValueError(f"invalid news timestamp: {raw[:40]}") from ex
+
+
+def _tokens(title: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]{3,}", title.lower())) - {"the", "and", "for", "with", "from", "after", "says"}
+
+
+def _canonical_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parts = urlsplit(url)
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")])
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), query, ""))
+
+
+def _cluster(conn, title: str) -> tuple[str, float]:
+    tokens = _tokens(title)
+    best = None
+    best_score = 0.0
+    for old_title, cluster_id in conn.execute("SELECT title,cluster_id FROM market_news WHERE published_at_utc >= datetime('now','-48 hours') ORDER BY published_at_utc DESC LIMIT 1000"):
+        other = _tokens(old_title)
+        score = len(tokens & other) / max(1, len(tokens | other))
+        if score > best_score:
+            best, best_score = cluster_id, score
+    cluster_id = best if best_score >= 0.70 else hashlib.sha256(" ".join(sorted(tokens)).encode()).hexdigest()[:20]
+    count = conn.execute("SELECT COUNT(*) FROM market_news WHERE cluster_id=?", (cluster_id,)).fetchone()[0]
+    return cluster_id, 1.0 / (count + 1)
+
+
+def _fmp() -> list[dict]:
+    key = os.environ.get("FMP_API_KEY", "")
+    if not key:
+        return []
+    r = SESSION.get("https://financialmodelingprep.com/stable/news/general-latest", params={"apikey": key}, timeout=(10, 45))
+    r.raise_for_status()
+    return [{"source": "FMP", "title": x.get("title", ""), "url": x.get("url"), "summary": x.get("text", ""), "published": x.get("publishedDate"), "symbols": str(x.get("symbol") or "").split(",")} for x in r.json() if x.get("title")]
+
+
+def _eodhd() -> list[dict]:
+    key = os.environ.get("EODHD_API_TOKEN", "")
+    if not key:
+        return []
+    def fetch(ticker: str) -> list[dict] | None:
+        try:
+            r = SESSION.get("https://eodhd.com/api/news", params={"api_token": key, "s": ticker, "fmt": "json", "limit": 50}, timeout=(5, 20))
+            r.raise_for_status()
+        except requests.RequestException:
+            return None
+        return [{"source": "EODHD", "title": x.get("title", ""), "url": x.get("link"), "summary": x.get("content", ""), "published": x.get("date"), "symbols": [ticker]} for x in r.json() if x.get("title")]
+
+    out = []
+    succeeded = 0
+    tickers = ("BTC-USD.CC", "ETH-USD.CC", "SPY.US", "NDX.INDX", "CL.COMM", "XAUUSD.FOREX")
+    with ThreadPoolExecutor(max_workers=len(tickers)) as pool:
+        futures = [pool.submit(fetch, ticker) for ticker in tickers]
+        for future in as_completed(futures):
+            rows = future.result()
+            if rows is not None:
+                succeeded += 1
+                out.extend(rows)
+    if not succeeded:
+        raise RuntimeError("all EODHD news targets failed")
+    return out
+
+
+def _number(value: str, kind=float):
+    try:
+        return kind(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gdelt_events() -> list[tuple]:
+    update = requests.get("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", timeout=(10, 45))
+    update.raise_for_status()
+    url = next(line.split()[-1] for line in update.text.splitlines() if ".export.CSV.zip" in line)
+    response = requests.get(url, timeout=(10, 120))
+    response.raise_for_status()
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    out = []
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        name = archive.namelist()[0]
+        with archive.open(name) as raw:
+            rows = csv.reader(io.TextIOWrapper(raw, encoding="utf-8", errors="replace"), delimiter="\t")
+            for row in rows:
+                if len(row) < 61:
+                    continue
+                added = datetime.strptime(row[59], "%Y%m%d%H%M%S").replace(tzinfo=UTC).isoformat(timespec="seconds")
+                out.append((row[0], row[1], added, row[6] or None, row[16] or None, row[26] or None, _number(row[29], int), _number(row[30]), _number(row[31], int), _number(row[32], int), _number(row[33], int), _number(row[34]), row[51] or None, _number(row[53]), _number(row[54]), row[60] or None, now))
+    return out
+
+
+def run(db_path: str) -> dict[str, int]:
+    conn = _db.get_conn(db_path, allow_init=True)
+    out = {}
+    for name, fetch in (("FMP", _fmp), ("EODHD", _eodhd)):
+        try:
+            rows = fetch()
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            values = []
+            for row in rows:
+                title = str(row["title"]).strip()
+                url = _canonical_url(row.get("url"))
+                cluster, novelty = _cluster(conn, title)
+                uid = hashlib.sha256(f"{row['source']}|{url}|{title}".encode()).hexdigest()
+                relevance = min(1.0, 0.2 + 0.1 * sum(w in title.lower() for w in ("fed", "inflation", "oil", "bitcoin", "war", "tariff", "yield")))
+                values.append((uid, _time(row.get("published")), row["source"], title, url, str(row.get("summary") or "")[:4000], json.dumps(row.get("symbols") or []), cluster, relevance, novelty, now))
+            conn.executemany("INSERT OR IGNORE INTO market_news VALUES (?,?,?,?,?,?,?,?,?,?,?)", values)
+            out[name] = len(values)
+            log_collection(conn, "market_news", name, rows[0] if rows else None, len(values), status="OK")
+        except Exception as ex:
+            out[name] = -1
+            print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
+            log_collection(conn, "market_news", name, None, 0, err=str(ex))
+    try:
+        events = _gdelt_events()
+        conn.executemany("INSERT OR IGNORE INTO gdelt_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", events)
+        out["GDELT"] = len(events)
+        log_collection(conn, "market_news", "GDELT:EVENTS", None, len(events))
+    except Exception as ex:
+        out["GDELT"] = -1
+        print(f"GDELT: {type(ex).__name__}: {str(ex)[:160]}")
+        log_collection(conn, "market_news", "GDELT:EVENTS", None, 0, err=str(ex))
+    conn.close()
+    return out
+
+
+def main(argv=None):
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    p = argparse.ArgumentParser(prog="arkwatch market-news")
+    p.add_argument("--db", default="data/arkwatch.db")
+    result = run(p.parse_args(argv).db)
+    print(result)
+    return 1 if all(v <= 0 for v in result.values()) else 0

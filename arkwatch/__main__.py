@@ -30,6 +30,22 @@ def main() -> int:
         from .qa.instruments import main as instr_main
 
         return instr_main(sys.argv[2:])
+    if cmd == "market":
+        from .qa.market_timeline import main as market_main
+
+        return market_main(sys.argv[2:])
+    if cmd == "market-news":
+        from .qa.market_news import main as market_news_main
+
+        return market_news_main(sys.argv[2:])
+    if cmd == "breadth":
+        from .qa.equity_breadth import main as breadth_main
+
+        return breadth_main(sys.argv[2:])
+    if cmd == "liquidations":
+        from .qa.okx_liquidations import main as liquidations_main
+
+        return liquidations_main(sys.argv[2:])
     if cmd == "harvest":
         from .qa.harvest import main as harvest_main
 

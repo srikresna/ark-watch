@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 22
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -367,6 +367,53 @@ CREATE TABLE price_quarantine (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (symbol, ts, source)
 );
+""",
+    18: """CREATE TABLE IF NOT EXISTS intraday_bars (
+  symbol TEXT NOT NULL, bar_ts_utc TEXT NOT NULL, interval TEXT NOT NULL,
+  source TEXT NOT NULL, open REAL, high REAL, low REAL, close REAL, volume REAL,
+  fetched_at TEXT NOT NULL, PRIMARY KEY (symbol, bar_ts_utc, interval, source)
+);
+CREATE INDEX IF NOT EXISTS idx_intraday_symbol_ts ON intraday_bars(symbol, bar_ts_utc DESC);
+CREATE TABLE IF NOT EXISTS market_breadth (
+  ts_utc TEXT NOT NULL, universe TEXT NOT NULL, source TEXT NOT NULL,
+  advances INTEGER NOT NULL, declines INTEGER NOT NULL, unchanged INTEGER NOT NULL,
+  pct_advancing REAL NOT NULL, equal_weight_return REAL, cap_weight_return REAL,
+  details_json TEXT NOT NULL, PRIMARY KEY (ts_utc, universe, source)
+);
+""",
+    19: """CREATE TABLE IF NOT EXISTS crypto_derivatives (
+  ts_utc TEXT NOT NULL, source TEXT NOT NULL, instrument TEXT NOT NULL,
+  metric TEXT NOT NULL, value REAL NOT NULL, raw_json TEXT NOT NULL,
+  PRIMARY KEY (ts_utc, source, instrument, metric)
+);
+""",
+    20: """CREATE TABLE IF NOT EXISTS market_news (
+  news_id TEXT PRIMARY KEY, published_at_utc TEXT NOT NULL, source TEXT NOT NULL,
+  title TEXT NOT NULL, url TEXT, summary TEXT, symbols_json TEXT NOT NULL,
+  cluster_id TEXT NOT NULL, relevance REAL NOT NULL, novelty REAL NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_news_time ON market_news(published_at_utc DESC);
+CREATE TABLE IF NOT EXISTS equity_breadth_components (
+  ts_utc TEXT NOT NULL, symbol TEXT NOT NULL, source TEXT NOT NULL,
+  change_pct REAL, price REAL, market_cap REAL, PRIMARY KEY (ts_utc, symbol, source)
+);
+""",
+    21: """CREATE TABLE IF NOT EXISTS crypto_liquidations (
+  event_uid TEXT PRIMARY KEY, ts_utc TEXT NOT NULL, source TEXT NOT NULL,
+  instrument TEXT NOT NULL, position_side TEXT, price REAL, size REAL,
+  notional_usd REAL, raw_json TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_liquidations_ts ON crypto_liquidations(ts_utc DESC);
+""",
+    22: """CREATE TABLE IF NOT EXISTS gdelt_events (
+  event_id TEXT PRIMARY KEY, event_date TEXT NOT NULL, added_at_utc TEXT NOT NULL,
+  actor1 TEXT, actor2 TEXT, event_code TEXT, quad_class INTEGER,
+  goldstein_scale REAL, mentions INTEGER, sources INTEGER, articles INTEGER,
+  avg_tone REAL, action_country TEXT, action_lat REAL, action_lon REAL,
+  source_url TEXT, fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gdelt_added ON gdelt_events(added_at_utc DESC);
 """,
 }
 

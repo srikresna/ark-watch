@@ -7,6 +7,7 @@ required; period1=0&period2=9999999999 fetches full history in one request.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import requests
 
@@ -82,4 +83,36 @@ def fetch_daily(symbol: str, *, start_ts: int = 0, end_ts: int = 9999999999) -> 
                 "volume": q.get("volume", [None] * len(ts))[i],
             }
         )
+    return out
+
+
+def fetch_intraday(symbol: str, *, interval: str = "5m", range_: str = "1d") -> list[dict]:
+    """Return completed intraday bars timestamped in UTC."""
+    r = requests.get(
+        f"{BASE}/{symbol}",
+        params={"interval": interval, "range": range_, "includePrePost": "true"},
+        headers=UA, timeout=(10, 60),
+    )
+    if r.status_code != 200:
+        raise YahooError(f"yahoo {symbol}: HTTP {r.status_code} â€” {r.text[:120]}")
+    result = r.json().get("chart", {}).get("result")
+    if not result:
+        raise YahooError(f"yahoo {symbol}: empty response")
+    payload = result[0]
+    stamps = payload.get("timestamp") or []
+    quote = (payload.get("indicators", {}).get("quote") or [{}])[0]
+    current_bucket = int(datetime.now(UTC).timestamp()) // 300 * 300
+    out = []
+    for i, stamp in enumerate(stamps):
+        close = quote.get("close", [None] * len(stamps))[i]
+        if close is None or stamp >= current_bucket:
+            continue
+        out.append({
+            "bar_ts_utc": datetime.fromtimestamp(stamp, UTC).isoformat(timespec="seconds"),
+            "open": quote.get("open", [None] * len(stamps))[i],
+            "high": quote.get("high", [None] * len(stamps))[i],
+            "low": quote.get("low", [None] * len(stamps))[i],
+            "close": close,
+            "volume": quote.get("volume", [None] * len(stamps))[i],
+        })
     return out

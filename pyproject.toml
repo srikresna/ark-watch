@@ -11,6 +11,7 @@ dependencies = [
     "openpyxl>=3.1",      # XLSX sources (WGC, ADS, WGT, LME)
     "xlrd>=2.0",          # legacy .xls (ACM term premia — OLE2, openpyxl can't)
     "python-dotenv>=1.0", # credentials via .env only
+    "websocket-client>=1.8",
     "pyyaml>=6",
 ]
 

@@ -86,6 +86,8 @@ SCHEDULE = [
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle
 WATCH_INTERVAL_S = 60
+MARKET_INTERVAL_MINUTES = 5
+MARKET_NEWS_INTERVAL_MINUTES = 60
 RETRY_DELAY_S = 600
 
 # D-023 data-first phase (owner 2026-09-13): GENERATION must keep running
@@ -325,6 +327,8 @@ def run_loop():
     next_retry: dict[str, float] = {}  # cmd → monotonic retry time (non-blocking)
     log_day = datetime.now(UTC).date()
     last_watch = 0.0
+    last_market_bucket = ""
+    last_news_bucket = ""
     try:
         while True:
             _heartbeat()
@@ -367,6 +371,17 @@ def run_loop():
             if time.monotonic() - last_watch >= WATCH_INTERVAL_S:
                 last_watch = time.monotonic()
                 _run_job("watch", "Alert watcher")
+
+            market_bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // MARKET_INTERVAL_MINUTES:02d}"
+            if now_wib.minute % MARKET_INTERVAL_MINUTES == 0 and market_bucket != last_market_bucket:
+                last_market_bucket = market_bucket
+                _run_job("market", "Five-minute cross-asset timeline")
+
+            news_bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // MARKET_NEWS_INTERVAL_MINUTES:02d}"
+            if now_wib.minute % MARKET_NEWS_INTERVAL_MINUTES == 0 and news_bucket != last_news_bucket:
+                last_news_bucket = news_bucket
+                _run_job("market-news", "Cross-source catalyst news")
+                _run_job("breadth", "S&P 500 constituent breadth")
 
             # Rotate logs at the UTC date change (the filename convention is
             # UTC). CYCLE-counting drifted: a daemon started at 20:18 rotated
