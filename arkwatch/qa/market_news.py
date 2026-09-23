@@ -10,7 +10,7 @@ import os
 import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -110,8 +110,22 @@ def _gdelt_events() -> list[tuple]:
     update = requests.get("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", timeout=(10, 45))
     update.raise_for_status()
     url = next(line.split()[-1] for line in update.text.splitlines() if ".export.CSV.zip" in line)
-    response = requests.get(url, timeout=(10, 120))
-    response.raise_for_status()
+    match = re.search(r"(\d{14})(?=\.export\.CSV\.zip$)", url)
+    if not match:
+        raise RuntimeError("GDELT lastupdate returned an unrecognized export URL")
+    stamp = datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+    response = None
+    for offset in range(9):
+        candidate_stamp = (stamp - timedelta(minutes=15 * offset)).strftime("%Y%m%d%H%M%S")
+        candidate_url = url[:match.start(1)] + candidate_stamp + url[match.end(1):]
+        candidate = requests.get(candidate_url, timeout=(10, 120))
+        if candidate.status_code == 404:
+            continue
+        candidate.raise_for_status()
+        response = candidate
+        break
+    if response is None:
+        raise RuntimeError("no available GDELT export in the latest two-hour window")
     now = datetime.now(UTC).isoformat(timespec="seconds")
     out = []
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
