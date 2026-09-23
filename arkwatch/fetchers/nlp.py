@@ -27,6 +27,43 @@ class NlpError(RuntimeError):
     pass
 
 
+def _openai_endpoint(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return base
+
+
+def _openai_content(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except requests.exceptions.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        text = response.text.lstrip()
+        try:
+            payload, _ = decoder.raw_decode(text)
+        except json.JSONDecodeError:
+            payload = None
+            for line in response.text.splitlines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                try:
+                    candidate = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    continue
+                if candidate.get("choices"):
+                    payload = candidate
+                    break
+            if payload is None:
+                raise NlpError("NLP: malformed OpenAI-compatible response") from None
+    try:
+        return payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as ex:
+        raise NlpError("NLP: response has no completion content") from ex
+
+
 def _config() -> dict:
     """Resolve NLP provider config from env (see module docstring)."""
     provider = os.environ.get("NLP_PROVIDER", "zai").lower()
@@ -59,7 +96,7 @@ def _config() -> dict:
         if not base_url:
             raise NlpError("NLP_PROVIDER=custom requires NLP_BASE_URL")
         return {
-            "endpoint": base_url,
+            "endpoint": _openai_endpoint(base_url),
             "api_key": api_key,
             "model": model or "default",
             "format": os.environ.get("NLP_FORMAT", "openai"),
@@ -109,7 +146,7 @@ def _call(cfg: dict, system: str, user: str) -> str:
     )
     if r.status_code != 200:
         raise NlpError(f"NLP: HTTP {r.status_code} — {r.text[:100]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _openai_content(r)
 
 
 def _extract_json(content: str) -> dict:
