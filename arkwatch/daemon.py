@@ -24,6 +24,8 @@ HEARTBEAT = ROOT / "data" / "daemon_heartbeat"
 LOCKFILE = ROOT / "data" / "daemon.lock"
 LOG_DIR = ROOT / "logs"
 WIB = ZoneInfo("Asia/Jakarta")
+LONDON = ZoneInfo("Europe/London")
+NEW_YORK = ZoneInfo("America/New_York")
 
 # Schedule entries: (hour, minute, day, job_cmd, description)
 # day: daily | monday..saturday | sunday — literal day tokens as used below;
@@ -88,7 +90,21 @@ SCHEDULE = [
 WATCH_INTERVAL_S = 60
 MARKET_INTERVAL_MINUTES = 5
 MARKET_NEWS_INTERVAL_MINUTES = 60
+MARKET_ACTIVE_INTERVAL_MINUTES = 15
 RETRY_DELAY_S = 600
+
+
+def _market_news_interval(now: datetime) -> int:
+    london = now.astimezone(LONDON)
+    new_york = now.astimezone(NEW_YORK)
+    active = (
+        london.weekday() < 5
+        and new_york.weekday() < 5
+        and london.weekday() == new_york.weekday()
+        and (london.hour, london.minute) >= (8, 0)
+        and (new_york.hour, new_york.minute) < (16, 0)
+    )
+    return MARKET_ACTIVE_INTERVAL_MINUTES if active else MARKET_NEWS_INTERVAL_MINUTES
 
 # D-023 data-first phase (owner 2026-09-13): GENERATION must keep running
 # (the brief pipeline persists five audit-trail store_* families), only the
@@ -377,8 +393,9 @@ def run_loop():
                 last_market_bucket = market_bucket
                 _run_job("market", "Five-minute cross-asset timeline")
 
-            news_bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // MARKET_NEWS_INTERVAL_MINUTES:02d}"
-            if now_wib.minute % MARKET_NEWS_INTERVAL_MINUTES == 0 and news_bucket != last_news_bucket:
+            news_interval = _market_news_interval(now_wib)
+            news_bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // news_interval:02d}"
+            if now_wib.minute % news_interval == 0 and news_bucket != last_news_bucket:
                 last_news_bucket = news_bucket
                 _run_job("market-news", "Cross-source catalyst news")
                 _run_job("breadth", "S&P 500 constituent breadth")
