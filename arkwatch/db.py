@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 26
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -422,6 +422,49 @@ CREATE TABLE IF NOT EXISTS market_news_payloads (
 );
 CREATE INDEX IF NOT EXISTS idx_news_payload_news ON market_news_payloads(news_id, fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_news_payload_source ON market_news_payloads(source, fetched_at DESC);
+""",
+    24: """CREATE TABLE IF NOT EXISTS gdelt_mentions (
+  observation_id TEXT PRIMARY KEY, event_id TEXT, event_time TEXT, mention_time TEXT,
+  mention_type TEXT, source_name TEXT, document_url TEXT, raw_record_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gdelt_mentions_event ON gdelt_mentions(event_id, mention_time);
+CREATE INDEX IF NOT EXISTS idx_gdelt_mentions_source_time ON gdelt_mentions(source_name, mention_time DESC);
+CREATE TABLE IF NOT EXISTS gdelt_gkg (
+  record_id TEXT PRIMARY KEY, record_time TEXT NOT NULL, source_name TEXT,
+  document_url TEXT, themes_json TEXT NOT NULL, entities_json TEXT NOT NULL,
+  locations_json TEXT NOT NULL, tone_json TEXT NOT NULL, raw_record_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gdelt_gkg_time ON gdelt_gkg(record_time DESC);
+""",
+    25: """CREATE TABLE IF NOT EXISTS crypto_instruments (
+  instrument TEXT NOT NULL, source TEXT NOT NULL, observed_at_utc TEXT NOT NULL,
+  raw_json TEXT NOT NULL, PRIMARY KEY (instrument, source, observed_at_utc)
+);
+CREATE INDEX IF NOT EXISTS idx_crypto_instruments_latest ON crypto_instruments(instrument, observed_at_utc DESC);
+CREATE TABLE IF NOT EXISTS crypto_trade_events (
+  event_uid TEXT PRIMARY KEY, ts_utc TEXT NOT NULL, source TEXT NOT NULL,
+  instrument TEXT NOT NULL, trade_id TEXT NOT NULL, aggressor_side TEXT,
+  price REAL, size_contracts REAL, raw_json TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crypto_trades_ts ON crypto_trade_events(instrument, ts_utc DESC);
+CREATE TABLE IF NOT EXISTS crypto_orderbook_snapshots (
+  ts_utc TEXT NOT NULL, source TEXT NOT NULL, instrument TEXT NOT NULL,
+  bid_size_top5 REAL, ask_size_top5 REAL, imbalance_top5 REAL,
+  raw_json TEXT NOT NULL, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (ts_utc, source, instrument)
+);
+CREATE INDEX IF NOT EXISTS idx_crypto_books_ts ON crypto_orderbook_snapshots(instrument, ts_utc DESC);
+""",
+    26: """ALTER TABLE crypto_liquidations ADD COLUMN size_asset REAL;
+ALTER TABLE crypto_liquidations ADD COLUMN notional_usd_calculated REAL;
+ALTER TABLE crypto_liquidations ADD COLUMN sizing_basis TEXT;
+ALTER TABLE crypto_trade_events ADD COLUMN size_asset REAL;
+ALTER TABLE crypto_trade_events ADD COLUMN notional_usd REAL;
+ALTER TABLE crypto_orderbook_snapshots ADD COLUMN bid_notional_usd_top5 REAL;
+ALTER TABLE crypto_orderbook_snapshots ADD COLUMN ask_notional_usd_top5 REAL;
+ALTER TABLE crypto_orderbook_snapshots ADD COLUMN imbalance_notional_usd_top5 REAL;
 """,
 }
 

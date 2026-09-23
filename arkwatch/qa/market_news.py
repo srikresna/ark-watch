@@ -42,6 +42,20 @@ GDELT_EVENT_FIELDS = (
     "ActionGeo_ADM2Code", "ActionGeo_Lat", "ActionGeo_Long",
     "ActionGeo_FeatureID", "DATEADDED", "SOURCEURL",
 )
+GDELT_MENTION_FIELDS = (
+    "GlobalEventID", "EventTimeDate", "MentionTimeDate", "MentionType",
+    "MentionSourceName", "MentionIdentifier", "SentenceID", "Actor1CharOffset",
+    "Actor2CharOffset", "ActionCharOffset", "InRawText", "Confidence",
+    "MentionDocLen", "MentionDocTone", "MentionDocTranslationInfo", "Extras",
+)
+GDELT_GKG_FIELDS = (
+    "GKGRECORDID", "DATE", "SourceCollectionIdentifier", "SourceCommonName",
+    "DocumentIdentifier", "Counts", "V2Counts", "Themes", "V2Themes",
+    "Locations", "V2Locations", "Persons", "V2Persons", "Organizations",
+    "V2Organizations", "V2Tone", "Dates", "GCAM", "SharingImage",
+    "RelatedImages", "SocialImageEmbeds", "SocialVideoEmbeds", "Quotations",
+    "AllNames", "Amounts", "TranslationInfo", "Extras",
+)
 
 
 def _time(value: str | None) -> str:
@@ -125,41 +139,101 @@ def _number(value: str, kind=float):
         return None
 
 
-def _gdelt_events() -> list[tuple]:
-    update = requests.get("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", timeout=(10, 45))
+def _gdelt_feed(feed: str) -> list[list[str]]:
+    update = SESSION.get("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", timeout=(10, 45))
     update.raise_for_status()
-    url = next(line.split()[-1] for line in update.text.splitlines() if ".export.CSV.zip" in line)
-    match = re.search(r"(\d{14})(?=\.export\.CSV\.zip$)", url)
+    suffix = f".{feed}.CSV.zip" if feed == "mentions" else f".{feed}.csv.zip"
+    url = next(line.split()[-1] for line in update.text.splitlines() if line.split()[-1].lower().endswith(suffix.lower()))
+    match = re.search(r"(\d{14})(?=" + re.escape(suffix) + r"$)", url, re.IGNORECASE)
     if not match:
-        raise RuntimeError("GDELT lastupdate returned an unrecognized export URL")
+        raise RuntimeError(f"GDELT lastupdate returned an unrecognized {feed} URL")
     stamp = datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(tzinfo=UTC)
     response = None
     for offset in range(9):
         candidate_stamp = (stamp - timedelta(minutes=15 * offset)).strftime("%Y%m%d%H%M%S")
         candidate_url = url[:match.start(1)] + candidate_stamp + url[match.end(1):]
-        candidate = requests.get(candidate_url, timeout=(10, 120))
+        candidate = SESSION.get(candidate_url.replace("http://", "https://", 1), timeout=(10, 120))
         if candidate.status_code == 404:
             continue
         candidate.raise_for_status()
+        if not candidate.content.startswith(b"PK"):
+            raise RuntimeError(f"GDELT {feed} response is not a ZIP archive")
+        if offset > 2:
+            raise RuntimeError(f"GDELT {feed} latest available file is more than 30 minutes behind")
         response = candidate
         break
     if response is None:
-        raise RuntimeError("no available GDELT export in the latest two-hour window")
-    now = datetime.now(UTC).isoformat(timespec="seconds")
-    out = []
+        raise RuntimeError(f"no available GDELT {feed} file in the latest two-hour window")
+    out: list[list[str]] = []
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         name = archive.namelist()[0]
         with archive.open(name) as raw:
             rows = csv.reader(io.TextIOWrapper(raw, encoding="utf-8", errors="replace"), delimiter="\t")
             for row in rows:
-                if len(row) < 61:
-                    continue
-                added = datetime.strptime(row[59], "%Y%m%d%H%M%S").replace(tzinfo=UTC).isoformat(timespec="seconds")
-                raw_fields = dict(zip(GDELT_EVENT_FIELDS, row[:len(GDELT_EVENT_FIELDS)]))
-                if len(row) > len(GDELT_EVENT_FIELDS):
-                    raw_fields["_extra_columns"] = row[len(GDELT_EVENT_FIELDS):]
-                out.append((row[0], row[1], added, row[6] or None, row[16] or None, row[26] or None, _number(row[29], int), _number(row[30]), _number(row[31], int), _number(row[32], int), _number(row[33], int), _number(row[34]), row[53] or None, _number(row[56]), _number(row[57]), row[60] or None, now, json.dumps(raw_fields, ensure_ascii=False, separators=(",", ":"))))
+                if row:
+                    out.append(row)
     return out
+
+
+def _gdelt_fields(row: list[str], names: tuple[str, ...]) -> dict:
+    result = dict(zip(names, row[:len(names)], strict=False))
+    if len(row) > len(names):
+        result["_extra_columns"] = row[len(names):]
+    return result
+
+
+def _gdelt_events(rows: list[list[str]]) -> list[tuple]:
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    out = []
+    for row in rows:
+        if len(row) < 61:
+            continue
+        added = datetime.strptime(row[59], "%Y%m%d%H%M%S").replace(tzinfo=UTC).isoformat(timespec="seconds")
+        raw = _gdelt_fields(row, GDELT_EVENT_FIELDS)
+        out.append((row[0], row[1], added, row[6] or None, row[16] or None, row[26] or None, _number(row[29], int), _number(row[30]), _number(row[31], int), _number(row[32], int), _number(row[33], int), _number(row[34]), row[53] or None, _number(row[56]), _number(row[57]), row[60] or None, now, json.dumps(raw, ensure_ascii=False, separators=(",", ":"))))
+    return out
+
+
+def _gdelt_mentions(rows: list[list[str]]) -> list[tuple]:
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    out = []
+    for row in rows:
+        if len(row) < len(GDELT_MENTION_FIELDS):
+            continue
+        raw = _gdelt_fields(row, GDELT_MENTION_FIELDS)
+        raw_json = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+        uid = hashlib.sha256(raw_json.encode()).hexdigest()
+        out.append((uid, row[0] or None, row[1] or None, row[2] or None, row[3] or None, row[4] or None, row[5] or None, raw_json, now))
+    return out
+
+
+def _gdelt_gkg(rows: list[list[str]]) -> list[tuple]:
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    out = []
+    for row in rows:
+        if len(row) < len(GDELT_GKG_FIELDS):
+            continue
+        raw = _gdelt_fields(row, GDELT_GKG_FIELDS)
+        raw_json = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+        uid = row[0] or hashlib.sha256(raw_json.encode()).hexdigest()
+        themes = [part for part in row[8].split(";") if part]
+        entities = {"persons": [part for part in row[12].split(";") if part], "organizations": [part for part in row[14].split(";") if part]}
+        locations = [part for part in row[10].split(";") if part]
+        out.append((uid, row[1], row[3] or None, row[4] or None, json.dumps(themes, ensure_ascii=False), json.dumps(entities, ensure_ascii=False), json.dumps(locations, ensure_ascii=False), json.dumps(row[15].split(",")), raw_json, now))
+    return out
+
+
+def _insert_batch(conn, sql: str, values: list[tuple]) -> int:
+    if not values:
+        return 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cursor = conn.executemany(sql, values)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return cursor.rowcount
 
 
 def run(db_path: str) -> dict[str, int]:
@@ -189,15 +263,21 @@ def run(db_path: str) -> dict[str, int]:
             out[name] = -1
             print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
             log_collection(conn, "market_news", name, None, 0, err=str(ex))
-    try:
-        events = _gdelt_events()
-        conn.executemany("INSERT OR IGNORE INTO gdelt_events (event_id,event_date,added_at_utc,actor1,actor2,event_code,quad_class,goldstein_scale,mentions,sources,articles,avg_tone,action_country,action_lat,action_lon,source_url,fetched_at,raw_record_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", events)
-        out["GDELT"] = len(events)
-        log_collection(conn, "market_news", "GDELT:EVENTS", None, len(events))
-    except Exception as ex:
-        out["GDELT"] = -1
-        print(f"GDELT: {type(ex).__name__}: {str(ex)[:160]}")
-        log_collection(conn, "market_news", "GDELT:EVENTS", None, 0, err=str(ex))
+    gdelt_feeds = (
+        ("GDELT", "export", _gdelt_events, "INSERT OR IGNORE INTO gdelt_events (event_id,event_date,added_at_utc,actor1,actor2,event_code,quad_class,goldstein_scale,mentions,sources,articles,avg_tone,action_country,action_lat,action_lon,source_url,fetched_at,raw_record_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", "GDELT:EVENTS"),
+        ("GDELT_MENTIONS", "mentions", _gdelt_mentions, "INSERT OR IGNORE INTO gdelt_mentions VALUES (?,?,?,?,?,?,?,?,?)", "GDELT:MENTIONS"),
+        ("GDELT_GKG", "gkg", _gdelt_gkg, "INSERT OR IGNORE INTO gdelt_gkg VALUES (?,?,?,?,?,?,?,?,?,?)", "GDELT:GKG"),
+    )
+    for name, feed, transform, sql, log_name in gdelt_feeds:
+        try:
+            rows = transform(_gdelt_feed(feed))
+            _insert_batch(conn, sql, rows)
+            out[name] = len(rows)
+            log_collection(conn, "market_news", log_name, None, len(rows))
+        except Exception as ex:
+            out[name] = -1
+            print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
+            log_collection(conn, "market_news", log_name, None, 0, err=str(ex))
     conn.close()
     return out
 

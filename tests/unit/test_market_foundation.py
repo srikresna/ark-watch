@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from arkwatch.qa import market_news, market_timeline, okx_liquidations
+from arkwatch import db
+from arkwatch.qa import market_news, market_timeline, okx_liquidations, okx_market
 
 
 def test_fallback_rows_are_utc_completed_and_bounded():
@@ -42,3 +43,50 @@ def test_news_cluster_reuses_similar_recent_headline(tmp_path):
     cluster, novelty = market_news._cluster(conn, "Oil falls after Middle East ceasefire deal")
     assert cluster == "existing"
     assert novelty == 0.5
+
+
+def test_gdelt_mention_and_gkg_keep_all_provider_fields():
+    mention = [str(index) for index in range(len(market_news.GDELT_MENTION_FIELDS))]
+    parsed_mention = market_news._gdelt_mentions([mention])[0]
+    assert parsed_mention[1] == "0"
+    assert '"Extras":"15"' in parsed_mention[7]
+
+    gkg = [str(index) for index in range(len(market_news.GDELT_GKG_FIELDS))]
+    parsed_gkg = market_news._gdelt_gkg([gkg])[0]
+    assert parsed_gkg[0] == "0"
+    assert '"GCAM":"17"' in parsed_gkg[8]
+
+
+def test_okx_contract_size_is_normalized_only_with_known_metadata():
+    size_asset, notional = okx_market.normalize_contract_size(
+        2, 100_000, {"ctVal": "0.01", "ctValCcy": "BTC", "ctMult": "1", "baseCcy": "BTC"}
+    )
+    assert size_asset == 0.02
+    assert notional == 2_000
+    assert okx_market.normalize_contract_size(2, 100, {}) == (None, None)
+
+
+def test_okx_trade_and_book_streams_store_raw_and_normalized_values(tmp_path):
+    conn = db.get_conn(tmp_path / "okx.db", allow_init=True)
+    specs = {
+        "BTC-USDT-SWAP": {
+            "instId": "BTC-USDT-SWAP", "baseCcy": "BTC", "ctVal": "0.01",
+            "ctValCcy": "BTC", "ctMult": "1",
+        }
+    }
+    trades = {
+        "arg": {"channel": "trades", "instId": "BTC-USDT-SWAP"},
+        "data": [{"instId": "BTC-USDT-SWAP", "tradeId": "123", "px": "100000", "sz": "2", "side": "buy", "ts": "1790000000000"}],
+    }
+    books = {
+        "arg": {"channel": "books5", "instId": "BTC-USDT-SWAP"},
+        "data": [{"ts": "1790000000000", "bids": [["100000", "2", "0", "1"]], "asks": [["100100", "1", "0", "1"]], "seqId": 7}],
+    }
+    assert okx_liquidations._trades(conn, trades, specs) == 1
+    assert okx_liquidations._book(conn, books, specs, {}) == 1
+    trade = conn.execute("SELECT size_contracts,size_asset,notional_usd,raw_json FROM crypto_trade_events").fetchone()
+    assert trade[:3] == (2.0, 0.02, 2000.0)
+    assert '"tradeId":"123"' in trade[3]
+    book = conn.execute("SELECT bid_notional_usd_top5,ask_notional_usd_top5,imbalance_notional_usd_top5 FROM crypto_orderbook_snapshots").fetchone()
+    assert book == (2000.0, 1001.0, (2000.0 - 1001.0) / (2000.0 + 1001.0))
+    conn.close()

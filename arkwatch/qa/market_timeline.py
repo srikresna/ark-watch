@@ -13,6 +13,7 @@ import requests
 from .. import db as _db
 from ..fetchers import yahoo
 from .fetch_log import log_collection
+from .okx_market import collect as collect_okx_market
 
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
 INTERVAL = "5m"
@@ -21,21 +22,6 @@ EODHD = {"NQ1": "NQ.COMM", "ES1": "ES.COMM", "BTCUSD": "BTC-USD.CC", "ETHUSD": "
 FMP = {symbol: ticker for symbol, ticker in TRACKED.items() if ticker.isalpha()}
 FMP.update({"BTCUSD": "BTCUSD", "ETHUSD": "ETHUSD"})
 SECTORS = ("XLK", "XLY", "XLC", "XLF", "XLV", "XLI", "XLB", "XLE", "XLP", "XLRE", "XLU")
-
-
-def _okx_open_interest(conn) -> int:
-    count = 0
-    for instrument in ("BTC-USDT-SWAP", "ETH-USDT-SWAP"):
-        response = requests.get("https://www.okx.com/api/v5/public/open-interest", params={"instType": "SWAP", "instId": instrument}, timeout=(10, 30))
-        payload = response.json()
-        rows = payload.get("data", []) if response.status_code == 200 and payload.get("code") == "0" else []
-        if not rows:
-            raise RuntimeError(f"OKX {instrument}: no open-interest data")
-        row = rows[0]
-        stamp = datetime.fromtimestamp(int(row["ts"]) / 1000, UTC).isoformat(timespec="seconds")
-        conn.execute("INSERT OR IGNORE INTO crypto_derivatives VALUES (?,?,?,?,?,?)", (stamp, "OKX", instrument, "open_interest_contracts", float(row["oi"]), json.dumps(row, sort_keys=True)))
-        count += 1
-    return count
 
 
 def _store(conn, symbol: str, source: str, rows: list[dict]) -> int:
@@ -156,13 +142,12 @@ def run(db_path: str = str(DEFAULT_DB), *, only: str | None = None, force_fallba
                 print(f"{symbol} fallback: {type(fallback_ex).__name__}: {str(fallback_ex)[:160]}")
                 log_collection(conn, "market", f"{symbol}:YAHOO:5m", None, 0, err=f"{ex}; fallback: {fallback_ex}")
     result["breadth"] = _breadth(conn)
-    try:
-        result["okx_open_interest"] = _okx_open_interest(conn)
-        log_collection(conn, "market", "OKX:SWAP:open_interest", None, result["okx_open_interest"])
-    except Exception as ex:
-        result["okx_open_interest"] = -1
-        log_collection(conn, "market", "OKX:SWAP:open_interest", None, 0, err=str(ex))
     conn.close()
+    try:
+        result.update({f"okx:{name}": count for name, count in collect_okx_market(db_path).items()})
+    except Exception as ex:
+        result["okx:collector"] = -1
+        print(f"OKX market: {type(ex).__name__}: {str(ex)[:160]}")
     return result
 
 

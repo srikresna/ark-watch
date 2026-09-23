@@ -11,9 +11,11 @@ import websocket
 
 from .. import db as _db
 from .fetch_log import log_collection
+from .okx_market import _instrument_snapshot, instrument_specs, normalize_contract_size
 
 URL = "wss://ws.okx.com:8443/ws/v5/public"
-FAMILIES = ("BTC-USDT", "ETH-USDT")
+INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP")
+BOOK_SAMPLE_SECONDS = 5
 
 
 def _events(message: dict) -> list[dict]:
@@ -36,12 +38,73 @@ def _events(message: dict) -> list[dict]:
     return out
 
 
-def _store(conn, events: list[dict]) -> int:
+def _store(conn, events: list[dict], specs: dict[str, dict] | None = None) -> int:
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    values = [(e["uid"], e["ts"], "OKX", e["instrument"], e["side"], e["price"], e["size"], e["notional"], e["raw"], now) for e in events]
+    specs = specs or {}
+    values = []
+    for event in events:
+        asset_size, calculated_notional = normalize_contract_size(event["size"], event["price"], specs.get(event["instrument"], {})) if event["size"] else (None, None)
+        values.append((event["uid"], event["ts"], "OKX", event["instrument"], event["side"], event["price"], event["size"], event["notional"], event["raw"], now, asset_size, calculated_notional, "instrument_contract_value" if asset_size is not None or calculated_notional is not None else None))
     if not values:
         return 0
-    return conn.executemany("INSERT OR IGNORE INTO crypto_liquidations VALUES (?,?,?,?,?,?,?,?,?,?)", values).rowcount
+    return conn.executemany("INSERT OR IGNORE INTO crypto_liquidations (event_uid,ts_utc,source,instrument,position_side,price,size,notional_usd,raw_json,fetched_at,size_asset,notional_usd_calculated,sizing_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", values).rowcount
+
+
+def _book(conn, message: dict, specs: dict[str, dict], last_saved: dict[str, float]) -> int:
+    arg = message.get("arg") or {}
+    instrument = str(arg.get("instId") or "")
+    if not instrument or time.monotonic() - last_saved.get(instrument, 0) < BOOK_SAMPLE_SECONDS:
+        return 0
+    rows = message.get("data") or []
+    if not rows:
+        return 0
+    row = rows[-1]
+    bids = row.get("bids") or []
+    asks = row.get("asks") or []
+    if not bids or not asks:
+        return 0
+    bid_size = sum(float(level[1]) for level in bids[:5])
+    ask_size = sum(float(level[1]) for level in asks[:5])
+    bid_notional = sum((normalize_contract_size(float(level[1]), float(level[0]), specs.get(instrument, {}))[1] or 0.0) for level in bids[:5])
+    ask_notional = sum((normalize_contract_size(float(level[1]), float(level[0]), specs.get(instrument, {}))[1] or 0.0) for level in asks[:5])
+    total = bid_size + ask_size
+    stamp = datetime.fromtimestamp(int(row["ts"]) / 1000, UTC).isoformat(timespec="milliseconds")
+    payload = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO crypto_orderbook_snapshots "
+        "(ts_utc,source,instrument,bid_size_top5,ask_size_top5,imbalance_top5,raw_json,fetched_at,bid_notional_usd_top5,ask_notional_usd_top5,imbalance_notional_usd_top5) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (stamp, "OKX_WS", instrument, bid_size, ask_size, (bid_size - ask_size) / total if total else None, payload, datetime.now(UTC).isoformat(timespec="seconds"), bid_notional or None, ask_notional or None, (bid_notional - ask_notional) / (bid_notional + ask_notional) if bid_notional + ask_notional else None),
+    )
+    last_saved[instrument] = time.monotonic()
+    return cursor.rowcount
+
+
+def _trades(conn, message: dict, specs: dict[str, dict]) -> int:
+    values = []
+    fetched = datetime.now(UTC).isoformat(timespec="seconds")
+    arg = message.get("arg") or {}
+    for row in message.get("data") or []:
+        instrument = str(row.get("instId") or arg.get("instId") or "")
+        trade_id = str(row.get("tradeId") or "")
+        if not instrument or not trade_id:
+            continue
+        price = float(row["px"])
+        size = float(row["sz"])
+        asset_size, notional = normalize_contract_size(size, price, specs.get(instrument, {}))
+        values.append((f"OKX:{instrument}:{trade_id}", datetime.fromtimestamp(int(row["ts"]) / 1000, UTC).isoformat(timespec="milliseconds"), "OKX", instrument, trade_id, row.get("side"), price, size, json.dumps(row, sort_keys=True, separators=(",", ":")), fetched, asset_size, notional))
+    if not values:
+        return 0
+    return conn.executemany("INSERT OR IGNORE INTO crypto_trade_events (event_uid,ts_utc,source,instrument,trade_id,aggressor_side,price,size_contracts,raw_json,fetched_at,size_asset,notional_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values).rowcount
+
+
+def _store_market_message(conn, message: dict, specs: dict[str, dict], last_book_saved: dict[str, float]) -> int:
+    channel = (message.get("arg") or {}).get("channel")
+    if channel == "trades":
+        return _trades(conn, message, specs)
+    if channel == "books5":
+        return _book(conn, message, specs, last_book_saved)
+    return 0
 
 
 def collect(db_path: str, seconds: int | None = None) -> int:
@@ -49,8 +112,15 @@ def collect(db_path: str, seconds: int | None = None) -> int:
     stored = 0
     conn = _db.get_conn(db_path, allow_init=True)
     try:
+        try:
+            _instrument_snapshot(conn, datetime.now(UTC))
+        except Exception as ex:
+            log_collection(conn, "okx_liquidations", "OKX:SWAP:instruments", None, 0, err=str(ex))
+        specs = instrument_specs(conn)
+        last_book_saved: dict[str, float] = {}
         ws = websocket.create_connection(URL, timeout=25)
-        args = [{"channel": "liquidation-orders", "instType": "SWAP", "instFamily": family} for family in FAMILIES]
+        args = [{"channel": "liquidation-orders", "instType": "SWAP"}]
+        args.extend({"channel": channel, "instId": instrument} for channel in ("trades", "books5") for instrument in INSTRUMENTS)
         ws.send(json.dumps({"op": "subscribe", "args": args}))
         while deadline is None or time.monotonic() < deadline:
             try:
@@ -64,8 +134,13 @@ def collect(db_path: str, seconds: int | None = None) -> int:
             if message.get("event") == "error":
                 raise RuntimeError(f"OKX subscription error {message.get('code')}: {message.get('msg')}")
             if message.get("event") == "subscribe":
-                log_collection(conn, "okx_liquidations", "OKX:liquidation-orders", message, 0, status="OK")
-            stored += _store(conn, _events(message))
+                channel = (message.get("arg") or {}).get("channel", "unknown")
+                log_collection(conn, "okx_liquidations", f"OKX:{channel}", message, 0, status="OK")
+            channel = (message.get("arg") or {}).get("channel")
+            if channel == "liquidation-orders":
+                stored += _store(conn, _events(message), specs)
+            else:
+                stored += _store_market_message(conn, message, specs, last_book_saved)
         ws.close()
     finally:
         conn.close()
