@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -465,6 +465,29 @@ ALTER TABLE crypto_trade_events ADD COLUMN notional_usd REAL;
 ALTER TABLE crypto_orderbook_snapshots ADD COLUMN bid_notional_usd_top5 REAL;
 ALTER TABLE crypto_orderbook_snapshots ADD COLUMN ask_notional_usd_top5 REAL;
 ALTER TABLE crypto_orderbook_snapshots ADD COLUMN imbalance_notional_usd_top5 REAL;
+""",
+    27: """CREATE TABLE IF NOT EXISTS crypto_trade_raw_batches (
+  batch_id TEXT PRIMARY KEY, batch_ts_utc TEXT NOT NULL, source TEXT NOT NULL,
+  instrument TEXT NOT NULL, trade_count INTEGER NOT NULL,
+  first_trade_ts TEXT NOT NULL, last_trade_ts TEXT NOT NULL,
+  first_trade_id TEXT NOT NULL, last_trade_id TEXT NOT NULL,
+  payload_gzip BLOB NOT NULL, payload_sha256 TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crypto_trade_batches_ts ON crypto_trade_raw_batches(batch_ts_utc DESC);
+CREATE TABLE IF NOT EXISTS crypto_trade_flow_1m (
+  minute_utc TEXT NOT NULL, instrument TEXT NOT NULL, source TEXT NOT NULL,
+  trade_count INTEGER NOT NULL, buy_count INTEGER NOT NULL, sell_count INTEGER NOT NULL,
+  buy_contracts REAL NOT NULL, sell_contracts REAL NOT NULL,
+  buy_asset REAL, sell_asset REAL, buy_notional_usd REAL, sell_notional_usd REAL,
+  buy_normalized_count INTEGER NOT NULL, sell_normalized_count INTEGER NOT NULL,
+  first_trade_ts TEXT NOT NULL, last_trade_ts TEXT NOT NULL,
+  first_trade_id TEXT NOT NULL, last_trade_id TEXT NOT NULL, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (minute_utc, instrument, source)
+);
+CREATE INDEX IF NOT EXISTS idx_crypto_trade_flow_ts ON crypto_trade_flow_1m(instrument, minute_utc DESC);
+CREATE TABLE IF NOT EXISTS crypto_trade_flow_state (
+  instrument TEXT PRIMARY KEY, last_trade_id TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 """,
 }
 

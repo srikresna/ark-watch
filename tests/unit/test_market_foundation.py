@@ -1,3 +1,6 @@
+import gzip
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 from arkwatch import db
@@ -76,17 +79,55 @@ def test_okx_trade_and_book_streams_store_raw_and_normalized_values(tmp_path):
     }
     trades = {
         "arg": {"channel": "trades", "instId": "BTC-USDT-SWAP"},
-        "data": [{"instId": "BTC-USDT-SWAP", "tradeId": "123", "px": "100000", "sz": "2", "side": "buy", "ts": "1790000000000"}],
+        "data": [
+            {"instId": "BTC-USDT-SWAP", "tradeId": "123", "px": "100000", "sz": "2", "side": "buy", "ts": "1790000000000"},
+            {"instId": "BTC-USDT-SWAP", "tradeId": "124", "px": "100200", "sz": "3", "side": "sell", "ts": "1790000000001"},
+        ],
     }
     books = {
         "arg": {"channel": "books5", "instId": "BTC-USDT-SWAP"},
         "data": [{"ts": "1790000000000", "bids": [["100000", "2", "0", "1"]], "asks": [["100100", "1", "0", "1"]], "seqId": 7}],
     }
-    assert okx_liquidations._trades(conn, trades, specs) == 1
+    buffer = okx_liquidations.TradeFlowBuffer(conn, specs)
+    concurrent_buffer = okx_liquidations.TradeFlowBuffer(conn, specs)
+    assert okx_liquidations._trades(trades, buffer) == 2
+    assert concurrent_buffer.add(trades["data"], source="OKX_REST", instrument="BTC-USDT-SWAP") == 2
+    buffer.flush()
+    assert concurrent_buffer.flush() == 0
     assert okx_liquidations._book(conn, books, specs, {}) == 1
-    trade = conn.execute("SELECT size_contracts,size_asset,notional_usd,raw_json FROM crypto_trade_events").fetchone()
-    assert trade[:3] == (2.0, 0.02, 2000.0)
-    assert '"tradeId":"123"' in trade[3]
+    batch = conn.execute("SELECT payload_gzip FROM crypto_trade_raw_batches").fetchone()[0]
+    payload = gzip.decompress(batch)
+    raw_trades = json.loads(payload)
+    assert [row["tradeId"] for row in raw_trades] == ["123", "124"]
+    assert all("_sizeAsset" not in row for row in raw_trades)
+    assert conn.execute("SELECT payload_sha256 FROM crypto_trade_raw_batches").fetchone()[0] == hashlib.sha256(payload).hexdigest()
+    flow = conn.execute(
+        "SELECT trade_count,buy_count,sell_count,buy_contracts,sell_contracts,buy_asset,sell_asset,buy_notional_usd,sell_notional_usd "
+        "FROM crypto_trade_flow_1m"
+    ).fetchone()
+    assert flow == (2, 1, 1, 2.0, 3.0, 0.02, 0.03, 2000.0, 3006.0)
+    assert conn.execute("SELECT COUNT(*) FROM crypto_trade_raw_batches").fetchone()[0] == 1
     book = conn.execute("SELECT bid_notional_usd_top5,ask_notional_usd_top5,imbalance_notional_usd_top5 FROM crypto_orderbook_snapshots").fetchone()
     assert book == (2000.0, 1001.0, (2000.0 - 1001.0) / (2000.0 + 1001.0))
+    conn.close()
+
+
+def test_okx_trade_flow_backfills_legacy_events_once(tmp_path):
+    conn = db.get_conn(tmp_path / "okx-backfill.db", allow_init=True)
+    conn.executemany(
+        "INSERT INTO crypto_trade_events "
+        "(event_uid,ts_utc,source,instrument,trade_id,aggressor_side,price,size_contracts,raw_json,fetched_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            ("a", "2026-09-23T15:01:01+00:00", "OKX", "BTC-USDT-SWAP", "100", "buy", 100000, 2, "{}", "2026-09-23T15:01:02+00:00"),
+            ("b", "2026-09-23T15:01:30+00:00", "OKX", "BTC-USDT-SWAP", "101", "sell", 100100, 1, "{}", "2026-09-23T15:01:31+00:00"),
+        ],
+    )
+    specs = {"BTC-USDT-SWAP": {"instId": "BTC-USDT-SWAP", "baseCcy": "BTC", "ctVal": "0.01", "ctValCcy": "BTC"}}
+    okx_liquidations.TradeFlowBuffer(conn, specs)
+    flow = conn.execute("SELECT trade_count,buy_count,sell_count,buy_notional_usd,sell_notional_usd FROM crypto_trade_flow_1m").fetchone()
+    assert flow == (2, 1, 1, 2000.0, 1001.0)
+    okx_liquidations.TradeFlowBuffer(conn, specs)
+    assert conn.execute("SELECT trade_count FROM crypto_trade_flow_1m").fetchone()[0] == 2
+    assert conn.execute("SELECT last_trade_id FROM crypto_trade_flow_state").fetchone()[0] == "101"
     conn.close()

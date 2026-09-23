@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import signal
 import time
 from datetime import UTC, datetime
 
@@ -12,6 +13,7 @@ import websocket
 from .. import db as _db
 from .fetch_log import log_collection
 from .okx_market import _instrument_snapshot, instrument_specs, normalize_contract_size
+from .okx_tradeflow import TradeFlowBuffer
 
 URL = "wss://ws.okx.com:8443/ws/v5/public"
 INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP")
@@ -80,28 +82,15 @@ def _book(conn, message: dict, specs: dict[str, dict], last_saved: dict[str, flo
     return cursor.rowcount
 
 
-def _trades(conn, message: dict, specs: dict[str, dict]) -> int:
-    values = []
-    fetched = datetime.now(UTC).isoformat(timespec="seconds")
+def _trades(message: dict, buffer: TradeFlowBuffer) -> int:
     arg = message.get("arg") or {}
-    for row in message.get("data") or []:
-        instrument = str(row.get("instId") or arg.get("instId") or "")
-        trade_id = str(row.get("tradeId") or "")
-        if not instrument or not trade_id:
-            continue
-        price = float(row["px"])
-        size = float(row["sz"])
-        asset_size, notional = normalize_contract_size(size, price, specs.get(instrument, {}))
-        values.append((f"OKX:{instrument}:{trade_id}", datetime.fromtimestamp(int(row["ts"]) / 1000, UTC).isoformat(timespec="milliseconds"), "OKX", instrument, trade_id, row.get("side"), price, size, json.dumps(row, sort_keys=True, separators=(",", ":")), fetched, asset_size, notional))
-    if not values:
-        return 0
-    return conn.executemany("INSERT OR IGNORE INTO crypto_trade_events (event_uid,ts_utc,source,instrument,trade_id,aggressor_side,price,size_contracts,raw_json,fetched_at,size_asset,notional_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values).rowcount
+    return buffer.add(message.get("data") or [], source="OKX_WS", instrument=arg.get("instId"))
 
 
-def _store_market_message(conn, message: dict, specs: dict[str, dict], last_book_saved: dict[str, float]) -> int:
+def _store_market_message(conn, message: dict, specs: dict[str, dict], last_book_saved: dict[str, float], trade_buffer: TradeFlowBuffer) -> int:
     channel = (message.get("arg") or {}).get("channel")
     if channel == "trades":
-        return _trades(conn, message, specs)
+        return _trades(message, trade_buffer)
     if channel == "books5":
         return _book(conn, message, specs, last_book_saved)
     return 0
@@ -111,12 +100,15 @@ def collect(db_path: str, seconds: int | None = None) -> int:
     deadline = time.monotonic() + seconds if seconds else None
     stored = 0
     conn = _db.get_conn(db_path, allow_init=True)
+    ws = None
+    trade_buffer = None
     try:
         try:
             _instrument_snapshot(conn, datetime.now(UTC))
         except Exception as ex:
             log_collection(conn, "okx_liquidations", "OKX:SWAP:instruments", None, 0, err=str(ex))
         specs = instrument_specs(conn)
+        trade_buffer = TradeFlowBuffer(conn, specs)
         last_book_saved: dict[str, float] = {}
         ws = websocket.create_connection(URL, timeout=25)
         args = [{"channel": "liquidation-orders", "instType": "SWAP"}]
@@ -140,14 +132,25 @@ def collect(db_path: str, seconds: int | None = None) -> int:
             if channel == "liquidation-orders":
                 stored += _store(conn, _events(message), specs)
             else:
-                stored += _store_market_message(conn, message, specs, last_book_saved)
-        ws.close()
+                stored += _store_market_message(conn, message, specs, last_book_saved, trade_buffer)
     finally:
-        conn.close()
+        try:
+            if trade_buffer is not None:
+                trade_buffer.flush()
+        finally:
+            try:
+                if ws is not None:
+                    ws.close()
+            finally:
+                conn.close()
     return stored
 
 
 def run_forever(db_path: str) -> None:
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, terminate)
     delay = 2
     while True:
         try:

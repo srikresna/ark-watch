@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -10,6 +11,9 @@ from urllib3.util.retry import Retry
 
 from .. import db as _db
 from .fetch_log import log_collection
+
+if TYPE_CHECKING:
+    from .okx_tradeflow import TradeFlowBuffer
 
 BASE_URL = "https://www.okx.com/api/v5"
 SWAPS = {"BTC-USDT-SWAP": "BTC-USDT", "ETH-USDT-SWAP": "ETH-USDT"}
@@ -130,31 +134,20 @@ def _book_snapshot(conn, instrument: str) -> int:
     return cursor.rowcount
 
 
-def _trade_recovery(conn, instrument: str) -> int:
+def _trade_recovery(conn, instrument: str, buffer: TradeFlowBuffer) -> tuple[int, bool] | None:
+    latest = conn.execute(
+        "SELECT MAX(batch_ts_utc) FROM crypto_trade_raw_batches WHERE instrument=? AND source='OKX_WS'",
+        (instrument,),
+    ).fetchone()[0]
+    if latest and datetime.now(UTC) - datetime.fromisoformat(latest) <= timedelta(seconds=60):
+        return None
     rows = _get("market/trades", {"instId": instrument, "limit": "500"})
-    now = datetime.now(UTC).isoformat(timespec="seconds")
-    specs = instrument_specs(conn)
-    values = []
-    for row in rows:
-        trade_id = str(row.get("tradeId") or "")
-        if not trade_id:
-            continue
-        uid = f"OKX:{instrument}:{trade_id}"
-        size = float(row["sz"])
-        price = float(row["px"])
-        size_asset, notional = normalize_contract_size(size, price, specs.get(instrument, {}))
-        values.append((uid, _stamp(row["ts"]), "OKX", instrument, trade_id, row.get("side"), price, size, json.dumps(row, sort_keys=True, separators=(",", ":")), now, size_asset, notional))
-    if values:
-        conn.executemany(
-            "INSERT OR IGNORE INTO crypto_trade_events "
-            "(event_uid,ts_utc,source,instrument,trade_id,aggressor_side,price,size_contracts,raw_json,fetched_at,size_asset,notional_usd) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            values,
-        )
-    return len(values)
+    return buffer.add(rows, source="OKX_REST", instrument=instrument), len(rows) >= 500
 
 
 def collect(db_path: str) -> dict[str, int]:
+    from .okx_tradeflow import TradeFlowBuffer
+
     conn = _db.get_conn(db_path, allow_init=True)
     out = {}
     try:
@@ -170,6 +163,7 @@ def collect(db_path: str) -> dict[str, int]:
             ("mark-price", "public/mark-price", "instType", (("markPx", "mark_price"),)),
             ("index-price", "market/index-tickers", "instId", (("idxPx", "index_price"),)),
         )
+        trade_buffer = TradeFlowBuffer(conn, instrument_specs(conn))
         for instrument, index_id in SWAPS.items():
             for name, path, mode, fields in endpoints:
                 try:
@@ -184,12 +178,22 @@ def collect(db_path: str) -> dict[str, int]:
                     log_collection(conn, "okx_market", f"OKX:{instrument}:{name}", None, 0, err=str(ex))
             for name, fetch in (("orderbook-rest", _book_snapshot), ("trades-rest-recovery", _trade_recovery)):
                 try:
-                    count = fetch(conn, instrument)
+                    count = fetch(conn, instrument, trade_buffer) if name == "trades-rest-recovery" else fetch(conn, instrument)
+                    if count is None:
+                        out[f"{instrument}:{name}"] = 0
+                        log_collection(conn, "okx_market", f"OKX:{instrument}:{name}", None, 0, status="OK")
+                        continue
+                    degraded = isinstance(count, tuple)
+                    if degraded:
+                        count, capped = count
+                        degraded = bool(capped)
                     out[f"{instrument}:{name}"] = count
-                    log_collection(conn, "okx_market", f"OKX:{instrument}:{name}", None, count)
+                    warning = "REST returned its 500-trade cap; gap coverage is uncertain" if degraded else None
+                    log_collection(conn, "okx_market", f"OKX:{instrument}:{name}", None, count, err=warning, status="DEGRADED" if degraded else None)
                 except Exception as ex:
                     out[f"{instrument}:{name}"] = -1
                     log_collection(conn, "okx_market", f"OKX:{instrument}:{name}", None, 0, err=str(ex))
+        trade_buffer.flush()
         return out
     finally:
         conn.close()
