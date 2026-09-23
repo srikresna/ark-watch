@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -414,6 +414,14 @@ CREATE INDEX IF NOT EXISTS idx_liquidations_ts ON crypto_liquidations(ts_utc DES
   source_url TEXT, fetched_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gdelt_added ON gdelt_events(added_at_utc DESC);
+""",
+    23: """ALTER TABLE gdelt_events ADD COLUMN raw_record_json TEXT NOT NULL DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS market_news_payloads (
+  observation_id TEXT PRIMARY KEY, news_id TEXT NOT NULL, source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL, payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_payload_news ON market_news_payloads(news_id, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_news_payload_source ON market_news_payloads(source, fetched_at DESC);
 """,
 }
 

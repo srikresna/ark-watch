@@ -23,6 +23,25 @@ from .fetch_log import log_collection
 SESSION = requests.Session()
 SESSION.mount("https://", HTTPAdapter(max_retries=Retry(total=1, connect=1, read=1, status=1, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504), allowed_methods=("GET",), respect_retry_after_header=True)))
 TOPICS = ("fed", "inflation", "oil", "bitcoin", "ethereum", "war", "tariff", "yield", "treasury", "jobs", "china")
+GDELT_EVENT_FIELDS = (
+    "GlobalEventID", "SQLDATE", "MonthYear", "Year", "FractionDate",
+    "Actor1Code", "Actor1Name", "Actor1CountryCode", "Actor1KnownGroupCode",
+    "Actor1EthnicCode", "Actor1Religion1Code", "Actor1Religion2Code",
+    "Actor1Type1Code", "Actor1Type2Code", "Actor1Type3Code", "Actor2Code",
+    "Actor2Name", "Actor2CountryCode", "Actor2KnownGroupCode",
+    "Actor2EthnicCode", "Actor2Religion1Code", "Actor2Religion2Code",
+    "Actor2Type1Code", "Actor2Type2Code", "Actor2Type3Code", "IsRootEvent",
+    "EventCode", "EventBaseCode", "EventRootCode", "QuadClass", "GoldsteinScale",
+    "NumMentions", "NumSources", "NumArticles", "AvgTone", "Actor1Geo_Type",
+    "Actor1Geo_FullName", "Actor1Geo_CountryCode", "Actor1Geo_ADM1Code",
+    "Actor1Geo_ADM2Code", "Actor1Geo_Lat", "Actor1Geo_Long",
+    "Actor1Geo_FeatureID", "Actor2Geo_Type", "Actor2Geo_FullName",
+    "Actor2Geo_CountryCode", "Actor2Geo_ADM1Code", "Actor2Geo_ADM2Code",
+    "Actor2Geo_Lat", "Actor2Geo_Long", "Actor2Geo_FeatureID", "ActionGeo_Type",
+    "ActionGeo_FullName", "ActionGeo_CountryCode", "ActionGeo_ADM1Code",
+    "ActionGeo_ADM2Code", "ActionGeo_Lat", "ActionGeo_Long",
+    "ActionGeo_FeatureID", "DATEADDED", "SOURCEURL",
+)
 
 
 def _time(value: str | None) -> str:
@@ -69,7 +88,7 @@ def _fmp() -> list[dict]:
         return []
     r = SESSION.get("https://financialmodelingprep.com/stable/news/general-latest", params={"apikey": key}, timeout=(10, 45))
     r.raise_for_status()
-    return [{"source": "FMP", "title": x.get("title", ""), "url": x.get("url"), "summary": x.get("text", ""), "published": x.get("publishedDate"), "symbols": str(x.get("symbol") or "").split(",")} for x in r.json() if x.get("title")]
+    return [{"source": "FMP", "title": x.get("title", ""), "url": x.get("url"), "summary": x.get("text", ""), "published": x.get("publishedDate"), "symbols": str(x.get("symbol") or "").split(","), "provider_payload": x} for x in r.json() if x.get("title")]
 
 
 def _eodhd() -> list[dict]:
@@ -82,7 +101,7 @@ def _eodhd() -> list[dict]:
             r.raise_for_status()
         except requests.RequestException:
             return None
-        return [{"source": "EODHD", "title": x.get("title", ""), "url": x.get("link"), "summary": x.get("content", ""), "published": x.get("date"), "symbols": [ticker]} for x in r.json() if x.get("title")]
+        return [{"source": "EODHD", "title": x.get("title", ""), "url": x.get("link"), "summary": x.get("content", ""), "published": x.get("date"), "symbols": [ticker], "provider_payload": x} for x in r.json() if x.get("title")]
 
     out = []
     succeeded = 0
@@ -136,7 +155,10 @@ def _gdelt_events() -> list[tuple]:
                 if len(row) < 61:
                     continue
                 added = datetime.strptime(row[59], "%Y%m%d%H%M%S").replace(tzinfo=UTC).isoformat(timespec="seconds")
-                out.append((row[0], row[1], added, row[6] or None, row[16] or None, row[26] or None, _number(row[29], int), _number(row[30]), _number(row[31], int), _number(row[32], int), _number(row[33], int), _number(row[34]), row[51] or None, _number(row[53]), _number(row[54]), row[60] or None, now))
+                raw_fields = dict(zip(GDELT_EVENT_FIELDS, row[:len(GDELT_EVENT_FIELDS)]))
+                if len(row) > len(GDELT_EVENT_FIELDS):
+                    raw_fields["_extra_columns"] = row[len(GDELT_EVENT_FIELDS):]
+                out.append((row[0], row[1], added, row[6] or None, row[16] or None, row[26] or None, _number(row[29], int), _number(row[30]), _number(row[31], int), _number(row[32], int), _number(row[33], int), _number(row[34]), row[53] or None, _number(row[56]), _number(row[57]), row[60] or None, now, json.dumps(raw_fields, ensure_ascii=False, separators=(",", ":"))))
     return out
 
 
@@ -148,6 +170,7 @@ def run(db_path: str) -> dict[str, int]:
             rows = fetch()
             now = datetime.now(UTC).isoformat(timespec="seconds")
             values = []
+            payloads = []
             for row in rows:
                 title = str(row["title"]).strip()
                 url = _canonical_url(row.get("url"))
@@ -155,7 +178,11 @@ def run(db_path: str) -> dict[str, int]:
                 uid = hashlib.sha256(f"{row['source']}|{url}|{title}".encode()).hexdigest()
                 relevance = min(1.0, 0.2 + 0.1 * sum(w in title.lower() for w in ("fed", "inflation", "oil", "bitcoin", "war", "tariff", "yield")))
                 values.append((uid, _time(row.get("published")), row["source"], title, url, str(row.get("summary") or "")[:4000], json.dumps(row.get("symbols") or []), cluster, relevance, novelty, now))
+                payload_json = json.dumps(row.get("provider_payload") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                observation_id = hashlib.sha256(f"{uid}|{now}|{payload_json}".encode()).hexdigest()
+                payloads.append((observation_id, uid, row["source"], now, payload_json))
             conn.executemany("INSERT OR IGNORE INTO market_news VALUES (?,?,?,?,?,?,?,?,?,?,?)", values)
+            conn.executemany("INSERT OR IGNORE INTO market_news_payloads VALUES (?,?,?,?,?)", payloads)
             out[name] = len(values)
             log_collection(conn, "market_news", name, rows[0] if rows else None, len(values), status="OK")
         except Exception as ex:
@@ -164,7 +191,7 @@ def run(db_path: str) -> dict[str, int]:
             log_collection(conn, "market_news", name, None, 0, err=str(ex))
     try:
         events = _gdelt_events()
-        conn.executemany("INSERT OR IGNORE INTO gdelt_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", events)
+        conn.executemany("INSERT OR IGNORE INTO gdelt_events (event_id,event_date,added_at_utc,actor1,actor2,event_code,quad_class,goldstein_scale,mentions,sources,articles,avg_tone,action_country,action_lat,action_lon,source_url,fetched_at,raw_record_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", events)
         out["GDELT"] = len(events)
         log_collection(conn, "market_news", "GDELT:EVENTS", None, len(events))
     except Exception as ex:
