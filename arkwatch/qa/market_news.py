@@ -179,7 +179,7 @@ def run(db_path: str) -> dict[str, int]:
                 relevance = min(1.0, 0.2 + 0.1 * sum(w in title.lower() for w in ("fed", "inflation", "oil", "bitcoin", "war", "tariff", "yield")))
                 values.append((uid, _time(row.get("published")), row["source"], title, url, str(row.get("summary") or "")[:4000], json.dumps(row.get("symbols") or []), cluster, relevance, novelty, now))
                 payload_json = json.dumps(row.get("provider_payload") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                observation_id = hashlib.sha256(f"{uid}|{now}|{payload_json}".encode()).hexdigest()
+                observation_id = hashlib.sha256(f"{uid}|{payload_json}".encode()).hexdigest()
                 payloads.append((observation_id, uid, row["source"], now, payload_json))
             conn.executemany("INSERT OR IGNORE INTO market_news VALUES (?,?,?,?,?,?,?,?,?,?,?)", values)
             conn.executemany("INSERT OR IGNORE INTO market_news_payloads VALUES (?,?,?,?,?)", payloads)
