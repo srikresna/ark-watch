@@ -7,7 +7,7 @@ dated contracts (free, same approach)."""
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import db
@@ -55,7 +55,11 @@ def _eodhd_dated(root: str, code: str) -> dict | None:
     try:
         r = _rq.get(
             f"https://eodhd.com/api/eod/{root}{code}-NYM.COMM",
-            params={"api_token": key, "fmt": "json", "days": "5"},
+            params={
+                "api_token": key,
+                "fmt": "json",
+                "from": (datetime.now(UTC).date() - timedelta(days=7)).isoformat(),
+            },
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=(10, 30),
         )
@@ -91,6 +95,23 @@ def _leg(root: str, code: str) -> dict:
     return out
 
 
+def _curve_legs(front: str, second: str) -> dict[str, dict]:
+    specs = {
+        "cl1": ("CL", front),
+        "rb1": ("RB", front),
+        "ho1": ("HO", front),
+        "cl2": ("CL", second),
+    }
+    for fetch in (_eodhd_dated, _yahoo_dated):
+        legs = {name: fetch(*spec) for name, spec in specs.items()}
+        if any(leg is None for leg in legs.values()):
+            continue
+        dates = {leg["ts"] for leg in legs.values() if leg is not None}
+        if len(dates) == 1:
+            return legs
+    raise EnergyError("no complete same-date curve from EODHD or Yahoo")
+
+
 def _spot_pair(conn, days: int = 10) -> tuple[str, float, float]:
     series = {}
     for sid in ("FRED:DCOILBRENTEU", "FRED:DCOILWTICO"):
@@ -115,16 +136,9 @@ def compute(conn) -> dict[str, dict]:
         MONTH_CODES.index(front[0]) + 1, int(front[1:]) + 2000
     )
 
-    cl1 = _leg("CL", front)
-    rb1 = _leg("RB", front)
-    ho1 = _leg("HO", front)
-    cl2 = _leg("CL", second)
-
-    dates = {cl1["ts"], rb1["ts"], ho1["ts"], cl2["ts"]}
-    if len(dates) > 2:
-        raise EnergyError(f"legs on too many dates: {sorted(dates)}")
-
-    ts_f = min(dates)
+    legs = _curve_legs(front, second)
+    cl1, rb1, ho1, cl2 = (legs[k] for k in ("cl1", "rb1", "ho1", "cl2"))
+    ts_f = cl1["ts"]
     out: dict[str, dict] = {
         "energy_crack_gas": {"ts": ts_f, "value": round(rb1["close"] * 42 - cl1["close"], 2)},
         "energy_crack_ho": {"ts": ts_f, "value": round(ho1["close"] * 42 - cl1["close"], 2)},

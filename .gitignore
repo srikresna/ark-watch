@@ -30,6 +30,8 @@ tmp_*
 
 .remember/
 .claude/
+.agents/
+AGENTS.md
 .idea/
 .vscode/
 *.swp
@@ -37,3 +39,5 @@ tmp_*
 next.md
 CLAUDE.md
 scripts/
+
+.codex-context/

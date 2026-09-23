@@ -87,13 +87,16 @@ def _get_spot(conn: sqlite3.Connection, td: str | None = None) -> float | None:
     if td:
         row = conn.execute(
             "SELECT close FROM instrument_prices WHERE symbol='EURUSD'"
-            " AND source='EODHD' AND ts <= ? ORDER BY ts DESC LIMIT 1",
-            (td,),
+            " AND source IN ('EODHD','YAHOO') AND ts <= ?"
+            " AND julianday(?) - julianday(ts) <= 3"
+            " ORDER BY ts DESC, CASE source WHEN 'EODHD' THEN 0 ELSE 1 END LIMIT 1",
+            (td, td),
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT close FROM instrument_prices WHERE symbol='EURUSD' AND source='EODHD' "
-            "ORDER BY ts DESC LIMIT 1"
+            "SELECT close FROM instrument_prices WHERE symbol='EURUSD'"
+            " AND source IN ('EODHD','YAHOO') AND ts >= date('now','-4 day')"
+            " ORDER BY ts DESC, CASE source WHEN 'EODHD' THEN 0 ELSE 1 END LIMIT 1"
         ).fetchone()
     # A silent 1.0 fallback would produce a garbage basis that still gets
     # printed; return None and let the caller skip instead.

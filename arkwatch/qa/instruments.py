@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -95,7 +96,7 @@ def insert_prices(conn, symbol: str, source: str, rows: list[dict]) -> int:
 def fetch_eodhd_daily(token: str, ticker: str, *, days: int | None = None) -> list[dict]:
     p = {"api_token": token, "fmt": "json"}
     if days:
-        p["period"] = f"{days}d"
+        p["from"] = (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
     r = requests.get(f"https://eodhd.com/api/eod/{ticker}", params=p, headers=UA, timeout=(10, 60))
     if r.status_code != 200:
         raise RuntimeError(f"EODHD {ticker}: HTTP {r.status_code}")
@@ -234,6 +235,7 @@ def sweep(db_path: str = str(DEFAULT_DB)) -> dict[str, int]:
     import os
 
     from ..fetchers import yahoo as yh
+    from .fetch_log import log_collection
 
     conn = _db.get_conn(db_path, allow_init=True)
     out: dict[str, int] = {}
@@ -243,18 +245,20 @@ def sweep(db_path: str = str(DEFAULT_DB)) -> dict[str, int]:
         sym = ins["symbol"]
         if ins.get("eodhd"):
             try:
-                out[f"{sym}|EODHD"] = insert_prices(
-                    conn, sym, "EODHD", fetch_eodhd_daily(tok, ins["eodhd"], days=7)
-                )
-            except Exception:
+                rows = fetch_eodhd_daily(tok, ins["eodhd"], days=7)
+                out[f"{sym}|EODHD"] = insert_prices(conn, sym, "EODHD", rows)
+                log_collection(conn, "instruments", f"{sym}:EODHD", rows[0] if rows else None, len(rows))
+            except Exception as ex:
                 out[f"{sym}|EODHD"] = -1
+                log_collection(conn, "instruments", f"{sym}:EODHD", None, 0, err=str(ex))
         if ins.get("yahoo"):
             try:
-                out[f"{sym}|YAHOO"] = insert_prices(
-                    conn, sym, "YAHOO", yh.fetch_daily(ins["yahoo"], start_ts=start_ts)
-                )
-            except Exception:
+                rows = yh.fetch_daily(ins["yahoo"], start_ts=start_ts)
+                out[f"{sym}|YAHOO"] = insert_prices(conn, sym, "YAHOO", rows)
+                log_collection(conn, "instruments", f"{sym}:YAHOO", rows[0] if rows else None, len(rows))
+            except Exception as ex:
                 out[f"{sym}|YAHOO"] = -1
+                log_collection(conn, "instruments", f"{sym}:YAHOO", None, 0, err=str(ex))
     _cross_validate(conn, db_path)
     conn.close()
     return out

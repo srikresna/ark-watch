@@ -19,6 +19,22 @@ except Exception:
 COT_CROWDED_Z = float(_PS.get("cot_crowded_z", 1.5))
 COT_Z_WINDOW_WEEKS = int(_PS.get("cot_z_window_weeks", 156))
 COT_Z_MIN_WEEKS = int(_PS.get("cot_z_min_weeks", 60))
+COT_Z_CONTRACTS = (
+    "067651",
+    "088691",
+    "084691",
+    "085692",
+    "076651",
+    "099741",
+    "097741",
+    "096742",
+    "232741",
+    "098662",
+    "133741",
+    "13874+",
+    "209742",
+    "146021",
+)
 
 
 def _cot_zscore(conn: sqlite3.Connection, contract_code: str) -> float | None:
@@ -266,7 +282,10 @@ def _silver_52wk_gate(conn: sqlite3.Connection) -> bool:
     # check XAGUSD price against the 52-week high
     prices = conn.execute(
         "SELECT close FROM instrument_prices WHERE symbol='XAGUSD' "
-        "AND source='EODHD' AND close IS NOT NULL ORDER BY ts DESC LIMIT 260"
+        "AND source='EODHD' AND close IS NOT NULL "
+        "AND (SELECT MAX(ts) FROM instrument_prices WHERE symbol='XAGUSD' "
+        "AND source='EODHD' AND close IS NOT NULL) >= date('now','-4 day') "
+        "ORDER BY ts DESC LIMIT 260"
     ).fetchall()
     if len(prices) < 52:
         return False
@@ -430,22 +449,8 @@ def store_cot_signals(conn: sqlite3.Connection, score: float) -> int:
     # — weekly COT signals (ts = latest report_date) —
     latest = conn.execute("SELECT MAX(report_date) FROM cot_raw").fetchone()[0]
     if latest:
-        # z-scores for 13 contracts (crowded base, used by divergence/regime-conditioned)
-        for code in (
-            "088691",
-            "084691",
-            "085692",
-            "076651",
-            "099741",
-            "097741",
-            "096742",
-            "232741",
-            "098662",
-            "133741",
-            "13874+",
-            "209742",
-            "146021",
-        ):
+        # crowded base, used by divergence/regime-conditioned signals
+        for code in COT_Z_CONTRACTS:
             z = _cot_zscore(conn, code)
             if z is not None:
                 state = (

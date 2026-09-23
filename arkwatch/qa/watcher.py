@@ -649,6 +649,8 @@ def check_all(conn) -> list[str]:
     ry_lv = latest_value(conn, "FRED:DFII10")
     gold = conn.execute(
         "SELECT close FROM instrument_prices WHERE symbol='XAUUSD' AND source='EODHD' "
+        "AND (SELECT MAX(ts) FROM instrument_prices WHERE symbol='XAUUSD' "
+        "AND source='EODHD' AND close IS NOT NULL) >= date('now','-4 day') "
         "ORDER BY ts DESC LIMIT 60"
     ).fetchall()
     if len(ry) >= 20 and len(gold) >= 20:

@@ -74,7 +74,16 @@ class TestCompute:
             ("CL", "Z26"): {"ts": "2026-09-20", "close": 90.12, "source": "EODHD"},
         }
         monkeypatch.setattr(energy, "_front_month", lambda: "X26")
-        monkeypatch.setattr(energy, "_leg", lambda root, code: legs[(root, code)])
+        monkeypatch.setattr(
+            energy,
+            "_curve_legs",
+            lambda front, second: {
+                "cl1": legs[("CL", front)],
+                "rb1": legs[("RB", front)],
+                "ho1": legs[("HO", front)],
+                "cl2": legs[("CL", second)],
+            },
+        )
         out = energy.compute(conn)
         assert out["energy_crack_gas"]["value"] == round(3.1818 * 42 - 93.72, 2)
         assert out["energy_crack_ho"]["value"] == round(4.7186 * 42 - 93.72, 2)
@@ -85,3 +94,28 @@ class TestCompute:
         ).fetchone()[0]
         assert n == 1
         conn.close()
+
+    def test_curve_falls_back_as_one_provider(self, monkeypatch):
+        def fake_eodhd(root, code):
+            if root == "RB":
+                return None
+            return {"ts": "2026-09-20", "close": 1.0, "source": "EODHD"}
+
+        monkeypatch.setattr(energy, "_eodhd_dated", fake_eodhd)
+        monkeypatch.setattr(
+            energy,
+            "_yahoo_dated",
+            lambda root, code: {"ts": "2026-09-20", "close": 2.0, "source": "YAHOO"},
+        )
+        legs = energy._curve_legs("X26", "Z26")
+        assert {leg["source"] for leg in legs.values()} == {"YAHOO"}
+
+    def test_curve_rejects_mixed_dates(self, monkeypatch):
+        def mismatched(root, code):
+            ts = "2026-09-19" if root == "RB" else "2026-09-20"
+            return {"ts": ts, "close": 1.0, "source": "test"}
+
+        monkeypatch.setattr(energy, "_eodhd_dated", mismatched)
+        monkeypatch.setattr(energy, "_yahoo_dated", mismatched)
+        with pytest.raises(energy.EnergyError, match="same-date"):
+            energy._curve_legs("X26", "Z26")
