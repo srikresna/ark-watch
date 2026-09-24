@@ -8,7 +8,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from .db import get_conn
+from . import db as _db
 
 TABLE_KEYS = {
     "gdelt_events": "event_id",
@@ -38,6 +38,37 @@ def backup_database(source: str | Path, destination: str | Path) -> dict:
     finally:
         target_conn.close()
         source_conn.close()
+
+
+def _require_arkwatch_database(path: str | Path) -> int:
+    db_path = Path(path).resolve()
+    if not db_path.is_file():
+        raise FileNotFoundError(db_path)
+    conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        names = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "schema_migrations" not in names:
+            raise ValueError("refusing to modify a database without ARK Watch schema_migrations")
+        version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        if version is None or version > _db.SCHEMA_VERSION:
+            raise ValueError(f"unsupported ARK Watch database schema version: {version}")
+        required = {
+            "gdelt_events": {"event_id", "raw_record_json"},
+            "gdelt_mentions": {"observation_id", "raw_record_json"},
+            "gdelt_gkg": {"record_id", "raw_record_json"},
+        }
+        for table, columns in required.items():
+            if table not in names:
+                raise ValueError(f"ARK Watch database is missing required table {table}")
+            actual = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not columns <= actual:
+                raise ValueError(f"ARK Watch table {table} is missing required GDELT columns")
+        return version
+    finally:
+        conn.close()
 
 
 def compress_record(raw_json: str) -> bytes:
@@ -93,7 +124,8 @@ def compact_database(
     if vacuum and not apply:
         raise ValueError("vacuum requires apply")
     if apply:
-        conn = get_conn(path, allow_init=True)
+        _require_arkwatch_database(path)
+        conn = _db.get_conn(path, allow_init=True)
     else:
         db_path = Path(path).resolve()
         conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
@@ -192,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.vacuum and not args.apply:
         parser.error("--vacuum requires --apply")
     if args.backup:
+        _require_arkwatch_database(args.db)
         backup = backup_database(args.db, args.backup)
         print({"backup": backup})
     print(

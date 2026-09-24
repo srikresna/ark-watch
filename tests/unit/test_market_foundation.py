@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -444,6 +445,22 @@ def test_gdelt_compaction_resumes_after_committed_batches(tmp_path, monkeypatch)
     monkeypatch.setattr(gdelt_storage, "compress_record", original_compress)
     compact_database(path, batch_size=1, apply=True)
     assert verify_database(path)["gdelt_events"]["gzip_rows"] == 2
+
+
+def test_gdelt_compaction_refuses_non_arkwatch_database(tmp_path):
+    path = tmp_path / "partial-gdelt.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE gdelt_events(event_id TEXT, raw_record_json TEXT)")
+    conn.close()
+
+    with pytest.raises(ValueError, match="schema_migrations"):
+        compact_database(path, apply=True)
+
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [
+        ("gdelt_events",)
+    ]
+    conn.close()
 
 
 def test_okx_contract_size_is_normalized_only_with_known_metadata():
