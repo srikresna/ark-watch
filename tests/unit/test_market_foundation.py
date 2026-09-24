@@ -463,6 +463,21 @@ def test_gdelt_compaction_refuses_non_arkwatch_database(tmp_path):
     conn.close()
 
 
+def test_gdelt_verifier_identifies_a_corrupt_payload(tmp_path):
+    path = tmp_path / "gdelt-corrupt.db"
+    conn = db.get_conn(path, allow_init=True)
+    conn.execute(
+        "INSERT INTO gdelt_events "
+        "(event_id,event_date,added_at_utc,fetched_at,raw_record_json,raw_record_gzip) "
+        "VALUES (?,?,?,?,?,?)",
+        ("bad-event", "20260925", "2026-09-25T00:00:00+00:00", "now", "", b"not-gzip"),
+    )
+    conn.close()
+
+    with pytest.raises(ValueError, match="gdelt_events:bad-event"):
+        verify_database(path)
+
+
 def test_okx_contract_size_is_normalized_only_with_known_metadata():
     size_asset, notional = okx_market.normalize_contract_size(
         2, 100_000, {"ctVal": "0.01", "ctValCcy": "BTC", "ctMult": "1", "baseCcy": "BTC"}

@@ -6,6 +6,7 @@ import argparse
 import gzip
 import json
 import sqlite3
+import zlib
 from pathlib import Path
 
 from . import db as _db
@@ -94,11 +95,11 @@ def verify_storage(conn: sqlite3.Connection, *, batch_size: int = 500) -> dict:
                 has_gzip = bool(raw_gzip)
                 if has_text == has_gzip:
                     raise ValueError(f"GDELT payload representation invalid for {table}:{row_key}")
-                restored = restore_record(raw_json, raw_gzip)
                 try:
+                    restored = restore_record(raw_json, raw_gzip)
                     json.loads(restored)
-                except (TypeError, ValueError) as ex:
-                    raise ValueError(f"GDELT JSON invalid for {table}:{row_key}") from ex
+                except (EOFError, OSError, UnicodeDecodeError, ValueError, zlib.error) as ex:
+                    raise ValueError(f"GDELT payload invalid for {table}:{row_key}") from ex
                 summary["rows"] += 1
                 summary["text_rows"] += int(has_text)
                 summary["gzip_rows"] += int(has_gzip)
