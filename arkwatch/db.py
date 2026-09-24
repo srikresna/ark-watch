@@ -16,7 +16,7 @@ import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 29
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -487,6 +487,16 @@ CREATE TABLE IF NOT EXISTS crypto_trade_flow_1m (
 CREATE INDEX IF NOT EXISTS idx_crypto_trade_flow_ts ON crypto_trade_flow_1m(instrument, minute_utc DESC);
 CREATE TABLE IF NOT EXISTS crypto_trade_flow_state (
   instrument TEXT PRIMARY KEY, last_trade_id TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+""",
+    28: """ALTER TABLE gdelt_events ADD COLUMN raw_record_gzip BLOB;
+ALTER TABLE gdelt_mentions ADD COLUMN raw_record_gzip BLOB;
+ALTER TABLE gdelt_gkg ADD COLUMN raw_record_gzip BLOB;
+""",
+    29: """CREATE TABLE IF NOT EXISTS gdelt_feed_state (
+  feed TEXT PRIMARY KEY CHECK (feed IN ('export','mentions','gkg')),
+  last_window_ts_utc TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 """,
 }

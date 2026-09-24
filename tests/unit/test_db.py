@@ -54,6 +54,31 @@ def test_pragma_pack(conn):
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
+def test_gdelt_gzip_migration_preserves_existing_raw_json(tmp_path):
+    path = tmp_path / "gdelt-v27.db"
+    conn = db.get_conn(path, allow_init=True)
+    raw_json = '{"EventCode":"042"}'
+    conn.execute(
+        "INSERT INTO gdelt_events (event_id,event_date,added_at_utc,fetched_at,raw_record_json) "
+        "VALUES (?,?,?,?,?)",
+        ("event-1", "20260925", "2026-09-25T00:00:00+00:00", "now", raw_json),
+    )
+    for table in ("gdelt_events", "gdelt_mentions", "gdelt_gkg"):
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN raw_record_gzip")
+    conn.execute("DROP TABLE gdelt_feed_state")
+    conn.execute("DELETE FROM schema_migrations WHERE version>=28")
+    conn.close()
+
+    migrated = db.get_conn(path, allow_init=True)
+    assert migrated.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == db.SCHEMA_VERSION
+    assert migrated.execute("SELECT raw_record_json FROM gdelt_events").fetchone()[0] == raw_json
+    assert "raw_record_gzip" in {
+        row[1] for row in migrated.execute("PRAGMA table_info(gdelt_events)")
+    }
+    assert migrated.execute("SELECT COUNT(*) FROM gdelt_feed_state").fetchone()[0] == 0
+    migrated.close()
+
+
 def test_guard_rejects_older_schema(tmp_path, monkeypatch):
     p = tmp_path / "t.db"
     # Bootstrap with a minimal migration registry: v1 must itself create

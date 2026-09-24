@@ -3,7 +3,15 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
-from arkwatch import db
+import pytest
+
+from arkwatch import db, gdelt_storage
+from arkwatch.gdelt_storage import (
+    backup_database,
+    compact_database,
+    restore_record,
+    verify_database,
+)
 from arkwatch.qa import market_news, market_timeline, okx_liquidations, okx_market
 
 
@@ -320,15 +328,122 @@ def test_news_cluster_reuses_similar_recent_headline(tmp_path):
 
 
 def test_gdelt_mention_and_gkg_keep_all_provider_fields():
+    event = [""] * len(market_news.GDELT_EVENT_FIELDS)
+    event[0] = "event-1"
+    event[1] = "20260925"
+    event[59] = "20260925120000"
+    parsed_event = market_news._gdelt_events([event])[0]
+    assert parsed_event[17] == ""
+    assert '"GlobalEventID":"event-1"' in restore_record(None, parsed_event[18])
+
     mention = [str(index) for index in range(len(market_news.GDELT_MENTION_FIELDS))]
     parsed_mention = market_news._gdelt_mentions([mention])[0]
     assert parsed_mention[1] == "0"
-    assert '"Extras":"15"' in parsed_mention[7]
+    assert parsed_mention[7] == ""
+    assert '"Extras":"15"' in restore_record(None, parsed_mention[9])
 
     gkg = [str(index) for index in range(len(market_news.GDELT_GKG_FIELDS))]
     parsed_gkg = market_news._gdelt_gkg([gkg])[0]
     assert parsed_gkg[0] == "0"
-    assert '"GCAM":"17"' in parsed_gkg[8]
+    assert parsed_gkg[8] == ""
+    assert '"GCAM":"17"' in restore_record(None, parsed_gkg[10])
+
+
+def test_gdelt_compaction_roundtrips_raw_and_preserves_searchable_fields(tmp_path):
+    path = tmp_path / "gdelt.db"
+    conn = db.get_conn(path, allow_init=True)
+    event_raw = '{"EventCode":"042"}'
+    mention_raw = '{"MentionType":"1"}'
+    gkg_raw = '{"V2Themes":"ECON_INFLATION"}'
+    conn.execute(
+        "INSERT INTO gdelt_events (event_id,event_date,added_at_utc,fetched_at,raw_record_json,event_code) VALUES (?,?,?,?,?,?)",
+        ("event-1", "20260925", "2026-09-25T00:00:00+00:00", "now", event_raw, "042"),
+    )
+    conn.execute(
+        "INSERT INTO gdelt_mentions (observation_id,fetched_at,raw_record_json,mention_type) VALUES (?,?,?,?)",
+        ("mention-1", "now", mention_raw, "1"),
+    )
+    conn.execute(
+        "INSERT INTO gdelt_gkg (record_id,record_time,themes_json,entities_json,locations_json,tone_json,raw_record_json,fetched_at) VALUES (?,?,?,?,?,?,?,?)",
+        ("gkg-1", "20260925", '["ECON_INFLATION"]', "{}", "[]", "[]", gkg_raw, "now"),
+    )
+    conn.close()
+
+    preview = compact_database(path, batch_size=1)
+    assert all(item["rows"] == 1 for item in preview["tables"].values())
+    conn = db.get_conn(path)
+    assert conn.execute("SELECT raw_record_gzip FROM gdelt_events").fetchone()[0] is None
+    conn.close()
+
+    backup_path = tmp_path / "before-compression.db"
+    backup = backup_database(path, backup_path)
+    assert backup["bytes"] == backup_path.stat().st_size
+    compact_database(path, batch_size=1, apply=True, vacuum=True)
+    conn = db.get_conn(path)
+    backup_conn = db.get_conn(backup_path)
+    assert (
+        backup_conn.execute("SELECT raw_record_json FROM gdelt_events").fetchone()[0] == event_raw
+    )
+    assert backup_conn.execute("SELECT raw_record_gzip FROM gdelt_events").fetchone()[0] is None
+    backup_conn.close()
+    for table, key, expected in (
+        ("gdelt_events", "event_id", event_raw),
+        ("gdelt_mentions", "observation_id", mention_raw),
+        ("gdelt_gkg", "record_id", gkg_raw),
+    ):
+        raw_json, raw_gzip = conn.execute(
+            f"SELECT raw_record_json, raw_record_gzip FROM {table} WHERE {key}=?",
+            (table.removeprefix("gdelt_").removesuffix("s") + "-1",),
+        ).fetchone()
+        assert raw_json == ""
+        assert restore_record(raw_json, raw_gzip) == expected
+    assert conn.execute("SELECT event_code FROM gdelt_events WHERE event_code='042'").fetchone()
+    assert conn.execute("SELECT mention_type FROM gdelt_mentions WHERE mention_type='1'").fetchone()
+    assert conn.execute(
+        "SELECT themes_json FROM gdelt_gkg WHERE themes_json LIKE '%ECON_INFLATION%'"
+    ).fetchone()
+    conn.close()
+    repeat = compact_database(path, batch_size=1, apply=True)
+    assert all(item["rows"] == 0 for item in repeat["tables"].values())
+    assert all(item["gzip_rows"] == 1 for item in repeat["verification"].values())
+    assert all(item["gzip_rows"] == 1 for item in verify_database(path).values())
+
+
+def test_gdelt_compaction_resumes_after_committed_batches(tmp_path, monkeypatch):
+    path = tmp_path / "gdelt-resume.db"
+    conn = db.get_conn(path, allow_init=True)
+    for index in range(2):
+        conn.execute(
+            "INSERT INTO gdelt_events (event_id,event_date,added_at_utc,fetched_at,raw_record_json) "
+            "VALUES (?,?,?,?,?)",
+            (
+                f"event-{index}",
+                "20260925",
+                "2026-09-25T00:00:00+00:00",
+                "now",
+                json.dumps({"EventCode": str(index)}),
+            ),
+        )
+    conn.close()
+
+    original_compress = gdelt_storage.compress_record
+    calls = 0
+
+    def fail_second_record(raw_json):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated interruption")
+        return original_compress(raw_json)
+
+    monkeypatch.setattr(gdelt_storage, "compress_record", fail_second_record)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        compact_database(path, batch_size=1, apply=True)
+    assert verify_database(path)["gdelt_events"]["gzip_rows"] == 1
+
+    monkeypatch.setattr(gdelt_storage, "compress_record", original_compress)
+    compact_database(path, batch_size=1, apply=True)
+    assert verify_database(path)["gdelt_events"]["gzip_rows"] == 2
 
 
 def test_okx_contract_size_is_normalized_only_with_known_metadata():
