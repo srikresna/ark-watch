@@ -153,7 +153,14 @@ def collect(db_path: str) -> dict[str, int]:
     try:
         try:
             out["instruments"] = _instrument_snapshot(conn, datetime.now(UTC))
-            log_collection(conn, "okx_market", "OKX:SWAP:instruments", None, out["instruments"])
+            log_collection(
+                conn,
+                "okx_market",
+                "OKX:SWAP:instruments",
+                None,
+                out["instruments"],
+                status="OK" if out["instruments"] == 0 else None,
+            )
         except Exception as ex:
             out["instruments"] = -1
             log_collection(conn, "okx_market", "OKX:SWAP:instruments", None, 0, err=str(ex))

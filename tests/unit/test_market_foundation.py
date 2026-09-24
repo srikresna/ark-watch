@@ -340,6 +340,23 @@ def test_okx_contract_size_is_normalized_only_with_known_metadata():
     assert okx_market.normalize_contract_size(2, 100, {}) == (None, None)
 
 
+def test_cached_okx_instrument_metadata_is_not_logged_as_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(okx_market, "_instrument_snapshot", lambda _conn, _now: 0)
+    monkeypatch.setattr(okx_market, "_snapshot", lambda *_args: 1)
+    monkeypatch.setattr(okx_market, "_book_snapshot", lambda *_args: None)
+    monkeypatch.setattr(okx_market, "_trade_recovery", lambda *_args: None)
+
+    result = okx_market.collect(str(tmp_path / "okx-cache.db"))
+    conn = db.get_conn(tmp_path / "okx-cache.db", allow_init=True)
+    status, rows = conn.execute(
+        "SELECT status,rows FROM fetch_log WHERE target='OKX:SWAP:instruments' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+
+    assert result["instruments"] == 0
+    assert (status, rows) == ("OK", 0)
+
+
 def test_okx_trade_and_book_streams_store_raw_and_normalized_values(tmp_path):
     conn = db.get_conn(tmp_path / "okx.db", allow_init=True)
     specs = {
