@@ -31,6 +31,15 @@ def test_fmp_naive_equity_timestamp_uses_new_york():
     assert stamp == "2026-09-22T13:30:00+00:00"
 
 
+def test_fmp_naive_crypto_timestamp_uses_dst_aware_new_york():
+    summer = market_timeline._utc_stamp("2026-09-22 13:20:00", source="FMP", ticker="BTCUSD")
+    winter = market_timeline._utc_stamp("2026-01-15 13:20:00", source="FMP", ticker="ETHUSD")
+    eodhd = market_timeline._utc_stamp("2026-09-22 13:20:00", source="EODHD", ticker="BTC-USD.CC")
+    assert summer == "2026-09-22T17:20:00+00:00"
+    assert winter == "2026-01-15T18:20:00+00:00"
+    assert eodhd == "2026-09-22T13:20:00+00:00"
+
+
 def _bar(stamp: str) -> dict:
     return {"bar_ts_utc": stamp, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}
 
@@ -224,6 +233,19 @@ def test_stale_eodhd_is_skipped_for_fresher_fmp(monkeypatch):
     assert selection.source == "FMP"
     assert selection.freshness.status == "FRESH"
     assert selection.attempts[0].freshness.status == "STALE"
+
+
+def test_btc_prefers_fmp_before_eodhd(monkeypatch):
+    now = datetime.fromisoformat("2026-09-22T14:00:00+00:00")
+    monkeypatch.setattr(
+        market_timeline, "_fmp_bars", lambda _symbol: [_bar("2026-09-22T13:55:00+00:00")]
+    )
+    monkeypatch.setattr(
+        market_timeline, "_eodhd_bars", lambda _symbol: [_bar("2026-09-22T13:55:00+00:00")]
+    )
+    selection = market_timeline._provider_bars("BTCUSD", now)
+    assert selection.source == "FMP"
+    assert [attempt.source for attempt in selection.attempts] == ["FMP"]
 
 
 def test_stale_primary_and_fallback_are_logged_degraded_not_healthy(tmp_path, monkeypatch):

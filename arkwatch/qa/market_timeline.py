@@ -430,11 +430,7 @@ def _utc_stamp(value, *, source: str, ticker: str) -> str:
         return datetime.fromtimestamp(stamp, UTC).isoformat(timespec="seconds")
     dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if dt.tzinfo is None:
-        zone = (
-            UTC
-            if source == "EODHD" or ticker in ("BTCUSD", "ETHUSD")
-            else ZoneInfo("America/New_York")
-        )
+        zone = UTC if source == "EODHD" else ZoneInfo("America/New_York")
         dt = dt.replace(tzinfo=zone)
     return dt.astimezone(UTC).isoformat(timespec="seconds")
 
@@ -515,7 +511,10 @@ def _provider_bars(symbol: str, now: datetime | None = None) -> ProviderSelectio
     now = now or datetime.now(UTC)
     attempts = []
     stale = []
-    for source, fetch in (("EODHD", _eodhd_bars), ("FMP", _fmp_bars)):
+    providers = (("FMP", _fmp_bars), ("EODHD", _eodhd_bars)) if symbol == "BTCUSD" else (
+        ("EODHD", _eodhd_bars), ("FMP", _fmp_bars)
+    )
+    for source, fetch in providers:
         try:
             rows = fetch(symbol)
         except requests.RequestException as ex:
