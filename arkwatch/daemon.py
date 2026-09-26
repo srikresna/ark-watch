@@ -59,6 +59,7 @@ SCHEDULE = [
     (8, 15, "daily", "cme", "CME settlements + CVOL + VOI (gray harvester)"),
     (8, 30, "daily", "f2", "COT + flows (Bybit/Farside/PBoC/LBMA/TIC/LME) + FedWatch"),
     (23, 30, "daily", "backup", "VACUUM INTO + verification + rotation"),
+    (23, 45, "sunday", "gdelt-retention --apply", "Purge GDELT data outside the current UTC week"),
     (22, 0, "sunday", "alfred", "Weekly maintenance + vintage audit"),
     # ROUND-4: the blindness class that started this whole audit (calendar
     # families with actuals but no series) must be checked by the daemon, not

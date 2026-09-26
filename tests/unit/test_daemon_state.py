@@ -10,7 +10,7 @@ failed job re-runs exactly once per restart."""
 import json
 from datetime import datetime
 
-from arkwatch.daemon import WIB, _load_state, _save_state
+from arkwatch.daemon import WIB, _due_jobs, _load_state, _save_state
 
 TODAY_KEY = "0715-verify"
 
@@ -72,3 +72,10 @@ def test_missing_or_corrupt_file_restores_nothing(tmp_path):
     corrupt = tmp_path / "corrupt.json"
     corrupt.write_text("{not json")
     assert _load_state(corrupt) == {}
+
+
+def test_weekly_gdelt_retention_runs_after_daily_backup():
+    now = datetime(2026, 9, 27, 23, 45, tzinfo=WIB)
+    commands = [cmd for cmd, _desc, _key in _due_jobs(now, {})]
+
+    assert commands.index("backup") < commands.index("gdelt-retention --apply")

@@ -38,6 +38,10 @@ def main() -> int:
         from .qa.market_news import main as market_news_main
 
         return market_news_main(sys.argv[2:])
+    if cmd == "gdelt-retention":
+        from .qa.gdelt_retention import main as gdelt_retention_main
+
+        return gdelt_retention_main(sys.argv[2:])
     if cmd == "breadth":
         from .qa.equity_breadth import main as breadth_main
 
@@ -214,7 +218,7 @@ def main() -> int:
     print(
         "arkwatch — commands: verify|coverage|backfill|instruments|harvest|calendar|"
         "f4|flows|surprise|alfred|backup|daemon|cme|f2|soma|nyfed|fiscalx|brief|send|"
-        "watch|backtest|export|explore"
+        "watch|backtest|export|explore|gdelt-retention"
     )
     return 2 if cmd else 0  # an unrecognized command must not exit 0
 
