@@ -78,4 +78,5 @@ def test_weekly_gdelt_retention_runs_after_daily_backup():
     now = datetime(2026, 9, 27, 23, 45, tzinfo=WIB)
     commands = [cmd for cmd, _desc, _key in _due_jobs(now, {})]
 
-    assert commands.index("backup") < commands.index("gdelt-retention --apply")
+    assert "backup" not in commands
+    assert "gdelt-retention --apply" in commands

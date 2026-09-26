@@ -1,4 +1,4 @@
-"""backup.py — nightly 23:30 job: VACUUM INTO + verification.
+"""Manual database backup command: VACUUM INTO + verification.
 
 Verification opens the resulting file, runs integrity_check, and compares the
 row COUNTs of key tables. Retention: 30 dailies + 12 monthlies (monthly = the

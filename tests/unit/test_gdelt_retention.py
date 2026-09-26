@@ -1,7 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from arkwatch import db
-from arkwatch.gdelt_storage import backup_database
+from arkwatch.qa import gdelt_retention
 from arkwatch.qa.gdelt_retention import _cutoff, clean
 
 
@@ -64,23 +66,26 @@ def test_gdelt_retention_preview_is_read_only_and_protects_referenced_events(tmp
     conn.close()
 
 
-def test_gdelt_retention_apply_requires_matching_backup_and_deletes_old_rows(tmp_path):
+def test_gdelt_retention_apply_removes_temporary_backup_after_verified_cleanup(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "arkwatch.db"
-    backup = tmp_path / "pre-cleanup.db"
+    monkeypatch.setattr(gdelt_retention, "BACKUP_DIR", tmp_path / "backups")
     now = datetime.now(UTC) + timedelta(seconds=2)
     cutoff = _cutoff(now)
     old = (datetime.fromisoformat(cutoff) - timedelta(seconds=1)).isoformat()
     recent = cutoff
     _seed(path, [old, recent])
-    backup_database(path, backup)
 
-    result = clean(path, now=now, apply=True, backup_path=backup)
+    result = clean(path, now=now, apply=True)
 
     assert result["deleted"] == {
         "gdelt_mentions": 1,
         "gdelt_gkg": 1,
         "gdelt_events": 1,
     }
+    assert result["temporary_backup_removed"] is True
+    assert list((tmp_path / "backups").iterdir()) == []
     conn = db.get_conn(path)
     assert conn.execute("SELECT event_id FROM gdelt_events ORDER BY event_id").fetchall() == [
         ("old",),
@@ -93,18 +98,61 @@ def test_gdelt_retention_apply_requires_matching_backup_and_deletes_old_rows(tmp
     conn.close()
 
 
-def test_gdelt_retention_apply_refuses_missing_backup(tmp_path):
+def test_gdelt_retention_skips_snapshot_when_there_is_nothing_to_delete(tmp_path, monkeypatch):
+    path = tmp_path / "arkwatch.db"
+    _seed(path, ["2026-09-27T00:00:00+00:00", "2026-09-27T00:01:00+00:00"])
+
+    def fail_snapshot(*_args):
+        raise AssertionError("unnecessary snapshot")
+
+    monkeypatch.setattr(gdelt_retention, "_create_temporary_backup", fail_snapshot)
+    result = clean(path, now=datetime(2026, 9, 27, 1, tzinfo=UTC), apply=True)
+
+    assert result["temporary_backup_bytes"] == 0
+    assert result["temporary_backup_removed"] is True
+    assert result["deleted"] == {table: 0 for table in gdelt_retention.TABLES}
+
+
+def test_gdelt_retention_aborts_without_temporary_backup(tmp_path, monkeypatch):
     path = tmp_path / "arkwatch.db"
     now = datetime.now(UTC)
     _seed(path, ["2000-01-01T00:00:00+00:00", "2000-01-02T00:00:00+00:00"])
 
-    try:
-        clean(path, now=now, apply=True, backup_path=tmp_path / "missing.db")
-    except FileNotFoundError as exc:
-        assert "pre-cleanup backup required" in str(exc)
-    else:
-        raise AssertionError("missing backup must abort deletion")
+    def fail_snapshot(*_args):
+        raise OSError("simulated backup failure")
+
+    monkeypatch.setattr(gdelt_retention, "_create_temporary_backup", fail_snapshot)
+
+    with pytest.raises(OSError, match="simulated backup failure"):
+        clean(path, now=now, apply=True)
 
     conn = db.get_conn(path)
     assert conn.execute("SELECT COUNT(*) FROM gdelt_events").fetchone()[0] == 3
+    conn.close()
+
+
+def test_gdelt_retention_keeps_temporary_backup_when_postcheck_fails(tmp_path, monkeypatch):
+    path = tmp_path / "arkwatch.db"
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(gdelt_retention, "BACKUP_DIR", backup_dir)
+    now = datetime.now(UTC) + timedelta(seconds=2)
+    cutoff = _cutoff(now)
+    old = (datetime.fromisoformat(cutoff) - timedelta(seconds=1)).isoformat()
+    _seed(path, [old, cutoff])
+    original_summary = gdelt_retention._summary
+
+    def fail_during_postcheck(conn, table, bound):
+        if conn.in_transaction and table == "gdelt_mentions":
+            raise RuntimeError("simulated postcheck failure")
+        return original_summary(conn, table, bound)
+
+    monkeypatch.setattr(gdelt_retention, "_summary", fail_during_postcheck)
+    with pytest.raises(RuntimeError, match="simulated postcheck failure"):
+        clean(path, now=now, apply=True)
+
+    snapshots = list(backup_dir.glob(".gdelt-retention-*.db"))
+    assert len(snapshots) == 1
+    conn = db.get_conn(path)
+    assert conn.execute("SELECT COUNT(*) FROM gdelt_events").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM gdelt_mentions").fetchone()[0] == 2
     conn.close()

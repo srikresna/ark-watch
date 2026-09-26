@@ -39,7 +39,7 @@ fixtures/    captured API responses for parser tests
 - Some sources are unofficial CDN endpoints; every source is degradable — one going down never breaks the brief.
 - This is a personal research tool, **not** investment advice.
 
-GDELT retains the current UTC week in the live database. A Sunday cleanup runs after that day's verified backup; preview candidates with `python -m arkwatch gdelt-retention`.
+GDELT retains the current UTC week in the live database. If Sunday cleanup has eligible rows, it creates a verified temporary snapshot and removes it after post-cleanup checks pass; preview candidates with `python -m arkwatch gdelt-retention`.
 
 ## License
 

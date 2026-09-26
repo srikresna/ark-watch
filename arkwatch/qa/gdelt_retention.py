@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from .. import db as _db
 from .backup import BACKUP_DIR
@@ -51,25 +53,24 @@ def _protected_events(conn: sqlite3.Connection, cutoff: str) -> int:
     ).fetchone()[0]
 
 
-def _verify_backup(db_path: Path, backup_path: Path, now: datetime) -> dict[str, int]:
-    if not backup_path.is_file():
-        raise FileNotFoundError(f"verified daily pre-cleanup backup required: {backup_path}")
-    modified = datetime.fromtimestamp(backup_path.stat().st_mtime, UTC)
-    age = now.astimezone(UTC) - modified
-    if age < timedelta(0) or age > timedelta(hours=12):
-        raise ValueError("daily pre-cleanup backup timestamp is outside the 12-hour window")
+def _old_fetch_log_rows(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM fetch_log WHERE ts < datetime('now', '-180 day')"
+    ).fetchone()[0]
 
+
+def _verify_backup(db_path: Path, backup_path: Path) -> dict[str, int]:
     source = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
     backup = sqlite3.connect(backup_path.as_uri() + "?mode=ro", uri=True)
     try:
         if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-            raise ValueError("pre-cleanup backup integrity check failed")
+            raise ValueError("temporary pre-cleanup backup integrity check failed")
         counts = {}
-        for table in ("gdelt_events", "gdelt_mentions", "gdelt_gkg"):
+        for table in ("raw_observations", "instrument_prices", "events", *TABLES):
             live_count = source.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             backup_count = backup.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             if live_count != backup_count:
-                raise ValueError(f"pre-cleanup backup row count mismatch: {table}")
+                raise ValueError(f"temporary pre-cleanup backup row count mismatch: {table}")
             counts[table] = live_count
         return counts
     finally:
@@ -77,12 +78,35 @@ def _verify_backup(db_path: Path, backup_path: Path, now: datetime) -> dict[str,
         backup.close()
 
 
+def _create_temporary_backup(db_path: Path, now: datetime) -> tuple[Path, int, dict]:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = BACKUP_DIR / f".gdelt-retention-before-{stamp}-{uuid4().hex[:8]}.db"
+    source = sqlite3.connect(db_path)
+    source.execute("PRAGMA busy_timeout=30000")
+    old_umask = os.umask(0o177)
+    try:
+        source.execute("VACUUM INTO ?", (str(destination),))
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        os.umask(old_umask)
+        source.close()
+    os.chmod(destination, 0o600)
+    try:
+        counts = _verify_backup(db_path, destination)
+        return destination, destination.stat().st_size, counts
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+
 def clean(
     db_path: str | Path,
     *,
     now: datetime | None = None,
     apply: bool = False,
-    backup_path: str | Path | None = None,
 ) -> dict:
     """Preview or apply age-based GDELT deletion; preview is the default."""
     instant = now or datetime.now(UTC)
@@ -102,22 +126,29 @@ def clean(
             "window": "current_utc_week",
             "tables": {table: _summary(conn, table, cutoff) for table in TABLES},
             "protected_events": _protected_events(conn, cutoff),
+            "fetch_log_candidates": _old_fetch_log_rows(conn),
         }
         if not apply:
             return result
 
-        daily_backup = (
-            Path(backup_path).resolve()
-            if backup_path
-            else BACKUP_DIR / f"arkwatch-{instant.astimezone(UTC):%Y%m%d}.db"
-        )
-        result["backup_counts"] = _verify_backup(path, daily_backup, instant)
+        if (
+            not any(item["rows"] for item in result["tables"].values())
+            and not result["fetch_log_candidates"]
+        ):
+            result["deleted"] = {table: 0 for table in TABLES}
+            result["fetch_log_deleted"] = 0
+            result["temporary_backup_bytes"] = 0
+            result["temporary_backup_removed"] = True
+            return result
+
+        temporary_backup, backup_bytes, backup_counts = _create_temporary_backup(path, instant)
+        result["temporary_backup_bytes"] = backup_bytes
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for table, backup_count in result["backup_counts"].items():
+            for table, backup_count in backup_counts.items():
                 live_count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 if live_count != backup_count:
-                    raise RuntimeError(f"GDELT changed after backup verification: {table}")
+                    raise RuntimeError(f"database changed after backup verification: {table}")
             deleted = {}
             for table in TABLES:
                 extra = (
@@ -129,15 +160,28 @@ def clean(
                 params = (cutoff, cutoff) if extra else (cutoff,)
                 cursor = conn.execute(f"DELETE FROM {table} WHERE fetched_at < ?{extra}", params)
                 deleted[table] = cursor.rowcount
+            fetch_log = conn.execute("DELETE FROM fetch_log WHERE ts < datetime('now', '-180 day')")
+            remaining = {table: _summary(conn, table, cutoff)["rows"] for table in TABLES}
+            if any(remaining.values()):
+                raise RuntimeError(f"GDELT retention postcondition failed: {remaining}")
+            quick_check = conn.execute("PRAGMA quick_check").fetchone()[0]
+            if quick_check != "ok":
+                raise RuntimeError(f"database quick_check after GDELT cleanup: {quick_check}")
             conn.commit()
         except Exception:
             conn.rollback()
             raise
         result["deleted"] = deleted
+        result["fetch_log_deleted"] = fetch_log.rowcount
         result["freelist_pages"] = conn.execute("PRAGMA freelist_count").fetchone()[0]
+        conn.close()
+        conn = None
+        temporary_backup.unlink()
+        result["temporary_backup_removed"] = not temporary_backup.exists()
         return result
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _require_database(path: Path) -> int:
@@ -168,13 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arkwatch gdelt-retention")
     parser.add_argument("--db", default="data/arkwatch.db")
     parser.add_argument("--apply", action="store_true", help="delete eligible records")
-    parser.add_argument("--backup", help="verified pre-cleanup database backup")
     args = parser.parse_args(argv)
-    result = clean(
-        args.db,
-        apply=args.apply,
-        backup_path=args.backup,
-    )
+    result = clean(args.db, apply=args.apply)
     print(result)
     return 0
 
