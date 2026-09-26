@@ -1,6 +1,8 @@
 """Offline tests for the GEO: geopolitics fetchers (energy channel tier 4)."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from arkwatch.fetchers import geo
 
 
@@ -52,6 +54,7 @@ class TestGeoRegistry:
         assert not missing, f"unregistered: {missing}"
 
     def test_window_floors(self, monkeypatch):
-        rows = [{"ts": "2026-09-14", "value": 189.53}]
+        recent_date = (datetime.now(UTC).date() - timedelta(days=9)).isoformat()
+        rows = [{"ts": recent_date, "value": 189.53}]
         monkeypatch.setitem(geo.GEO_SERIES, "GPRD", lambda: rows)
-        assert geo.fetch_window("GEO:GPRD", days=10) == rows
+        assert geo.fetch_window("GEO:GPRD", days=1) == rows
