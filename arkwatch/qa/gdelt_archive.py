@@ -15,6 +15,7 @@ FEED_SUFFIXES = {
     "gkg": ".gkg.csv.zip",
 }
 WINDOW = timedelta(minutes=15)
+MAX_FIELD_SIZE = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -101,4 +102,9 @@ def download_rows(session, feed: str, url: str) -> list[list[str]]:
             raise RuntimeError(f"GDELT {feed} archive is empty")
         with archive.open(names[0]) as raw:
             rows = csv.reader(io.TextIOWrapper(raw, encoding="utf-8", errors="replace"), delimiter="\t")
-            return [row for row in rows if row]
+            previous_limit = csv.field_size_limit()
+            csv.field_size_limit(max(previous_limit, MAX_FIELD_SIZE))
+            try:
+                return [row for row in rows if row]
+            finally:
+                csv.field_size_limit(previous_limit)

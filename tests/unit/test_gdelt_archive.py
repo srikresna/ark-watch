@@ -1,3 +1,4 @@
+import csv
 import io
 import zipfile
 from datetime import UTC, datetime
@@ -86,6 +87,33 @@ def test_archive_download_parses_zipped_tsv_and_holds_on_404():
 
     with pytest.raises(gdelt_archive.ArchiveUnavailable):
         gdelt_archive.download_rows(MissingSession(), "export", "https://example.test/missing.zip")
+
+
+def test_archive_download_accepts_large_fields_and_restores_csv_limit():
+    value = "x" * (128 * 1024 + 1)
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data.csv", f"{value}\tvalue\n")
+    zip_content = content.getvalue()
+
+    class Response:
+        status_code = 200
+        content = zip_content
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class Session:
+        @staticmethod
+        def get(_url, *, timeout):
+            return Response()
+
+    previous_limit = csv.field_size_limit()
+    assert gdelt_archive.download_rows(Session(), "gkg", "https://example.test/a.zip") == [
+        [value, "value"]
+    ]
+    assert csv.field_size_limit() == previous_limit
 
 
 def test_catchup_advances_watermark_only_after_each_window_commits(tmp_path, monkeypatch):
