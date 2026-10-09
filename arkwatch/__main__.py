@@ -165,6 +165,7 @@ def main() -> int:
 
         from . import db
         from .signals.playbook_tracker import (
+            dispatch_telegram_trading_signal,
             format_tracker_detailed_report,
             format_trade_decision_log,
             get_playbook_performance_metrics,
@@ -198,8 +199,13 @@ def main() -> int:
             default=None,
             help="display timezone (default: ET / UTC-4, or WIB, UTC)",
         )
+        p.add_argument(
+            "--tele",
+            "--send-tele",
+            action="store_true",
+            help="send trade signal directly to Telegram",
+        )
         p.add_argument("--json", action="store_true", help="output as raw JSON")
-        p.add_argument("--limit", type=int, default=20, help="limit recent trades shown in table")
         p.add_argument("--db", default=str(_DEFAULT_DB))
         a = p.parse_args(sys.argv[2:])
         conn = db.get_conn(a.db, allow_init=True)
@@ -207,10 +213,23 @@ def main() -> int:
         target_id = a.id or a.uid
         if target_id:
             trade = get_trade_by_uid(conn, target_id)
-            conn.close()
             if not trade:
+                conn.close()
                 print(f"Trade #{target_id} not found in database.")
                 return 1
+            if a.tele:
+                ok = dispatch_telegram_trading_signal(conn, trade["uid"], display_tz=a.tz)
+                conn.close()
+                if ok:
+                    print(
+                        f"✅ Sinyal trading #{trade['id']} ({trade['symbol']} {trade['direction']}) berhasil dikirim ke Telegram!"
+                    )
+                else:
+                    print(
+                        "⚠ Gagal mengirim sinyal ke Telegram (periksa TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID di .env)."
+                    )
+                return 0
+            conn.close()
             if a.json:
                 print(json.dumps(trade, indent=2))
             else:
