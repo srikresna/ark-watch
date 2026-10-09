@@ -631,9 +631,9 @@ def evaluate_active_playbooks(
 
 def get_playbook_performance_metrics(
     conn: sqlite3.Connection,
-    *,
     symbol: str | None = None,
     horizon: str | None = None,
+    outcome: str | None = None,
     detail: bool = False,
 ) -> dict[str, Any]:
     """Calculate institutional performance metrics: Win Rate, Profit Factor, MFE/MAE, and R-Multiple."""
@@ -645,9 +645,22 @@ def get_playbook_performance_metrics(
     if horizon:
         where_clauses.append("horizon = ?")
         params.append(horizon.strip().upper())
+    if outcome:
+        out_u = outcome.strip().upper()
+        if out_u in ("WIN", "WINS"):
+            where_clauses.append("state = 'HIT_TARGET_WIN'")
+        elif out_u in ("LOSS", "LOSE", "LOSSES"):
+            where_clauses.append("state = 'HIT_STOP_LOSS'")
+        elif out_u in ("BE", "BREAKEVEN"):
+            where_clauses.append(
+                "state = 'CANCELLED_EXPIRED' AND pnl_points = 0.0 AND mfe_points > 0"
+            )
+        elif out_u == "PENDING":
+            where_clauses.append("state = 'PENDING_TRIGGER'")
+        elif out_u == "ACTIVE":
+            where_clauses.append("state = 'ACTIVE'")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
     rows = conn.execute(
         f"""
         SELECT state, pnl_points, r_multiple, mfe_points, mae_points
@@ -718,44 +731,45 @@ def get_playbook_performance_metrics(
     if detail:
         trade_rows = conn.execute(
             f"""
-            SELECT scenario_uid, symbol, horizon, direction, scenario_id, title,
+            SELECT rowid, scenario_uid, symbol, horizon, direction, scenario_id, title,
                    trigger_price, target_profit, invalidation_level, risk_reward_ratio,
                    state, entry_price, exit_price, pnl_points, r_multiple,
                    mfe_points, mae_points, created_at_utc, triggered_at_utc, resolved_at_utc, payload_json
             FROM playbook_scenarios
             {where_sql}
-            ORDER BY created_at_utc DESC
+            ORDER BY rowid DESC
             """,
             params,
         ).fetchall()
         trades = []
         for t in trade_rows:
             try:
-                p_data = json.loads(t[20]) if t[20] else {}
+                p_data = json.loads(t[21]) if t[21] else {}
             except Exception:
                 p_data = {}
             trades.append(
                 {
-                    "uid": t[0],
-                    "symbol": t[1],
-                    "horizon": t[2],
-                    "direction": t[3],
-                    "scenario_id": t[4],
-                    "title": t[5],
-                    "trigger_price": t[6],
-                    "target_profit": t[7],
-                    "invalidation_level": t[8],
-                    "risk_reward_ratio": t[9],
-                    "state": t[10],
-                    "entry_price": t[11],
-                    "exit_price": t[12],
-                    "pnl_points": t[13],
-                    "r_multiple": t[14],
-                    "mfe_points": t[15],
-                    "mae_points": t[16],
-                    "created_at_utc": t[17],
-                    "triggered_at_utc": t[18],
-                    "resolved_at_utc": t[19],
+                    "id": t[0],
+                    "uid": t[1],
+                    "symbol": t[2],
+                    "horizon": t[3],
+                    "direction": t[4],
+                    "scenario_id": t[5],
+                    "title": t[6],
+                    "trigger_price": t[7],
+                    "target_profit": t[8],
+                    "invalidation_level": t[9],
+                    "risk_reward_ratio": t[10],
+                    "state": t[11],
+                    "entry_price": t[12],
+                    "exit_price": t[13],
+                    "pnl_points": t[14],
+                    "r_multiple": t[15],
+                    "mfe_points": t[16],
+                    "mae_points": t[17],
+                    "created_at_utc": t[18],
+                    "triggered_at_utc": t[19],
+                    "resolved_at_utc": t[20],
                     "decision_log": p_data.get("decision_log", []),
                 }
             )
@@ -876,46 +890,61 @@ def build_tracker_breakdowns(trades: list[dict[str, Any]]) -> dict[str, Any]:
     return {"by_symbol": symbol_table, "by_scenario": scenario_table}
 
 
-def get_trade_by_uid(conn: sqlite3.Connection, uid: str) -> dict[str, Any] | None:
-    """Fetch exact trade row and parsed decision log by scenario UID."""
-    row = conn.execute(
-        """
-        SELECT scenario_uid, symbol, horizon, direction, scenario_id, title,
-               trigger_price, target_profit, invalidation_level, risk_reward_ratio,
-               state, entry_price, exit_price, pnl_points, r_multiple,
-               mfe_points, mae_points, created_at_utc, triggered_at_utc, resolved_at_utc, payload_json
-        FROM playbook_scenarios
-        WHERE scenario_uid = ?
-        """,
-        (uid.strip(),),
-    ).fetchone()
+def get_trade_by_uid(conn: sqlite3.Connection, identifier: str | int) -> dict[str, Any] | None:
+    """Fetch exact trade row and parsed decision log by short numeric ID or scenario UID."""
+    raw_str = str(identifier).strip().lstrip("#")
+    if raw_str.isdigit():
+        row = conn.execute(
+            """
+            SELECT rowid, scenario_uid, symbol, horizon, direction, scenario_id, title,
+                   trigger_price, target_profit, invalidation_level, risk_reward_ratio,
+                   state, entry_price, exit_price, pnl_points, r_multiple,
+                   mfe_points, mae_points, created_at_utc, triggered_at_utc, resolved_at_utc, payload_json
+            FROM playbook_scenarios
+            WHERE rowid = ?
+            """,
+            (int(raw_str),),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT rowid, scenario_uid, symbol, horizon, direction, scenario_id, title,
+                   trigger_price, target_profit, invalidation_level, risk_reward_ratio,
+                   state, entry_price, exit_price, pnl_points, r_multiple,
+                   mfe_points, mae_points, created_at_utc, triggered_at_utc, resolved_at_utc, payload_json
+            FROM playbook_scenarios
+            WHERE scenario_uid = ? OR scenario_uid LIKE ?
+            """,
+            (raw_str, f"%{raw_str}%"),
+        ).fetchone()
     if not row:
         return None
     try:
-        p_data = json.loads(row[20]) if row[20] else {}
+        p_data = json.loads(row[21]) if row[21] else {}
     except Exception:
         p_data = {}
     return {
-        "uid": row[0],
-        "symbol": row[1],
-        "horizon": row[2],
-        "direction": row[3],
-        "scenario_id": row[4],
-        "title": row[5],
-        "trigger_price": row[6],
-        "target_profit": row[7],
-        "invalidation_level": row[8],
-        "risk_reward_ratio": row[9],
-        "state": row[10],
-        "entry_price": row[11],
-        "exit_price": row[12],
-        "pnl_points": row[13],
-        "r_multiple": row[14],
-        "mfe_points": row[15],
-        "mae_points": row[16],
-        "created_at_utc": row[17],
-        "triggered_at_utc": row[18],
-        "resolved_at_utc": row[19],
+        "id": row[0],
+        "uid": row[1],
+        "symbol": row[2],
+        "horizon": row[3],
+        "direction": row[4],
+        "scenario_id": row[5],
+        "title": row[6],
+        "trigger_price": row[7],
+        "target_profit": row[8],
+        "invalidation_level": row[9],
+        "risk_reward_ratio": row[10],
+        "state": row[11],
+        "entry_price": row[12],
+        "exit_price": row[13],
+        "pnl_points": row[14],
+        "r_multiple": row[15],
+        "mfe_points": row[16],
+        "mae_points": row[17],
+        "created_at_utc": row[18],
+        "triggered_at_utc": row[19],
+        "resolved_at_utc": row[20],
         "decision_log": p_data.get("decision_log", []),
     }
 
@@ -986,22 +1015,23 @@ def format_tracker_detailed_report(
     if trades:
         lines.append(f"📜 JURNAL TRANSAKSI TERAKHIR (RECENT TRADES JOURNAL - Waktu: {tz_lbl}):")
         lines.append(
-            f"  {'Waktu Selesai':<18} | {'Sym':<6} | {'Dir':<5} | {'Setup Name':<30} | {'Entry':>9} | {'Exit':>9} | {'PnL Pts':>8} | {'R-Mult':>6} | {'Status':<14}"
+            f"  {'#ID':<5} | {'Waktu Selesai':<18} | {'Sym':<6} | {'Dir':<5} | {'Setup Name':<28} | {'Entry':>9} | {'Exit':>9} | {'PnL Pts':>8} | {'R-Mult':>6} | {'Status':<14}"
         )
-        lines.append("  " + "-" * 115)
+        lines.append("  " + "-" * 120)
         for t in trades[:limit_trades]:
+            t_id = f"#{t.get('id', '-')}"
             ts_res = t.get("resolved_at_utc")
             ts_str = format_session_id(ts_res, display_tz) if ts_res else "RUNNING"
             sym = t.get("symbol", "-")
             d = t.get("direction", "-")
-            title = t.get("title", t.get("scenario_id", "-"))[:30]
+            title = t.get("title", t.get("scenario_id", "-"))[:28]
             ent = f"{t['entry_price']:.2f}" if t.get("entry_price") is not None else "-"
             ex = f"{t['exit_price']:.2f}" if t.get("exit_price") is not None else "-"
             pnl = f"{t['pnl_points']:+.2f}" if t.get("pnl_points") is not None else "-"
             r = f"{t['r_multiple']:+.2f}R" if t.get("r_multiple") is not None else "-"
             st = t.get("state", "-").replace("HIT_TARGET_", "").replace("CANCELLED_", "")
             lines.append(
-                f"  {ts_str:<18} | {sym:<6} | {d:<5} | {title:<30} | {ent:>9} | {ex:>9} | {pnl:>8} | {r:>6} | {st:<14}"
+                f"  {t_id:<5} | {ts_str:<18} | {sym:<6} | {d:<5} | {title:<28} | {ent:>9} | {ex:>9} | {pnl:>8} | {r:>6} | {st:<14}"
             )
         lines.append("=" * 105)
 
@@ -1013,8 +1043,9 @@ def format_trade_decision_log(trade: dict[str, Any], display_tz: str | None = No
     _, tz_lbl = resolve_timezone(display_tz)
     lines = []
     lines.append("=" * 95)
-    lines.append(f"                    DETAIL AUDIT TRANSAKSI: {trade.get('uid')}")
-    lines.append("=" * 95)
+    lines.append(
+        f"                    DETAIL AUDIT TRANSAKSI #{trade.get('id')}: {trade.get('uid')}"
+    )
     lines.append(
         f"  Simbol    : {trade.get('symbol')} ({trade.get('horizon')})           "
         f"Arah       : {trade.get('direction')}"

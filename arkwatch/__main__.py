@@ -165,35 +165,51 @@ def main() -> int:
 
         from . import db
         from .signals.playbook_tracker import (
-            format_trade_decision_log,
             format_tracker_detailed_report,
+            format_trade_decision_log,
             get_playbook_performance_metrics,
             get_trade_by_uid,
         )
 
         p = argparse.ArgumentParser(prog="arkwatch tracker")
-        p.add_argument("symbol", nargs="?", default=None, help="filter by symbol")
+        p.add_argument("symbol", nargs="?", default=None, help="filter by symbol (e.g. NQ1, ES1)")
+        p.add_argument(
+            "--id", type=str, default=None, help="inspect trade by short ID number (e.g. 85)"
+        )
+        p.add_argument(
+            "--uid", type=str, default=None, help="inspect trade by ID number or scenario UID"
+        )
         p.add_argument("--horizon", choices=["INTRADAY", "SWING"], default=None)
+        p.add_argument("--win", "--wins", action="store_true", help="filter only winning trades")
+        p.add_argument(
+            "--loss", "--lose", "--losses", action="store_true", help="filter only losing trades"
+        )
+        p.add_argument(
+            "--be", "--breakeven", action="store_true", help="filter only breakeven trades"
+        )
+        p.add_argument("--pending", action="store_true", help="filter only pending trigger trades")
+        p.add_argument("--active", action="store_true", help="filter only active running trades")
         p.add_argument(
             "--detail", action="store_true", help="show individual trade details and decision logs"
         )
         p.add_argument(
-            "--uid", type=str, default=None, help="inspect specific scenario UID decision log"
-        )
-        p.add_argument(
-            "--tz", type=str, default=None, help="display timezone (default: ET / UTC-4, or WIB, UTC)"
+            "--tz",
+            type=str,
+            default=None,
+            help="display timezone (default: ET / UTC-4, or WIB, UTC)",
         )
         p.add_argument("--json", action="store_true", help="output as raw JSON")
-        p.add_argument("--limit", type=int, default=15, help="limit recent trades shown in table")
+        p.add_argument("--limit", type=int, default=20, help="limit recent trades shown in table")
         p.add_argument("--db", default=str(_DEFAULT_DB))
         a = p.parse_args(sys.argv[2:])
         conn = db.get_conn(a.db, allow_init=True)
 
-        if a.uid:
-            trade = get_trade_by_uid(conn, a.uid)
+        target_id = a.id or a.uid
+        if target_id:
+            trade = get_trade_by_uid(conn, target_id)
             conn.close()
             if not trade:
-                print(f"Scenario UID '{a.uid}' not found in database.")
+                print(f"Trade #{target_id} not found in database.")
                 return 1
             if a.json:
                 print(json.dumps(trade, indent=2))
@@ -201,13 +217,25 @@ def main() -> int:
                 print(format_trade_decision_log(trade, display_tz=a.tz))
             return 0
 
+        outcome_filter = None
+        if a.win:
+            outcome_filter = "WIN"
+        elif a.loss:
+            outcome_filter = "LOSS"
+        elif a.be:
+            outcome_filter = "BE"
+        elif a.pending:
+            outcome_filter = "PENDING"
+        elif a.active:
+            outcome_filter = "ACTIVE"
+
         res = get_playbook_performance_metrics(
-            conn, symbol=a.symbol, horizon=a.horizon, detail=True
+            conn, symbol=a.symbol, horizon=a.horizon, outcome=outcome_filter, detail=True
         )
         conn.close()
 
         if a.json:
-            if not a.detail:
+            if not a.detail and not outcome_filter:
                 res.pop("trades", None)
             print(json.dumps(res, indent=2))
         else:
