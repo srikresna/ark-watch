@@ -206,6 +206,7 @@ def main() -> int:
             help="send trade signal directly to Telegram",
         )
         p.add_argument("--json", action="store_true", help="output as raw JSON")
+        p.add_argument("--limit", type=int, default=20, help="limit recent trades shown in table")
         p.add_argument("--db", default=str(_DEFAULT_DB))
         a = p.parse_args(sys.argv[2:])
         conn = db.get_conn(a.db, allow_init=True)
@@ -258,7 +259,8 @@ def main() -> int:
                 res.pop("trades", None)
             print(json.dumps(res, indent=2))
         else:
-            print(format_tracker_detailed_report(res, display_tz=a.tz, limit_trades=a.limit))
+            limit_val = getattr(a, "limit", 20)
+            print(format_tracker_detailed_report(res, display_tz=a.tz, limit_trades=limit_val))
         return 0
     if cmd == "scanner":
         import argparse
