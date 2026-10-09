@@ -15,7 +15,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ..timezones import format_session_id, resolve_timezone
+from ..timezones import format_session_id, format_ts_display, resolve_timezone
 
 
 def record_playbook_scenarios(
@@ -308,7 +308,7 @@ def evaluate_active_playbooks(
                     """,
                     (trig_time, entry_price, json.dumps(cur_p), uid),
                 )
-
+                dispatch_telegram_trading_signal(conn, uid)
                 # 1. Close any existing ACTIVE opposing scenarios immediately (Reversal Exit Flip)
                 active_opposing = conn.execute(
                     """
@@ -616,7 +616,12 @@ def evaluate_active_playbooks(
                     stats["resolved_breakeven"] += 1
                 else:
                     stats["resolved_losses"] += 1
-            else:
+                dispatch_telegram_outcome_update(
+                    conn,
+                    uid,
+                    resolved_state,
+                    f"Closed at {exit_price} ({round(total_pnl, 2)} pts / {r_mult}R)",
+                )
                 conn.execute(
                     """
                     UPDATE playbook_scenarios
@@ -1078,6 +1083,190 @@ def format_trade_decision_log(trade: dict[str, Any], display_tz: str | None = No
         lines.append("  (Belum ada decision log tercatat)")
     lines.append("=" * 95)
     return "\n".join(lines)
+
+
+def dispatch_telegram_trading_signal(
+    conn: sqlite3.Connection,
+    scenario_uid: str,
+    *,
+    display_tz: str | None = None,
+) -> bool:
+    """Send an institutional formatted trading signal directly to Telegram when a scenario becomes ACTIVE."""
+    import html
+    import os
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        return False
+
+    trade = get_trade_by_uid(conn, scenario_uid)
+    if not trade:
+        return False
+
+    trade_id = trade.get("id", "-")
+    sym = trade.get("symbol", "-")
+    direction = str(trade.get("direction", "-")).upper()
+    dir_emoji = (
+        "🟢 LONG" if direction == "LONG" else ("🔴 SHORT" if direction == "SHORT" else direction)
+    )
+    title = html.escape(str(trade.get("title", "Trading Setup")))
+    horizon = trade.get("horizon", "INTRADAY")
+    trig_time = trade.get("triggered_at_utc") or trade.get("created_at_utc")
+    time_str = format_ts_display(trig_time, display_tz) if trig_time else "Just Now"
+
+    entry_p = trade.get("entry_price") or trade.get("trigger_price")
+    target_p = trade.get("target_profit")
+    inval_p = trade.get("invalidation_level")
+    rr = trade.get("risk_reward_ratio")
+
+    ent_str = f"{entry_p:,.2f}" if isinstance(entry_p, int | float) else str(entry_p)
+    tp_str = f"{target_p:,.2f}" if isinstance(target_p, int | float) else str(target_p)
+    sl_str = f"{inval_p:,.2f}" if isinstance(inval_p, int | float) else str(inval_p)
+
+    payload = conn.execute(
+        "SELECT payload_json FROM playbook_scenarios WHERE scenario_uid = ?", (scenario_uid,)
+    ).fetchone()
+    p_data = json.loads(payload[0]) if payload and payload[0] else {}
+    sc_data = p_data.get("scenario", {})
+    decision_val = sc_data.get("decision_system_validation", {})
+    m_struct = decision_val.get("market_structure", {})
+    m15_trend = m_struct.get("m15_trend", "N/A")
+    struct_conf = m_struct.get("structural_confluence", "N/A")
+    m_accept = decision_val.get("multi_horizon_acceptance", {})
+    accept_lon = m_accept.get("london_desk", "N/A")
+    tg = sc_data.get("timing_gate", {})
+    timing_cycle = tg.get("current_cycle") or tg.get("recommended_quarter") or "Active Session"
+    magnets = decision_val.get("liquidity_magnets", {})
+    t1_npoc = magnets.get("tier1_90m_npoc")
+    npoc_str = (
+        f"90m NPOC at {t1_npoc.get('poc', 'N/A')}"
+        if isinstance(t1_npoc, dict)
+        else "Dynamic Target"
+    )
+
+    trig_cond = html.escape(
+        str(
+            trade.get("trigger_condition")
+            or sc_data.get("trigger_condition", "Level Breakout / Acceptance")
+        )
+    )
+
+    msg = (
+        f"🚨 <b>ARK-WATCH TRADING SIGNAL [ACTIVE]</b> 🚨\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>Aset :</b> <code>{sym}</code> (#{trade_id})\n"
+        f"⚡ <b>Arah :</b> <b>{dir_emoji}</b>\n"
+        f"🎯 <b>Setup :</b> {title}\n"
+        f"⏱ <b>Horizon :</b> {horizon}\n"
+        f"🕒 <b>Waktu Masuk :</b> {time_str}\n\n"
+        f"📊 <b>LEVEL EKSEKUSI:</b>\n"
+        f"  • <b>Entry Price :</b> <code>{ent_str}</code>\n"
+        f"  • <b>Take Profit :</b> <code>{tp_str}</code>\n"
+        f"  • <b>Stop Loss   :</b> <code>{sl_str}</code>\n"
+        f"  • <b>Risk/Reward :</b> <b>1 : {rr}</b>\n\n"
+        f"🧠 <b>VALIDASI SISTEM (AMT & STRUKTUR):</b>\n"
+        f"  • <b>Struktur M15 :</b> {m15_trend} ({struct_conf})\n"
+        f"  • <b>Penerimaan   :</b> {accept_lon}\n"
+        f"  • <b>Pintu Waktu  :</b> {timing_cycle}\n"
+        f"  • <b>Magnet POC   :</b> {npoc_str}\n\n"
+        f"💡 <b>Pemicu:</b>\n"
+        f"<i>{trig_cond}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <i>ark-watch auto-signal engine</i>"
+    )
+
+    try:
+        from ..senders.telegram import _chat_id, _send_message
+
+        mid = _send_message(msg, _chat_id())
+        if mid:
+            p_data.setdefault("decision_log", []).append(
+                {
+                    "ts_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "event": "TELEGRAM_SIGNAL_DISPATCHED",
+                    "details": f"Telegram trading signal sent (Message ID: {mid})",
+                }
+            )
+            p_data["telegram_message_id"] = mid
+            p_data["telegram_sent_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+            conn.execute(
+                "UPDATE playbook_scenarios SET payload_json = ? WHERE scenario_uid = ?",
+                (json.dumps(p_data), scenario_uid),
+            )
+            return True
+    except Exception as e:
+        print(f"  ⚠ Telegram dispatch error: {e}")
+        return False
+    return False
+
+
+def dispatch_telegram_outcome_update(
+    conn: sqlite3.Connection,
+    scenario_uid: str,
+    outcome_event: str,
+    details_str: str,
+    *,
+    display_tz: str | None = None,
+) -> bool:
+    """Send outcome / exit notification directly to Telegram when a trade closes."""
+    import html
+    import os
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        return False
+
+    trade = get_trade_by_uid(conn, scenario_uid)
+    if not trade:
+        return False
+
+    trade_id = trade.get("id", "-")
+    sym = trade.get("symbol", "-")
+    direction = str(trade.get("direction", "-")).upper()
+    dir_emoji = (
+        "🟢 LONG" if direction == "LONG" else ("🔴 SHORT" if direction == "SHORT" else direction)
+    )
+    title = html.escape(str(trade.get("title", "Trading Setup")))
+    pnl = trade.get("pnl_points") or 0.0
+    r_mult = trade.get("r_multiple") or 0.0
+
+    if outcome_event in ("HIT_TARGET_WIN", "EARLY_FULL_TP", "PARTIAL_TP_50"):
+        head = "🎯 <b>TRADE UPDATE: TAKE PROFIT HIT [WIN]</b>"
+        pnl_str = f"<b>+{pnl:,.2f} pts (+{r_mult:.2f}R)</b>"
+    elif outcome_event == "HIT_BREAKEVEN":
+        head = "🛡 <b>TRADE UPDATE: BREAK-EVEN EXIT [BE]</b>"
+        pnl_str = f"<b>+{pnl:,.2f} pts (+{r_mult:.2f}R)</b>"
+    else:
+        head = "🛑 <b>TRADE UPDATE: STOP LOSS HIT [LOSS]</b>"
+        pnl_str = f"<b>{pnl:,.2f} pts ({r_mult:.2f}R)</b>"
+
+    exit_p = trade.get("exit_price")
+    exit_str = f"{exit_p:,.2f}" if isinstance(exit_p, int | float) else str(exit_p)
+
+    msg = (
+        f"{head}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>Aset :</b> <code>{sym}</code> (#{trade_id})\n"
+        f"⚡ <b>Arah :</b> <b>{dir_emoji}</b>\n"
+        f"🎯 <b>Setup :</b> {title}\n"
+        f"🚪 <b>Exit Price :</b> <code>{exit_str}</code>\n"
+        f"💰 <b>Hasil PnL  :</b> {pnl_str}\n\n"
+        f"📋 <b>Detail:</b>\n"
+        f"<i>{html.escape(details_str)}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <i>ark-watch auto-signal engine</i>"
+    )
+
+    try:
+        from ..senders.telegram import _chat_id, _send_message
+
+        mid = _send_message(msg, _chat_id())
+        return bool(mid)
+    except Exception as e:
+        print(f"  ⚠ Telegram outcome update error: {e}")
+        return False
 
 
 def evaluate_counterfactual_outcomes(
