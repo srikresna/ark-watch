@@ -138,11 +138,18 @@ def main() -> int:
         p.add_argument(
             "--cfd-offset", type=float, default=0.0, help="offset in points to match CFD quotes"
         )
+        p.add_argument(
+            "--tz",
+            type=str,
+            default=None,
+            help="timezone for display (default: ET / UTC-4, or WIB, UTC, etc.)",
+        )
         p.add_argument("--db", default=str(_DEFAULT_DB))
         a = p.parse_args(sys.argv[2:])
         conn = db.get_conn(a.db, allow_init=True)
-        res = generate_trading_playbook(conn, a.symbol, cfd_basis_offset=a.cfd_offset)
-        conn.close()
+        res = generate_trading_playbook(
+            conn, a.symbol, cfd_basis_offset=a.cfd_offset, display_tz=a.tz
+        )
         if not res:
             print(f"No intraday bars found for {a.symbol}")
             return 1

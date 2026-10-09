@@ -14,6 +14,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..timezones import format_ts_display, resolve_timezone
 from ..transforms import xccy
 from . import cot_signals, etf_flows, fiscal, options, vixterm
 from .crypto import liquidation_summary
@@ -33,7 +34,6 @@ from .recession import recession_snapshot
 from .sentiment import compute_asset_sentiment_radar, compute_intraday_catalyst_radar
 
 OPTIONS_PRODUCT_MAP: dict[str, str] = {
-    "NQ1": "NQ",
     "ES1": "ES",
     "YM1": "YM",
     "GC1": "OG",
@@ -169,10 +169,9 @@ def generate_trading_playbook(
     *,
     as_of: datetime | str | None = None,
     cfd_basis_offset: float = 0.0,
+    display_tz: str | None = None,
 ) -> dict[str, Any] | None:
-    """Generate an actionable probabilistic trading playbook with target profits and invalidation levels."""
     sym = symbol.strip().upper()
-
     if as_of is None:
         target_dt = datetime.now(UTC)
     elif isinstance(as_of, str):
@@ -222,16 +221,7 @@ def generate_trading_playbook(
     npoc_week = h_npoc.get("weekly_virgin_pocs", {})
     npoc_month = h_npoc.get("monthly_virgin_pocs", {})
     npoc_year = h_npoc.get("yearly_virgin_pocs", {})
-
     multi_ib = ctx.get("multi_desk_initial_balance", {})
-    asia_ib = multi_ib.get("asia_open_ib", {})
-    london_ib = multi_ib.get("london_open_ib", {})
-    us_ib = multi_ib.get("us_cash_open_ib", {})
-    sub_90m_ib = multi_ib.get("sub_quarter_90m_micro_ib", {})
-    weekly_ib = multi_ib.get("weekly_initial_balance_monday", {})
-    monthly_ib = multi_ib.get("monthly_initial_balance_week1", {})
-    yearly_ib = multi_ib.get("yearly_initial_balance_q1", {})
-
     m_open_types = ctx.get("multi_horizon_open_types", {})
     m_structure = ctx.get("multi_timeframe_market_structure", {})
     m15_struct = m_structure.get("m15_structure", {})
@@ -1255,7 +1245,7 @@ def generate_trading_playbook(
         mm = on_cva.get("dalton_measured_move", {})
         if on_vah and last_price >= on_vah:
             target_on = mm.get("upside_breakout_target")
-            if isinstance(target_on, (int, float)):
+            if isinstance(target_on, int | float):
                 trig_on = round(on_vah + cfd_basis_offset, 2)
                 inval_on = round(
                     (on_poc if on_poc else (on_vah - 0.2 * daily_atr)) + cfd_basis_offset, 2
@@ -1292,7 +1282,7 @@ def generate_trading_playbook(
                     )
         elif on_val and last_price <= on_val:
             target_on_s = mm.get("downside_breakout_target")
-            if isinstance(target_on_s, (int, float)):
+            if isinstance(target_on_s, int | float):
                 trig_on_s = round(on_val + cfd_basis_offset, 2)
                 inval_on_s = round(
                     (on_poc if on_poc else (on_val + 0.2 * daily_atr)) + cfd_basis_offset, 2
@@ -1330,7 +1320,7 @@ def generate_trading_playbook(
 
     # [H] SWING SCENARIO: Weekly Virgin POC Magnet
     wpoc_below = npoc_week.get("nearest_naked_poc_below")
-    if isinstance(wpoc_below, dict) and isinstance(wpoc_below.get("poc"), (int, float)):
+    if isinstance(wpoc_below, dict) and isinstance(wpoc_below.get("poc"), int | float):
         w_target = round(wpoc_below["poc"] + cfd_basis_offset, 2)
         if last_price > w_target:
             trig_w = round(val if val and val < last_price else last_price, 2)
@@ -1427,7 +1417,16 @@ def generate_trading_playbook(
                         else "nearest_naked_poc_below"
                     )
                 ),
+                "tier5_yearly_virgin_poc": _safe_m(
+                    npoc_year.get(
+                        "nearest_naked_poc_above"
+                        if dir_str == "LONG"
+                        else "nearest_naked_poc_below"
+                    )
+                ),
             },
+            "initial_balance_context": multi_ib,
+            "cva_confluence_map": cva_map,
         }
         return sc
 
@@ -1439,6 +1438,8 @@ def generate_trading_playbook(
     out_dict = {
         "symbol": sym,
         "as_of": now_utc,
+        "as_of_display": format_ts_display(now_utc, display_tz),
+        "display_timezone": resolve_timezone(display_tz)[1],
         "last_price": round(last_price, 4),
         "reference_levels": {
             k: (
