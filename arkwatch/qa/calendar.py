@@ -15,15 +15,13 @@ import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .. import db
 from ..config import load_curated_calendar
 from ..fetchers import calendar as cal
+from ..timezones import ET
 
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
-ET = ZoneInfo("America/New_York")
-
 TIME_PRECEDENCE = {"CURATED": 0, "TV": 1, "CME": 2, "FMP": 3, "EODHD": 4}
 VALUE_PRECEDENCE = {"FMP": 0, "EODHD": 1, "CME": 2, "TV": 3}
 
@@ -302,9 +300,7 @@ def save(db_path: str, events: list[dict]) -> int:
     conn = db.get_conn(db_path, allow_init=True)
     rows = []
     for e in events:
-        if any(
-            e["normalized_name"].startswith(p) for p in DEAD_SUBCOMPONENT_PREFIXES
-        ):
+        if any(e["normalized_name"].startswith(p) for p in DEAD_SUBCOMPONENT_PREFIXES):
             continue  # dead family — never carries numbers, pure ingest noise
         if _dead_stub(e["normalized_name"]):
             continue  # CME stub — schedule marker only; its data twin (if
@@ -400,11 +396,7 @@ def save(db_path: str, events: list[dict]) -> int:
             "AND actual IS NULL AND event_uid<>?6 "
             "AND (consensus IS NULL OR (ABS(?2) >= 0.1*ABS(consensus)"
             "     AND ABS(?2) <= 10*ABS(consensus)))",
-            [
-                (r[0], r[9], r[10], r[14], r[1], r[0])
-                for r in rows
-                if r[9] is not None
-            ],
+            [(r[0], r[9], r[10], r[14], r[1], r[0]) for r in rows if r[9] is not None],
         )
         conn.execute("COMMIT")
     except Exception:

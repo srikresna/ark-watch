@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
-NY_TZ = ZoneInfo("America/New_York")
+from ..timezones import NY_TZ
 
 SESSION_HOURS_ET: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
     # format: ((start_hour, start_min), (end_hour, end_min)) in New York Time (ET)

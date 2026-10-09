@@ -16,10 +16,10 @@ import argparse
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .. import db
 from ..fetchers import cme
+from ..timezones import now_wib
 
 DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
 
@@ -268,11 +268,11 @@ def _fire(
     if _cooldown_active(conn, key, permanent=cooldown_key is not None):
         return False
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
+    wib_dt = now_wib()
     priority = "urgent" if alert_type in URGENT else "normal"
     # Display stamp in WIB (triggered_at stays UTC-based)
     msg = (
-        f"⚠ WIB {now_wib.strftime('%H:%M')} · {alert_type.upper()}\n"
+        f"⚠ WIB {wib_dt.strftime('%H:%M')} · {alert_type.upper()}\n"
         f"{condition}\n{context}\n💡 {action}"
     )
     conn.execute("BEGIN IMMEDIATE")
@@ -389,8 +389,10 @@ def check_all(conn) -> list[str]:
         # ROUND-8: the ×1000 claimed by 9ddd78a never landed (pattern
         # mismatch) — WALCL is stored $M, the threshold is $B; the message's
         # own /1000 display proves the unit convention.
-        if prev_delta is not None and abs(delta) >= NET_LIQ_MIN_ABS_B * 1000 and (
-            (delta > 0) != (prev_delta > 0)
+        if (
+            prev_delta is not None
+            and abs(delta) >= NET_LIQ_MIN_ABS_B * 1000
+            and ((delta > 0) != (prev_delta > 0))
         ):
             direction = "EXPANSION" if delta > 0 else "CONTRACTION"
             if _fire(
@@ -399,9 +401,7 @@ def check_all(conn) -> list[str]:
                 f"Fed BS ΔWoM: {delta / 1000:+.0f}B (from {prev_delta / 1000:+.0f}B)",
                 f"Reversal to {direction} (liquidity proxy)",
                 "This is a liquidity-regime signal; adjust BTC/index risk",
-                cooldown_key=(
-                    f"net_liq_reversal@{walcl_lv[0][:10] if walcl_lv else '?'}"
-                ),
+                cooldown_key=(f"net_liq_reversal@{walcl_lv[0][:10] if walcl_lv else '?'}"),
             ):
                 fired.append("net_liq_reversal")
 
@@ -631,9 +631,7 @@ def check_all(conn) -> list[str]:
                 "Context, not a trade signal — watch the next auctions' tails + dealer inventory",
                 # term in the key: 10Y and a fallback 5Y weak on the SAME
                 # auction date must not silence each other
-                cooldown_key=(
-                    f"auction_demand_weak@{fd_alert['term']}@{fd_alert['auction_date']}"
-                ),
+                cooldown_key=(f"auction_demand_weak@{fd_alert['term']}@{fd_alert['auction_date']}"),
             ):
                 fired.append("auction_demand_weak")
     except Exception as ex:
@@ -758,7 +756,8 @@ def check_all(conn) -> list[str]:
     ).fetchone()[0]
     cu_age = (
         (datetime.now(UTC).date() - datetime.fromisoformat(cu_ts[:10]).date()).days
-        if cu_ts else 9999
+        if cu_ts
+        else 9999
     )
     if cu_age > 45:
         print(f"  ⚠ copper trigger skipped: LME stocks frozen {cu_age}d ({cu_ts})")
@@ -845,6 +844,7 @@ def check_all(conn) -> list[str]:
         ).fetchall()
     ]
     if ecb_dates:
+
         def _nearest(d: str):
             return conn.execute(
                 "SELECT meeting_date, prob_ease, prob_hold, prob_hike, implied_rate"
@@ -855,6 +855,7 @@ def check_all(conn) -> list[str]:
 
         cur = _nearest(ecb_dates[0])
         if cur:
+
             def _dominant(r):
                 vals = {"cut": r[1], "hold": r[2], "hike": r[3]}
                 return max(vals, key=vals.get)
@@ -881,9 +882,7 @@ def check_all(conn) -> list[str]:
             # (b) high conviction inside the decision window — one alert
             # per snapshot date (≤1/day across the window)
             if prob >= ECB_HIGH_CONVICT_PROB and act in ("hike", "cut"):
-                days_left = (
-                    datetime.fromisoformat(cur[0]).date() - datetime.now(UTC).date()
-                ).days
+                days_left = (datetime.fromisoformat(cur[0]).date() - datetime.now(UTC).date()).days
                 if 0 <= days_left <= ECB_HIGH_CONVICT_DAYS:
                     if _fire(
                         conn,

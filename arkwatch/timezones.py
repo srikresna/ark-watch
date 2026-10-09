@@ -11,14 +11,45 @@ import re
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
-# Canonical Timezone Definitions
+# Canonical Timezone Definitions & Aliases
 NY_TZ = ZoneInfo("America/New_York")
+ET = NY_TZ
+NEW_YORK = NY_TZ
+
 WIB_TZ = ZoneInfo("Asia/Jakarta")
+WIB = WIB_TZ
+
+LONDON_TZ = ZoneInfo("Europe/London")
+LONDON = LONDON_TZ
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+CHICAGO = CHICAGO_TZ
+
 UTC_TZ = UTC
 
 # Project Default Display Timezone (ET / UTC-4)
 DEFAULT_DISPLAY_TZ = "America/New_York"
 DEFAULT_DISPLAY_LABEL = "ET"
+
+
+def now_utc() -> datetime:
+    """Return current aware UTC datetime."""
+    return datetime.now(UTC_TZ)
+
+
+def now_et() -> datetime:
+    """Return current aware New York (ET) datetime."""
+    return datetime.now(NY_TZ)
+
+
+def now_wib() -> datetime:
+    """Return current aware Jakarta (WIB) datetime."""
+    return datetime.now(WIB_TZ)
+
+
+def now_display(tz_target: str | int | float | tzinfo | None = None) -> str:
+    """Return current time formatted for display in default or requested timezone."""
+    return format_ts_display(now_utc(), tz_target)
 
 
 def resolve_timezone(

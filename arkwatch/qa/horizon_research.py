@@ -15,12 +15,9 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from scipy import stats as scipy_stats
 from statsmodels.stats.multitest import multipletests
-
-NY_TZ = ZoneInfo("America/New_York")
 
 
 def generate_extended_hypotheses_matrix() -> list[dict[str, Any]]:

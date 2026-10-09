@@ -300,12 +300,11 @@ def main() -> int:
         return 2
     if cmd == "brief":
         import sqlite3
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
 
         from dotenv import load_dotenv
 
         from .signals.compute import run as brief_run
+        from .timezones import now_wib
 
         load_dotenv()
         dbp = _DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2]
@@ -318,7 +317,7 @@ def main() -> int:
             conn = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
             gen = conn.execute(
                 "SELECT 1 FROM brief_log WHERE date=?",
-                (_dt.now(_ZI("Asia/Jakarta")).date().isoformat(),),
+                (now_wib().date().isoformat(),),
             ).fetchone()
             conn.close()
         except sqlite3.Error:

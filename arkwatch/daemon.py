@@ -17,15 +17,13 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+
+from .timezones import LONDON, NEW_YORK, WIB
 
 ROOT = Path(__file__).resolve().parent.parent
 HEARTBEAT = ROOT / "data" / "daemon_heartbeat"
 LOCKFILE = ROOT / "data" / "daemon.lock"
 LOG_DIR = ROOT / "logs"
-WIB = ZoneInfo("Asia/Jakarta")
-LONDON = ZoneInfo("Europe/London")
-NEW_YORK = ZoneInfo("America/New_York")
 
 # Schedule entries: (hour, minute, day, job_cmd, description)
 # day: daily | monday..saturday | sunday — literal day tokens as used below;
