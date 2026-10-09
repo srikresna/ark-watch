@@ -46,6 +46,7 @@ from .horizons import (
     subdivide_micro_22m,
     subdivide_quarter_90m,
 )
+from ..timezones import format_session_id
 
 US_CASH_OPEN_UTC_SUMMER = time(13, 30)  # 09:30 ET during EDT
 US_CASH_OPEN_UTC_WINTER = time(14, 30)  # 09:30 ET during EST
@@ -291,9 +292,8 @@ def compute_session_reference_levels(
     for r in rows:
         if r[0] >= cutoff_90m:
             b_epoch = int(datetime.fromisoformat(r[0]).astimezone(UTC).timestamp())
-            b_id = datetime.fromtimestamp((b_epoch // 5400) * 5400, tz=UTC).strftime(
-                "%Y-%m-%d %H:%M UTC"
-            )
+            b_dt_utc = datetime.fromtimestamp((b_epoch // 5400) * 5400, tz=UTC)
+            b_id = format_session_id(b_dt_utc)
             sq_bars[b_id].append(
                 (r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
             )
