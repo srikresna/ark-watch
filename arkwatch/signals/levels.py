@@ -292,7 +292,7 @@ def compute_session_reference_levels(
         if r[0] >= cutoff_90m:
             b_epoch = int(datetime.fromisoformat(r[0]).astimezone(UTC).timestamp())
             b_id = datetime.fromtimestamp((b_epoch // 5400) * 5400, tz=UTC).strftime(
-                "%Y-%m-%d %H:%M"
+                "%Y-%m-%d %H:%M UTC"
             )
             sq_bars[b_id].append(
                 (r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
