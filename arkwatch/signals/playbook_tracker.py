@@ -15,6 +15,8 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..timezones import format_session_id, resolve_timezone
+
 
 def record_playbook_scenarios(
     conn: sqlite3.Connection,
@@ -757,9 +759,294 @@ def get_playbook_performance_metrics(
                     "decision_log": p_data.get("decision_log", []),
                 }
             )
+        breakdowns = build_tracker_breakdowns(trades)
+        res["breakdown_by_symbol"] = breakdowns["by_symbol"]
+        res["breakdown_by_scenario"] = breakdowns["by_scenario"]
         res["trades"] = trades
 
     return res
+
+
+def build_tracker_breakdowns(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Calculate granular breakdowns by asset symbol and by scenario pattern."""
+    from collections import defaultdict
+
+    by_sym = defaultdict(
+        lambda: {
+            "total": 0,
+            "completed": 0,
+            "wins": 0,
+            "losses": 0,
+            "breakevens": 0,
+            "net_pnl": 0.0,
+            "gross_win": 0.0,
+            "gross_loss": 0.0,
+            "r_list": [],
+        }
+    )
+    by_sc = defaultdict(
+        lambda: {
+            "total": 0,
+            "completed": 0,
+            "wins": 0,
+            "losses": 0,
+            "breakevens": 0,
+            "r_list": [],
+        }
+    )
+
+    for t in trades:
+        s = t.get("symbol", "UNKNOWN")
+        st = t.get("state", "UNKNOWN")
+        pnl = t.get("pnl_points") or 0.0
+        r = t.get("r_multiple")
+        sc = t.get("scenario_id", "UNKNOWN").replace("SCENARIO_", "")
+
+        by_sym[s]["total"] += 1
+        by_sc[sc]["total"] += 1
+
+        if st == "HIT_TARGET_WIN":
+            by_sym[s]["wins"] += 1
+            by_sym[s]["completed"] += 1
+            by_sc[sc]["wins"] += 1
+            by_sc[sc]["completed"] += 1
+            if pnl > 0:
+                by_sym[s]["gross_win"] += pnl
+        elif st == "HIT_STOP_LOSS":
+            by_sym[s]["losses"] += 1
+            by_sym[s]["completed"] += 1
+            by_sc[sc]["losses"] += 1
+            by_sc[sc]["completed"] += 1
+            if pnl < 0:
+                by_sym[s]["gross_loss"] += abs(pnl)
+        elif pnl == 0.0 and (t.get("mfe_points") or 0.0) > 0:
+            by_sym[s]["breakevens"] += 1
+            by_sym[s]["completed"] += 1
+            by_sc[sc]["breakevens"] += 1
+            by_sc[sc]["completed"] += 1
+
+        by_sym[s]["net_pnl"] += pnl
+        if r is not None and st in ("HIT_TARGET_WIN", "HIT_STOP_LOSS"):
+            by_sym[s]["r_list"].append(r)
+            by_sc[sc]["r_list"].append(r)
+
+    symbol_table = []
+    for s, d in sorted(by_sym.items(), key=lambda x: x[1]["total"], reverse=True):
+        comp = d["completed"]
+        wr = round((d["wins"] / comp * 100), 1) if comp > 0 else 0.0
+        avg_r = round(sum(d["r_list"]) / len(d["r_list"]), 2) if d["r_list"] else 0.0
+        pf = (
+            round(d["gross_win"] / d["gross_loss"], 2)
+            if d["gross_loss"] > 0
+            else (9.9 if d["gross_win"] > 0 else 0.0)
+        )
+        symbol_table.append(
+            {
+                "symbol": s,
+                "total_scenarios": d["total"],
+                "completed_trades": comp,
+                "wins": d["wins"],
+                "losses": d["losses"],
+                "breakevens": d["breakevens"],
+                "win_rate_pct": wr,
+                "net_pnl_points": round(d["net_pnl"], 2),
+                "profit_factor": pf,
+                "avg_r_multiple": avg_r,
+            }
+        )
+
+    scenario_table = []
+    for sc, d in sorted(by_sc.items(), key=lambda x: x[1]["total"], reverse=True):
+        comp = d["completed"]
+        wr = round((d["wins"] / comp * 100), 1) if comp > 0 else 0.0
+        avg_r = round(sum(d["r_list"]) / len(d["r_list"]), 2) if d["r_list"] else 0.0
+        scenario_table.append(
+            {
+                "scenario": sc,
+                "total_scenarios": d["total"],
+                "completed_trades": comp,
+                "wins": d["wins"],
+                "losses": d["losses"],
+                "breakevens": d["breakevens"],
+                "win_rate_pct": wr,
+                "avg_r_multiple": avg_r,
+            }
+        )
+
+    return {"by_symbol": symbol_table, "by_scenario": scenario_table}
+
+
+def get_trade_by_uid(conn: sqlite3.Connection, uid: str) -> dict[str, Any] | None:
+    """Fetch exact trade row and parsed decision log by scenario UID."""
+    row = conn.execute(
+        """
+        SELECT scenario_uid, symbol, horizon, direction, scenario_id, title,
+               trigger_price, target_profit, invalidation_level, risk_reward_ratio,
+               state, entry_price, exit_price, pnl_points, r_multiple,
+               mfe_points, mae_points, created_at_utc, triggered_at_utc, resolved_at_utc, payload_json
+        FROM playbook_scenarios
+        WHERE scenario_uid = ?
+        """,
+        (uid.strip(),),
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        p_data = json.loads(row[20]) if row[20] else {}
+    except Exception:
+        p_data = {}
+    return {
+        "uid": row[0],
+        "symbol": row[1],
+        "horizon": row[2],
+        "direction": row[3],
+        "scenario_id": row[4],
+        "title": row[5],
+        "trigger_price": row[6],
+        "target_profit": row[7],
+        "invalidation_level": row[8],
+        "risk_reward_ratio": row[9],
+        "state": row[10],
+        "entry_price": row[11],
+        "exit_price": row[12],
+        "pnl_points": row[13],
+        "r_multiple": row[14],
+        "mfe_points": row[15],
+        "mae_points": row[16],
+        "created_at_utc": row[17],
+        "triggered_at_utc": row[18],
+        "resolved_at_utc": row[19],
+        "decision_log": p_data.get("decision_log", []),
+    }
+
+
+def format_tracker_detailed_report(
+    res: dict[str, Any],
+    display_tz: str | None = None,
+    limit_trades: int = 15,
+) -> str:
+    """Format full tracker metrics, asset breakdown, setup breakdown, and journal into terminal dashboard."""
+    _, tz_lbl = resolve_timezone(display_tz)
+
+    lines = []
+    lines.append("=" * 105)
+    lines.append(
+        f"                    ARK-WATCH PLAYBOOK PERFORMANCE TRACKER REPORT (TZ: {tz_lbl})"
+    )
+    lines.append("=" * 105)
+    lines.append(
+        f"  Total Skenario   : {res.get('total_scenarios', 0):<4}                    "
+        f"Win Rate        : {res.get('win_rate_pct', 0.0)}% ({res.get('wins', 0)}W / {res.get('losses', 0)}L / {res.get('breakevens', 0)}BE)"
+    )
+    lines.append(
+        f"  Completed Trades : {res.get('completed_trades', 0):<4}                    "
+        f"Profit Factor   : {res.get('profit_factor', 0.0)}"
+    )
+    lines.append(
+        f"  Pending Trigger  : {res.get('pending', 0):<4}                    "
+        f"Avg R-Multiple  : {res.get('avg_r_multiple', 0.0):+.2f}R"
+    )
+    lines.append(
+        f"  Active Running   : {res.get('active', 0):<4}                    "
+        f"Avg MFE / MAE   : +{res.get('avg_mfe', 0.0)} pts / -{res.get('avg_mae', 0.0)} pts"
+    )
+    lines.append(f"  Invalidated/Exp  : {res.get('invalidated', 0):<4}")
+    lines.append("-" * 105)
+
+    # 1. Asset Breakdown
+    by_sym = res.get("breakdown_by_symbol", [])
+    if by_sym:
+        lines.append("📈 PERFORMA PER INSTRUMEN (ASSET BREAKDOWN):")
+        lines.append(
+            f"  {'Simbol':<8} | {'Total':>5} | {'Done':>5} | {'Win':>4} | {'Loss':>4} | {'BE':>3} | {'WinRate':>7} | {'Net PnL':>11} | {'ProfitFac':>9} | {'Avg R':>7}"
+        )
+        lines.append("  " + "-" * 95)
+        for d in by_sym:
+            lines.append(
+                f"  {d['symbol']:<8} | {d['total_scenarios']:>5} | {d['completed_trades']:>5} | {d['wins']:>4} | {d['losses']:>4} | {d['breakevens']:>3} | {d['win_rate_pct']:>6.1f}% | {d['net_pnl_points']:>11.2f} | {d['profit_factor']:>9.2f} | {d['avg_r_multiple']:>+6.2f}R"
+            )
+        lines.append("-" * 105)
+
+    # 2. Setup Breakdown
+    by_sc = res.get("breakdown_by_scenario", [])
+    if by_sc:
+        lines.append("🎯 PERFORMA PER TIPE SETUP / SKENARIO LELANG (SETUP BREAKDOWN):")
+        lines.append(
+            f"  {'Setup Pattern':<44} | {'Trades':>6} | {'Done':>5} | {'Win':>4} | {'Loss':>4} | {'BE':>3} | {'WinRate':>7} | {'Avg R':>7}"
+        )
+        lines.append("  " + "-" * 95)
+        for d in by_sc:
+            lines.append(
+                f"  {d['scenario']:<44} | {d['total_scenarios']:>6} | {d['completed_trades']:>5} | {d['wins']:>4} | {d['losses']:>4} | {d['breakevens']:>3} | {d['win_rate_pct']:>6.1f}% | {d['avg_r_multiple']:>+6.2f}R"
+            )
+        lines.append("-" * 105)
+
+    # 3. Recent Trades Journal
+    trades = res.get("trades", [])
+    if trades:
+        lines.append(f"📜 JURNAL TRANSAKSI TERAKHIR (RECENT TRADES JOURNAL - Waktu: {tz_lbl}):")
+        lines.append(
+            f"  {'Waktu Selesai':<18} | {'Sym':<6} | {'Dir':<5} | {'Setup Name':<30} | {'Entry':>9} | {'Exit':>9} | {'PnL Pts':>8} | {'R-Mult':>6} | {'Status':<14}"
+        )
+        lines.append("  " + "-" * 115)
+        for t in trades[:limit_trades]:
+            ts_res = t.get("resolved_at_utc")
+            ts_str = format_session_id(ts_res, display_tz) if ts_res else "RUNNING"
+            sym = t.get("symbol", "-")
+            d = t.get("direction", "-")
+            title = t.get("title", t.get("scenario_id", "-"))[:30]
+            ent = f"{t['entry_price']:.2f}" if t.get("entry_price") is not None else "-"
+            ex = f"{t['exit_price']:.2f}" if t.get("exit_price") is not None else "-"
+            pnl = f"{t['pnl_points']:+.2f}" if t.get("pnl_points") is not None else "-"
+            r = f"{t['r_multiple']:+.2f}R" if t.get("r_multiple") is not None else "-"
+            st = t.get("state", "-").replace("HIT_TARGET_", "").replace("CANCELLED_", "")
+            lines.append(
+                f"  {ts_str:<18} | {sym:<6} | {d:<5} | {title:<30} | {ent:>9} | {ex:>9} | {pnl:>8} | {r:>6} | {st:<14}"
+            )
+        lines.append("=" * 105)
+
+    return "\n".join(lines)
+
+
+def format_trade_decision_log(trade: dict[str, Any], display_tz: str | None = None) -> str:
+    """Format comprehensive chronological decision log for a single trade scenario."""
+    _, tz_lbl = resolve_timezone(display_tz)
+    lines = []
+    lines.append("=" * 95)
+    lines.append(f"                    DETAIL AUDIT TRANSAKSI: {trade.get('uid')}")
+    lines.append("=" * 95)
+    lines.append(
+        f"  Simbol    : {trade.get('symbol')} ({trade.get('horizon')})           "
+        f"Arah       : {trade.get('direction')}"
+    )
+    lines.append(f"  Setup     : {trade.get('title')}")
+    lines.append(
+        f"  Status    : {trade.get('state')}                     "
+        f"Risk/Reward: 1 : {trade.get('risk_reward_ratio')}"
+    )
+    lines.append(
+        f"  Trigger   : {trade.get('trigger_price')}                  "
+        f"Take Profit: {trade.get('target_profit')}  |  Stop Loss: {trade.get('invalidation_level')}"
+    )
+    ent = f"{trade['entry_price']:.2f}" if trade.get("entry_price") is not None else "-"
+    ex = f"{trade['exit_price']:.2f}" if trade.get("exit_price") is not None else "-"
+    pnl = f"{trade['pnl_points']:+.2f}" if trade.get("pnl_points") is not None else "-"
+    r_val = f"{trade['r_multiple']:+.2f}R" if trade.get("r_multiple") is not None else "-"
+    lines.append(f"  Eksekusi  : Entry {ent} -> Exit {ex} | PnL: {pnl} pts ({r_val})")
+    lines.append(
+        f"  Ekskursi  : MFE (Max Run-up) +{trade.get('mfe_points', 0)} pts  |  MAE (Max Drawdown) -{trade.get('mae_points', 0)} pts"
+    )
+    lines.append("-" * 95)
+    lines.append(f"📜 KRONOLOGI DECISION LOG RIIL (Waktu: {tz_lbl}):")
+    logs = trade.get("decision_log", [])
+    if logs:
+        for item in logs:
+            ts_str = format_session_id(item.get("ts_utc", ""), display_tz)
+            lines.append(f"  [{ts_str}] {item.get('event', ''):<20} -> {item.get('details', '')}")
+    else:
+        lines.append("  (Belum ada decision log tercatat)")
+    lines.append("=" * 95)
+    return "\n".join(lines)
 
 
 def evaluate_counterfactual_outcomes(

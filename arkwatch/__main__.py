@@ -164,7 +164,12 @@ def main() -> int:
         load_dotenv()
 
         from . import db
-        from .signals.playbook_tracker import get_playbook_performance_metrics
+        from .signals.playbook_tracker import (
+            format_trade_decision_log,
+            format_tracker_detailed_report,
+            get_playbook_performance_metrics,
+            get_trade_by_uid,
+        )
 
         p = argparse.ArgumentParser(prog="arkwatch tracker")
         p.add_argument("symbol", nargs="?", default=None, help="filter by symbol")
@@ -172,14 +177,41 @@ def main() -> int:
         p.add_argument(
             "--detail", action="store_true", help="show individual trade details and decision logs"
         )
+        p.add_argument(
+            "--uid", type=str, default=None, help="inspect specific scenario UID decision log"
+        )
+        p.add_argument(
+            "--tz", type=str, default=None, help="display timezone (default: ET / UTC-4, or WIB, UTC)"
+        )
+        p.add_argument("--json", action="store_true", help="output as raw JSON")
+        p.add_argument("--limit", type=int, default=15, help="limit recent trades shown in table")
         p.add_argument("--db", default=str(_DEFAULT_DB))
         a = p.parse_args(sys.argv[2:])
         conn = db.get_conn(a.db, allow_init=True)
+
+        if a.uid:
+            trade = get_trade_by_uid(conn, a.uid)
+            conn.close()
+            if not trade:
+                print(f"Scenario UID '{a.uid}' not found in database.")
+                return 1
+            if a.json:
+                print(json.dumps(trade, indent=2))
+            else:
+                print(format_trade_decision_log(trade, display_tz=a.tz))
+            return 0
+
         res = get_playbook_performance_metrics(
-            conn, symbol=a.symbol, horizon=a.horizon, detail=a.detail
+            conn, symbol=a.symbol, horizon=a.horizon, detail=True
         )
         conn.close()
-        print(json.dumps(res, indent=2))
+
+        if a.json:
+            if not a.detail:
+                res.pop("trades", None)
+            print(json.dumps(res, indent=2))
+        else:
+            print(format_tracker_detailed_report(res, display_tz=a.tz, limit_trades=a.limit))
         return 0
     if cmd == "scanner":
         import argparse
