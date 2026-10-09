@@ -17,6 +17,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
+from ..timezones import format_session_id
 from .amt import (
     ASSET_TICK_SIZES,
     analyze_initial_balance,
@@ -46,7 +47,6 @@ from .horizons import (
     subdivide_micro_22m,
     subdivide_quarter_90m,
 )
-from ..timezones import format_session_id
 
 US_CASH_OPEN_UTC_SUMMER = time(13, 30)  # 09:30 ET during EDT
 US_CASH_OPEN_UTC_WINTER = time(14, 30)  # 09:30 ET during EST
