@@ -1637,7 +1637,8 @@ def generate_trading_playbook(
         },
     }
 
-    # Record scenarios into playbook_scenarios tracker table
+    # Evaluate existing pending/active scenarios first, then record new scenarios
+    evaluate_active_playbooks(conn, as_of=target_dt)
     record_playbook_scenarios(conn, out_dict, cfd_basis_offset=cfd_basis_offset)
     evaluate_active_playbooks(conn, as_of=target_dt)
     out_dict["performance_tracker"] = get_playbook_performance_metrics(conn, symbol=sym)

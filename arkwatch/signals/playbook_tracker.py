@@ -77,11 +77,7 @@ def record_playbook_scenarios(
                     risk_reward_ratio, created_at_utc, session_id, state,
                     cfd_basis_offset, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_TRIGGER', ?, ?)
-                ON CONFLICT(scenario_uid) DO UPDATE SET
-                    target_profit=excluded.target_profit,
-                    invalidation_level=excluded.invalidation_level,
-                    payload_json=excluded.payload_json
-                WHERE state = 'PENDING_TRIGGER'
+                ON CONFLICT(scenario_uid) DO NOTHING
                 """,
                 (
                     scenario_uid,
