@@ -86,3 +86,11 @@ def test_handle_incoming_commands(tmp_path, monkeypatch):
     assert "PERFORMANCE TRACKER" in sent_messages[-1][1]
 
     conn.close()
+
+
+def test_redact_telegram_secrets(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABCDEF_SECRET_TOKEN")
+    raw_err = "HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot123456:ABCDEF_SECRET_TOKEN/sendMessage"
+    clean = telegram.redact_telegram_secrets(raw_err)
+    assert "ABCDEF_SECRET_TOKEN" not in clean
+    assert "/bot[REDACTED]/sendMessage" in clean

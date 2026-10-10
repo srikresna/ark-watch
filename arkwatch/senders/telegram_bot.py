@@ -27,7 +27,7 @@ from typing import Any
 import requests
 
 from ..timezones import format_session_id, resolve_timezone
-from .telegram import API, _send_message, _token
+from .telegram import API, _send_message, _token, redact_telegram_secrets
 
 logger = logging.getLogger("arkwatch.telegram_bot")
 
@@ -420,14 +420,12 @@ def handle_incoming_message(conn: sqlite3.Connection, message: dict[str, Any]) -
             reply = "🔕 <b>Langganan Sinyal Otomatis DINONAKTIFKAN.</b>\nAnda tetap dapat menggunakan perintah interaktif seperti <code>/playbook</code> dan <code>/tracker</code> kapan saja. Ketik <code>/subscribe</code> untuk mengaktifkan kembali."
         else:
             reply = "❓ Perintah tidak dikenali. Ketik <code>/help</code> untuk melihat daftar perintah yang tersedia."
-
-        _send_message(reply, chat_id)
     except Exception as e:
-        logger.error(f"Error handling command {cmd_raw} for chat {chat_id}: {e}")
-        _send_message(
-            f"⚠ Terjadi kesalahan saat memproses perintah: <code>{html.escape(str(e)[:120])}</code>",
-            chat_id,
-        )
+        safe_err = redact_telegram_secrets(str(e))
+        logger.error(f"Error handling command {cmd_raw} for chat {chat_id}: {safe_err}")
+        reply = f"⚠ Terjadi kesalahan saat memproses perintah: <code>{html.escape(safe_err[:120])}</code>"
+
+    _send_message(reply, chat_id)
 
 
 def run_bot_polling(db_path: str | Path) -> None:
@@ -465,7 +463,7 @@ def run_bot_polling(db_path: str | Path) -> None:
                         handle_incoming_message(conn, msg)
                 conn.close()
         except Exception as e:
-            logger.debug(f"Telegram polling transient error: {e}")
+            logger.debug(f"Telegram polling transient error: {redact_telegram_secrets(str(e))}")
             time.sleep(5)
 
 
