@@ -1177,18 +1177,18 @@ def dispatch_telegram_trading_signal(
     )
 
     try:
-        from ..senders.telegram import _chat_id, _send_message
+        from ..senders.telegram import broadcast_message
 
-        mid = _send_message(msg, _chat_id())
-        if mid:
+        mids = broadcast_message(conn, msg)
+        if mids:
             p_data.setdefault("decision_log", []).append(
                 {
                     "ts_utc": datetime.now(UTC).isoformat(timespec="seconds"),
                     "event": "TELEGRAM_SIGNAL_DISPATCHED",
-                    "details": f"Telegram trading signal sent (Message ID: {mid})",
+                    "details": f"Telegram trading signal broadcasted to {len(mids)} subscriber(s) (Msg IDs: {mids})",
                 }
             )
-            p_data["telegram_message_id"] = mid
+            p_data["telegram_message_ids"] = mids
             p_data["telegram_sent_at"] = datetime.now(UTC).isoformat(timespec="seconds")
             conn.execute(
                 "UPDATE playbook_scenarios SET payload_json = ? WHERE scenario_uid = ?",
@@ -1260,10 +1260,10 @@ def dispatch_telegram_outcome_update(
     )
 
     try:
-        from ..senders.telegram import _chat_id, _send_message
+        from ..senders.telegram import broadcast_message
 
-        mid = _send_message(msg, _chat_id())
-        return bool(mid)
+        mids = broadcast_message(conn, msg)
+        return bool(mids)
     except Exception as e:
         print(f"  ⚠ Telegram outcome update error: {e}")
         return False

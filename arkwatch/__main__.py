@@ -474,6 +474,14 @@ def main() -> int:
         from .qa.explore import main as ex_main
 
         return ex_main(sys.argv[2:])
+    if cmd == "bot":
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        from .senders.telegram_bot import run_bot_polling
+
+        run_bot_polling(_DEFAULT_DB)
+        return 0
     print(f"arkwatch: perintah '{cmd}' tidak dikenali. Ketik 'arkwatch help' untuk panduan.")
     return 2
 

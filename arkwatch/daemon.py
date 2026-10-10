@@ -377,6 +377,12 @@ def run_loop():
     last_watch = 0.0
     last_market_bucket = ""
     last_news_bucket = ""
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    from .senders.telegram_bot import start_bot_background_thread
+
+    start_bot_background_thread(ROOT / "data" / "arkwatch.db")
     try:
         while True:
             _heartbeat()
