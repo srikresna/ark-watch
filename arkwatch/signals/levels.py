@@ -13,13 +13,15 @@ from 5-minute intraday bars (intraday_bars) with 100% auditable provenance:
 from __future__ import annotations
 
 import sqlite3
+from bisect import bisect_right
+from calendar import monthrange
 from collections import defaultdict
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from ..timezones import format_session_id
 from .amt import (
     ASSET_TICK_SIZES,
+    CRYPTO_SYMBOLS,
     analyze_initial_balance,
     classify_open_type,
     classify_participant_activity,
@@ -34,9 +36,14 @@ from .amt import (
     evaluate_vpoc_tpoc_relationship,
     find_naked_pocs,
     get_asset_ib_timing,
+    split_rth,
 )
 from .amt_horizons import compute_horizon_amt
+from .asof import parse_as_of
 from .horizons import (
+    FRANKFURT_TZ,
+    LONDON_TZ,
+    cme_session_date,
     get_active_quarterly_cycles,
     get_month_week_anchor_ny,
     get_monthly_quarter,
@@ -44,48 +51,27 @@ from .horizons import (
     get_session_window,
     get_weekly_quarter,
     get_yearly_cycle,
+    local_open_utc,
     subdivide_micro_22m,
     subdivide_quarter_90m,
+    to_ny_time,
 )
 
-US_CASH_OPEN_UTC_SUMMER = time(13, 30)  # 09:30 ET during EDT
-US_CASH_OPEN_UTC_WINTER = time(14, 30)  # 09:30 ET during EST
+BAR_INTERVAL = "5m"
+BAR_SPAN = timedelta(minutes=5)
+# Bounded history: 13 weeks covers the 12-week virgin-POC tier (the oldest, partial week
+# falls outside it) and the 20-session naked-POC lookback
+HISTORY_WINDOW = timedelta(weeks=13)
 
 
-def _is_dst_edt(dt: datetime) -> bool:
-    """Check if date falls within US Daylight Saving Time (EDT, UTC-4)."""
-    m = dt.month
-    if 4 <= m <= 10:
-        return True
-    if m == 3 and dt.day >= 8:
-        return True
-    return bool(m == 11 and dt.day <= 7 and dt.weekday() != 6)
+def _get_cme_session_id(dt: datetime | str) -> str:
+    """Map a timestamp to its CME Trading Session Date (18:00 ET yesterday to 17:00 ET today)."""
+    return cme_session_date(dt).isoformat()
 
 
-def _get_cash_open_time(dt: datetime) -> time:
-    """Determine US cash open in UTC based on DST (EDT vs EST)."""
-    return US_CASH_OPEN_UTC_SUMMER if _is_dst_edt(dt) else US_CASH_OPEN_UTC_WINTER
-
-
-def _get_cme_session_id(dt: datetime) -> str:
-    """Map UTC timestamp to CME Trading Session Date (18:00 ET yesterday to 17:00 ET today)."""
-    edt = _is_dst_edt(dt)
-    shift_hour = 22 if edt else 23  # 18:00 ET in UTC
-    if dt.hour >= shift_hour:
-        # Bars starting at 18:00 ET belong to the next calendar trading day
-        session_dt = dt.date() + timedelta(days=1)
-        return session_dt.isoformat()
-    return dt.date().isoformat()
-
-
-def _get_cme_week_id(dt: datetime) -> str:
-    """Map UTC timestamp to CME Trading Week (Sunday 18:00 ET to Friday 17:00 ET)."""
-    edt = _is_dst_edt(dt)
-    shift_hour = 22 if edt else 23
-    effective_dt = dt
-    if dt.weekday() == 6 and dt.hour >= shift_hour:
-        effective_dt = dt + timedelta(days=1)
-    y, w, _ = effective_dt.isocalendar()
+def _get_cme_week_id(dt: datetime | str) -> str:
+    """Map a timestamp to its CME Trading Week (Sunday 18:00 ET to Friday 17:00 ET)."""
+    y, w, _ = cme_session_date(dt).isocalendar()
     return f"{y}-W{w:02d}"
 
 
@@ -97,61 +83,62 @@ def compute_session_reference_levels(
 ) -> dict[str, Any] | None:
     """Compute Prior Session (T-1) Levels, Overnight Range, Developing Weekly Multi-Anchor, and Confluence."""
     sym = symbol.strip().upper()
+    target_dt = parse_as_of(as_of)
 
-    if as_of is None:
-        target_dt = datetime.now(UTC)
-    elif isinstance(as_of, str):
-        target_dt = datetime.fromisoformat(as_of).astimezone(UTC)
-    else:
-        target_dt = as_of.astimezone(UTC)
-
-    # 1. Query all historical intraday bars up to target_dt
-    rows = conn.execute(
+    # 1. Load closed bars (bar open + 5m <= as_of) over a bounded window ending at the latest bar
+    upper = (target_dt - BAR_SPAN).isoformat(timespec="seconds")
+    latest = conn.execute(
+        "SELECT MAX(bar_ts_utc) FROM intraday_bars WHERE symbol = ? AND interval = ?"
+        " AND bar_ts_utc <= ?",
+        (sym, BAR_INTERVAL, upper),
+    ).fetchone()[0]
+    if latest is None:
+        return None
+    lower = (parse_as_of(latest) - HISTORY_WINDOW).isoformat(timespec="seconds")
+    raw = conn.execute(
         """
         SELECT bar_ts_utc, open, high, low, close, COALESCE(volume, 0.0), source
         FROM intraday_bars
-        WHERE symbol = ?
-          AND bar_ts_utc <= ?
-        ORDER BY bar_ts_utc ASC
+        WHERE symbol = ? AND interval = ?
+          AND bar_ts_utc >= ? AND bar_ts_utc <= ?
+        ORDER BY bar_ts_utc ASC, source ASC
         """,
-        (sym, target_dt.isoformat(timespec="seconds")),
+        (sym, BAR_INTERVAL, lower, upper),
     ).fetchall()
-
-    if not rows:
-        return None
+    # Several providers can store the same bar: keep one row per timestamp
+    rows: dict[str, tuple] = {}
+    for r in raw:
+        rows.setdefault(r[0], r)
+    all_bars = [
+        (ts, float(o), float(h), float(lo), float(c), float(v))
+        for ts, o, h, lo, c, v, _ in rows.values()
+    ]
 
     # 2. Segment bars by CME Trading Session ID and Trading Week ID
     session_bars: dict[str, list[tuple[str, float, float, float, float, float]]] = defaultdict(list)
     week_bars: dict[str, list[tuple[str, float, float, float, float, float]]] = defaultdict(list)
-    sources = set()
 
-    for r in rows:
-        ts_str, o, h, low_val, c, v, src = r
-        bar_dt = datetime.fromisoformat(ts_str).astimezone(UTC)
-        s_id = _get_cme_session_id(bar_dt)
-        w_id = _get_cme_week_id(bar_dt)
-        bar_tuple = (ts_str, float(o), float(h), float(low_val), float(c), float(v))
-        session_bars[s_id].append(bar_tuple)
-        week_bars[w_id].append(bar_tuple)
-        sources.add(src)
+    for b in all_bars:
+        session_bars[_get_cme_session_id(b[0])].append(b)
+        week_bars[_get_cme_week_id(b[0])].append(b)
 
     sorted_sessions = sorted(session_bars.keys())
-    if not sorted_sessions:
-        return None
-
-    curr_session_id = _get_cme_session_id(target_dt)
+    session_date = cme_session_date(target_dt)
+    curr_session_id = session_date.isoformat()
     curr_week_id = _get_cme_week_id(target_dt)
 
-    # Determine prior completed session
-    if curr_session_id in sorted_sessions:
-        idx = sorted_sessions.index(curr_session_id)
-        prior_session_id = sorted_sessions[idx - 1] if idx > 0 else sorted_sessions[0]
+    # Prior completed session. No bars yet in the current session (weekend, holiday, pre-open
+    # gap): the latest session with bars is the prior one and the current session is empty.
+    if curr_session_id in session_bars:
+        prior_idx = sorted_sessions.index(curr_session_id) - 1
+        if prior_idx < 0:
+            return None  # no completed prior session: there are no T-1 reference levels
+        curr_bars = session_bars[curr_session_id]
     else:
-        idx = len(sorted_sessions) - 1
-        prior_session_id = sorted_sessions[-1]
-        curr_session_id = prior_session_id
+        prior_idx = len(sorted_sessions) - 1
+        curr_bars = []
+    prior_session_id = sorted_sessions[prior_idx]
     prior_bars = session_bars[prior_session_id]
-    curr_bars = session_bars.get(curr_session_id, [rows[-1]])
 
     # 3. Prior Session (T-1) Reference Levels
     pdh = max(b[2] for b in prior_bars)
@@ -162,17 +149,8 @@ def compute_session_reference_levels(
     va_profile = compute_value_area(prior_bars, tick_size=ASSET_TICK_SIZES.get(sym))
 
     # 4. Overnight Session (Asia + London: 18:00 ET to 09:30 ET)
-    edt_active = _is_dst_edt(target_dt)
-    ib_open_time, ib_timing_label = get_asset_ib_timing(sym, is_dst=edt_active)
-
-    overnight_bars = []
-    rth_bars = []
-    for b in curr_bars:
-        b_dt = datetime.fromisoformat(b[0]).astimezone(UTC)
-        if b_dt.time() < ib_open_time:
-            overnight_bars.append(b)
-        else:
-            rth_bars.append(b)
+    ib_open_time, ib_timing_label = get_asset_ib_timing(sym, session_date)
+    overnight_bars, rth_bars = split_rth(curr_bars, ib_open_time)
 
     onh = max((b[2] for b in overnight_bars), default=None)
     onl = min((b[3] for b in overnight_bars), default=None)
@@ -193,7 +171,7 @@ def compute_session_reference_levels(
     weekly_va = compute_value_area(cur_week_bars)
 
     # 7. Latest Price and Confluence Analysis
-    latest_bar = curr_bars[-1]
+    latest_bar = (curr_bars or prior_bars)[-1]
     last_price = latest_bar[4]
     last_bar_ts = latest_bar[0]
 
@@ -269,7 +247,7 @@ def compute_session_reference_levels(
     )
 
     # Pilar 3: Value Migration Day-to-Day
-    prior_prior_bars = session_bars.get(sorted_sessions[idx - 2]) if idx >= 2 else None
+    prior_prior_bars = session_bars[sorted_sessions[prior_idx - 1]] if prior_idx >= 1 else None
     prior_prior_va = compute_value_area(prior_prior_bars) if prior_prior_bars else None
     value_migration = classify_value_migration(
         va_profile["vah"],
@@ -279,91 +257,103 @@ def compute_session_reference_levels(
         prior_prior_va["val"] if prior_prior_va else None,
         prior_prior_va["poc"] if prior_prior_va else None,
     )
-    target_d = target_dt.date()
+    # Quarterly Theory trading day: Q1 Asia opens 17:00 ET on the prior calendar day
+    qt_day = (to_ny_time(target_dt) + timedelta(hours=7)).date()
     active_qt = get_active_quarterly_cycles(target_dt)
-    q_bounds = get_quarterly_session_bounds(target_d)
+    q_bounds = get_quarterly_session_bounds(qt_day)
+    tick = ASSET_TICK_SIZES.get(sym)
+    # 5m bars sit on the 5m grid, so "closed by as_of" == "opened before as_of floored to 5m"
+    close_cutoff = target_dt.replace(
+        minute=target_dt.minute - target_dt.minute % 5, second=0, microsecond=0
+    )
+
+    def _hz(start: datetime, end: datetime) -> dict[str, Any] | None:
+        """Horizon profile over [start, end) from bars closed by as_of (no look-ahead)."""
+        end = min(end, close_cutoff)
+        return compute_horizon_amt(conn, sym, start, end) if start < end else None
+
+    bar_dts = [parse_as_of(b[0]) for b in all_bars]
+
+    def _between(start: datetime, end: datetime) -> list[tuple]:
+        return [b for t, b in zip(bar_dts, all_bars, strict=True) if start <= t < end]
+
     # Pilar 4: Dynamic N-Day CVA (Contiguous Balance Expansion & 100% Measured Move)
     dynamic_cva = compute_dynamic_cva(session_bars, min_sessions=2, max_sessions=8)
 
+    # Completed daily bars only (no look-ahead), one per date with YAHOO preferred. A futures
+    # daily bar is dated by its CME session; a crypto daily bar is a whole UTC day.
+    day_cutoff = target_dt.date().isoformat() if sym in CRYPTO_SYMBOLS else curr_session_id
+    daily: dict[str, tuple] = {}
+    for r in conn.execute(
+        "SELECT ts, open, high, low, close, volume FROM instrument_prices WHERE symbol = ?"
+        " AND source IN ('YAHOO', 'EODHD') AND ts < ? ORDER BY ts DESC, source = 'YAHOO' DESC",
+        (sym, day_cutoff),
+    ):
+        daily.setdefault(r[0][:10], r)
+    daily_raw = list(daily.values())  # newest first, OHLC may be NULL
+    daily_bars = [
+        (ts[:10], float(o if o is not None else c), float(h), float(lo), float(c), float(v or 0.0))
+        for ts, o, h, lo, c, v in reversed(daily_raw)
+        if h is not None and lo is not None and c is not None
+    ]  # oldest first
+    by_date = {b[0]: b for b in daily_bars}
+
+    def _days(after: date, upto: date) -> list[tuple]:
+        """Completed daily bars dated in (after, upto]."""
+        a, u = after.isoformat(), upto.isoformat()
+        return [b for b in daily_bars if a < b[0] <= u]
+
     # Pilar 5: Fractal Hierarchical Naked POCs (Micro to Yearly)
-    # Tier 1: Intraday 90m Sub-Quarter Naked POCs (Lookback last 3 days)
-    sq_bars = defaultdict(list)
-    cutoff_90m = (target_dt - timedelta(days=3)).isoformat(timespec="seconds")
-    for r in rows:
-        if r[0] >= cutoff_90m:
-            b_epoch = int(datetime.fromisoformat(r[0]).astimezone(UTC).timestamp())
-            b_dt_utc = datetime.fromtimestamp((b_epoch // 5400) * 5400, tz=UTC)
-            b_id = format_session_id(b_dt_utc)
-            sq_bars[b_id].append(
-                (r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
-            )
+    # Tier 1: QT 90m sub-quarter naked POCs over the last 3 days, keyed by sub-quarter start
+    sq_starts = sorted(
+        s
+        for i in range(5)
+        for qs_i, qe_i in get_quarterly_session_bounds(qt_day - timedelta(days=i)).values()
+        for s, _ in subdivide_quarter_90m(qs_i, qe_i)
+    )
+    sq_bars: dict[str, list] = defaultdict(list)
+    cutoff_3d = target_dt - timedelta(days=3)
+    for t, b in zip(bar_dts, all_bars, strict=True):
+        if t >= cutoff_3d:
+            sq_bars[sq_starts[bisect_right(sq_starts, t) - 1].isoformat()].append(b)
     intraday_90m_npocs = find_naked_pocs(sq_bars, last_price, lookback_sessions=48)
 
     # Tier 2: Session Naked POCs (anchored to IPDA 20D lookback)
     session_naked_pocs = find_naked_pocs(session_bars, last_price, lookback_sessions=20)
-
     # Tier 3: Weekly Virgin POCs (anchored to IPDA 60D = ~12 weeks lookback)
     weekly_naked_pocs = find_naked_pocs(week_bars, last_price, lookback_sessions=12)
-    # Tier 4 & 5: Monthly and Yearly Virgin POCs (from instrument_prices)
-    month_bars_dict = defaultdict(list)
-    year_bars_dict = defaultdict(list)
-    rows_hist = conn.execute(
-        "SELECT strftime('%Y-%m', ts), ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND source IN ('YAHOO', 'EODHD') ORDER BY ts ASC",
-        (sym,),
-    ).fetchall()
-    for r in rows_hist:
-        if r[3] is None or r[4] is None or r[5] is None:
-            continue
-        b_hist = (
-            r[1],
-            float(r[2] if r[2] is not None else r[5]),
-            float(r[3]),
-            float(r[4]),
-            float(r[5]),
-            float(r[6] if r[6] is not None else 0.0),
-        )
-        month_bars_dict[r[0]].append(b_hist)
-        year_bars_dict[r[0][:4]].append(b_hist)
-
+    # Tier 4 & 5: Monthly and Yearly Virgin POCs (completed daily bars)
+    month_bars_dict: dict[str, list] = defaultdict(list)
+    year_bars_dict: dict[str, list] = defaultdict(list)
+    for b in daily_bars:
+        month_bars_dict[b[0][:7]].append(b)
+        year_bars_dict[b[0][:4]].append(b)
     monthly_naked_pocs = find_naked_pocs(month_bars_dict, last_price, lookback_sessions=12)
     yearly_naked_pocs = find_naked_pocs(year_bars_dict, last_price, lookback_sessions=10)
     naked_pocs = session_naked_pocs
-    # Multi-Horizon Session Profiles (Asia, London, Overlap)
-    target_d = target_dt.date()
-    as_s, as_e = get_session_window("ASIA", target_d)
-    asia_prof = compute_horizon_amt(conn, sym, as_s, as_e)
 
-    ld_s, ld_e = get_session_window("LONDON", target_d)
-    london_prof = compute_horizon_amt(conn, sym, ld_s, ld_e)
+    # Multi-Horizon Session Profiles (CME session date windows, capped at as_of)
+    asia_prof = _hz(*get_session_window("ASIA", session_date))
+    london_prof = _hz(*get_session_window("LONDON", session_date))
+    overlap_prof = _hz(*get_session_window("NY_LONDON_OVERLAP", session_date))
+    frankfurt_prof = _hz(*get_session_window("FRANKFURT", session_date))
+    singapore_prof = _hz(*get_session_window("SINGAPORE", session_date))
+    pre_london_prof = _hz(*get_session_window("PRE_LONDON", session_date))
+    ny_regular_prof = _hz(*get_session_window("NY_REGULAR", session_date))
+    q2_london_prof = _hz(*q_bounds["Q2_LONDON"])
 
-    ov_s, ov_e = get_session_window("NY_LONDON_OVERLAP", target_d)
-    overlap_prof = compute_horizon_amt(conn, sym, ov_s, ov_e)
-
-    # Minor Sessions & Quarterly Theory Slices
-    fk_s, fk_e = get_session_window("FRANKFURT", target_d)
-    frankfurt_prof = compute_horizon_amt(conn, sym, fk_s, min(fk_e, target_dt))
-
-    sg_s, sg_e = get_session_window("SINGAPORE", target_d)
-    singapore_prof = compute_horizon_amt(conn, sym, sg_s, min(sg_e, target_dt))
-
-    pl_s, pl_e = get_session_window("PRE_LONDON", target_d)
-    pre_london_prof = compute_horizon_amt(conn, sym, pl_s, min(pl_e, target_dt))
-
-    ny_s, ny_e = get_session_window("NY_REGULAR", target_d)
-    ny_regular_prof = compute_horizon_amt(conn, sym, ny_s, min(ny_e, target_dt))
-
-    # Multi-Desk Initial Balance (Asia, Frankfurt, London, and US Cash Open)
-    asia_ib = analyze_initial_balance(curr_bars, time(0, 0))
-    frankfurt_ib = analyze_initial_balance(curr_bars, time(6, 0))
-    london_ib = analyze_initial_balance(curr_bars, time(7, 0))
-    us_rth_ib = analyze_initial_balance(curr_bars, ib_open_time)
+    # Multi-Desk Initial Balance: each desk's local open under its own DST
+    london_open = local_open_utc(session_date, 8, 0, LONDON_TZ)
+    asia_ib = analyze_initial_balance(curr_bars, time(0, 0))  # Tokyo 09:00 JST, no DST
+    frankfurt_ib = analyze_initial_balance(
+        curr_bars, local_open_utc(session_date, 8, 0, FRANKFURT_TZ)
+    )
+    london_ib = analyze_initial_balance(curr_bars, london_open)
 
     # 90m Sub-Quarter Micro-IB (Micro-1: First 22.5m)
-    active_sub_bars = [
-        b
-        for b in curr_bars
-        if b[0] >= active_qt["sub_quarter_start_utc"] and b[0] <= active_qt["sub_quarter_end_utc"]
-    ]
+    sub_s = parse_as_of(active_qt["sub_quarter_start_utc"])
+    sub_e = parse_as_of(active_qt["sub_quarter_end_utc"])
+    active_sub_bars = _between(sub_s, sub_e)
     if active_sub_bars:
         m1_bars = active_sub_bars[:5]
         m1_h = max(b[2] for b in m1_bars)
@@ -383,150 +373,80 @@ def compute_session_reference_levels(
             "ib_range": 0.0,
             "status": "AWAITING_BARS",
         }
-    # Overnight CVA (Low-Horizon CVA: Asia + London Merged)
-    on_cva_bars = [
-        b for b in curr_bars if datetime.fromisoformat(b[0]).astimezone(UTC).time() < ib_open_time
-    ]
-    if on_cva_bars:
-        on_cva = compute_value_area(on_cva_bars, tick_size=ASSET_TICK_SIZES.get(sym))
-        on_range = (
-            (on_cva["vah"] - on_cva["val"]) if on_cva.get("vah") and on_cva.get("val") else 0.0
-        )
-        overnight_cva = {
-            "status": "COMPLETED",
-            "c_poc": on_cva.get("poc"),
-            "c_vah": on_cva.get("vah"),
-            "c_val": on_cva.get("val"),
-            "c_range": round(on_range, 4),
+
+    def _cva_block(bars: list[tuple], status: str, up: str, down: str) -> dict[str, Any]:
+        """Composite VA with Dalton 100% measured moves; AWAITING_BARS when there are no bars."""
+        if not bars:
+            return {
+                "status": "AWAITING_BARS",
+                "c_poc": "AWAITING_BARS",
+                "c_vah": "AWAITING_BARS",
+                "c_val": "AWAITING_BARS",
+                "c_range": 0.0,
+                "dalton_measured_move": {up: "AWAITING_BARS", down: "AWAITING_BARS"},
+                "total_volume": 0.0,
+            }
+        va = compute_value_area(bars, tick_size=tick)
+        rng = va["vah"] - va["val"] if va["vah"] is not None and va["val"] is not None else None
+        return {
+            "status": status,
+            "c_poc": va["poc"],
+            "c_vah": va["vah"],
+            "c_val": va["val"],
+            "c_range": round(rng, 4) if rng is not None else None,
             "dalton_measured_move": {
-                "upside_breakout_target": (
-                    round(on_cva["vah"] + on_range, 4)
-                    if on_cva.get("vah")
-                    else "AWAITING_EXPANSION"
-                ),
-                "downside_breakout_target": (
-                    round(on_cva["val"] - on_range, 4)
-                    if on_cva.get("val")
-                    else "AWAITING_EXPANSION"
-                ),
+                up: round(va["vah"] + rng, 4) if rng is not None else None,
+                down: round(va["val"] - rng, 4) if rng is not None else None,
             },
-            "total_volume": on_cva.get("total_volume", 0.0),
-        }
-    else:
-        overnight_cva = {
-            "status": "AWAITING_BARS",
-            "c_poc": "AWAITING_BARS",
-            "c_vah": "AWAITING_BARS",
-            "c_val": "AWAITING_BARS",
-            "c_range": 0.0,
-            "dalton_measured_move": {
-                "upside_breakout_target": "AWAITING_BARS",
-                "downside_breakout_target": "AWAITING_BARS",
-            },
-            "total_volume": 0.0,
+            "total_volume": va["total_volume"],
         }
 
+    # Overnight CVA (Low-Horizon CVA: the session's pre-open bars, Asia + London merged)
+    overnight_cva = _cva_block(
+        overnight_bars,
+        "COMPLETED" if rth_bars else "FORMING",
+        "upside_breakout_target",
+        "downside_breakout_target",
+    )
     # Micro-CVA 45m (Micro-1 + Micro-2 Merged)
-    mic_45m_bars = [
-        b
-        for b in curr_bars
-        if b[0] >= active_qt["sub_quarter_start_utc"]
-        and b[0]
-        <= (
-            datetime.fromisoformat(active_qt["sub_quarter_start_utc"]) + timedelta(minutes=45)
-        ).isoformat(timespec="seconds")
-    ]
-    if mic_45m_bars:
-        m45_cva = compute_value_area(mic_45m_bars, tick_size=ASSET_TICK_SIZES.get(sym))
-        m45_rng = (
-            (m45_cva["vah"] - m45_cva["val"]) if m45_cva.get("vah") and m45_cva.get("val") else 0.0
-        )
-        micro_45m_cva = {
-            "status": "COMPLETED",
-            "c_poc": m45_cva.get("poc"),
-            "c_vah": m45_cva.get("vah"),
-            "c_val": m45_cva.get("val"),
-            "c_range": round(m45_rng, 4),
-            "dalton_measured_move": {
-                "upside_target": (
-                    round(m45_cva["vah"] + m45_rng, 4) if m45_cva.get("vah") else None
-                ),
-                "downside_target": (
-                    round(m45_cva["val"] - m45_rng, 4) if m45_cva.get("val") else None
-                ),
-            },
-            "total_volume": m45_cva.get("total_volume", 0.0),
-        }
-    else:
-        micro_45m_cva = {
-            "status": "AWAITING_BARS",
-            "c_poc": "AWAITING_BARS",
-            "c_vah": "AWAITING_BARS",
-            "c_val": "AWAITING_BARS",
-            "c_range": 0.0,
-            "dalton_measured_move": {
-                "upside_target": "AWAITING_BARS",
-                "downside_target": "AWAITING_BARS",
-            },
-            "total_volume": 0.0,
-        }
-
-    # Multi-Timeframe Market Structure Detector (M15, H1, H4, Daily based on PineScript strategy)
-    all_intraday_bars = [
-        (r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5] or 0.0)) for r in rows
-    ]
-
-    def _resample(bar_list, sec):
-        b_dict = defaultdict(list)
-        for b in bar_list:
-            dt_b = datetime.fromisoformat(b[0]).astimezone(UTC)
-            ep = (int(dt_b.timestamp()) // sec) * sec
-            b_dict[ep].append(b)
-        res = []
-        for ep in sorted(b_dict.keys()):
-            bl = b_dict[ep]
-            res.append(
-                (
-                    datetime.fromtimestamp(ep, tz=UTC).isoformat(),
-                    bl[0][1],
-                    max(x[2] for x in bl),
-                    min(x[3] for x in bl),
-                    bl[-1][4],
-                    sum(x[5] for x in bl),
-                )
-            )
-        return res
-
-    m15_b = _resample(all_intraday_bars, 15 * 60)
-    h1_b = _resample(all_intraday_bars, 60 * 60)
-    h4_b = _resample(all_intraday_bars, 4 * 60 * 60)
-
-    st_m15 = detect_market_structure_pivots(m15_b, lb=4, rb=4)
-    st_h1 = detect_market_structure_pivots(h1_b, lb=4, rb=4)
-    st_h4 = detect_market_structure_pivots(h4_b, lb=3, rb=3)
-    daily_hist_rows = conn.execute(
-        "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND source IN ('YAHOO', 'EODHD') ORDER BY ts DESC LIMIT 65",
-        (sym,),
-    ).fetchall()
-    daily_b = [
-        (r[0], float(r[1] or r[4]), float(r[2]), float(r[3]), float(r[4]), float(r[5] or 0.0))
-        for r in reversed(daily_hist_rows)
-        if r[2] is not None and r[3] is not None and r[4] is not None
-    ]
-    st_daily = (
-        detect_market_structure_pivots(daily_b, lb=2, rb=2)
-        if len(daily_b) >= 6
-        else {"trend": "CONSOLIDATION", "latest_point": "NONE", "recent_points": []}
+    m45_end = sub_s + timedelta(minutes=45)
+    micro_45m_cva = _cva_block(
+        _between(sub_s, m45_end),
+        "COMPLETED" if close_cutoff >= m45_end else "FORMING",
+        "upside_target",
+        "downside_target",
     )
 
+    # Multi-Timeframe Market Structure Detector (M15, H1, H4 on closed bars; Daily)
+    # ponytail: buckets are UTC-epoch aligned (H4 = 00/04/08 UTC), not session aligned
+    def _resample(sec: int) -> list[tuple]:
+        b_dict: dict[int, list] = defaultdict(list)
+        for t, b in zip(bar_dts, all_bars, strict=True):
+            b_dict[(int(t.timestamp()) // sec) * sec].append(b)
+        return [
+            (
+                datetime.fromtimestamp(ep, tz=UTC).isoformat(),
+                bl[0][1],
+                max(x[2] for x in bl),
+                min(x[3] for x in bl),
+                bl[-1][4],
+                sum(x[5] for x in bl),
+            )
+            for ep, bl in sorted(b_dict.items())
+        ]
+
+    daily_b = daily_bars[-65:]
     multi_tf_market_structure = {
-        "m15_structure": st_m15,
-        "h1_structure": st_h1,
-        "h4_structure": st_h4,
-        "daily_structure": st_daily,
+        "m15_structure": detect_market_structure_pivots(_resample(15 * 60), lb=4, rb=4),
+        "h1_structure": detect_market_structure_pivots(_resample(60 * 60), lb=4, rb=4),
+        "h4_structure": detect_market_structure_pivots(_resample(4 * 60 * 60), lb=3, rb=3),
+        "daily_structure": (
+            detect_market_structure_pivots(daily_b, lb=2, rb=2)
+            if len(daily_b) >= 6
+            else {"trend": "CONSOLIDATION", "latest_point": "NONE", "recent_points": []}
+        ),
     }
-    q2_s, q2_e = q_bounds["Q2_LONDON"]
-    q2_london_prof = compute_horizon_amt(conn, sym, q2_s, min(q2_e, target_dt))
+
     # Session-to-Session Value Migration (London Desk vs Asia)
     if asia_prof and london_prof:
         session_migration = classify_value_migration(
@@ -544,33 +464,28 @@ def compute_session_reference_levels(
             "meaning": "Awaiting session completion",
         }
 
-    # IPDA Composite Value Area on Multi-Day Daily Lookbacks
-    daily_rows = conn.execute(
-        "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND source IN ('YAHOO', 'EODHD') ORDER BY ts DESC LIMIT 65",
-        (sym,),
-    ).fetchall()
-    ipda_ranges = {}
+    # IPDA Data Ranges + Composite Value Area on the last N completed days
+    empty_range: dict[str, Any] = dict.fromkeys(
+        (
+            "high",
+            "low",
+            "range",
+            "midpoint",
+            "composite_poc",
+            "composite_vah",
+            "composite_val",
+            "total_volume",
+        )
+    )
+    ipda_ranges: dict[str, dict[str, Any]] = {}
     for days in [1, 2, 3, 5, 10, 15, 20, 40, 60]:
-        s_rows = [
-            r
-            for r in daily_rows[:days]
-            if r[2] is not None and r[3] is not None and r[4] is not None
-        ]
-        if s_rows:
-            h = max(float(r[2]) for r in s_rows)
-            l_val = min(float(r[3]) for r in s_rows)
-            bars = [
-                (
-                    r[0],
-                    float(r[1] if r[1] is not None else r[4]),
-                    float(r[2]),
-                    float(r[3]),
-                    float(r[4]),
-                    float(r[5] if r[5] is not None else 0.0),
-                )
-                for r in reversed(s_rows)
-            ]
-            cva = compute_value_area(bars, tick_size=ASSET_TICK_SIZES.get(sym))
+        window = daily_raw[:days]
+        highs = [float(r[2]) for r in window if r[2] is not None]
+        lows = [float(r[3]) for r in window if r[3] is not None]
+        bars = [by_date[r[0][:10]] for r in reversed(window) if r[0][:10] in by_date]
+        if highs and lows:
+            h, l_val = max(highs), min(lows)
+            cva = compute_value_area(bars, tick_size=tick) if bars else {}
             ipda_ranges[f"{days}D"] = {
                 "high": round(h, 4),
                 "low": round(l_val, 4),
@@ -582,21 +497,11 @@ def compute_session_reference_levels(
                 "total_volume": cva.get("total_volume"),
             }
         else:
-            ipda_ranges[f"{days}D"] = {
-                "high": None,
-                "low": None,
-                "range": None,
-                "midpoint": None,
-                "composite_poc": None,
-                "composite_vah": None,
-                "composite_val": None,
-                "total_volume": None,
-            }
+            ipda_ranges[f"{days}D"] = dict(empty_range)
 
     # IPDA Intraday Lookbacks (4H, 8H, 12H)
     for h_str, hrs in [("4H", 4), ("8H", 8), ("12H", 12)]:
-        s_dt = target_dt - timedelta(hours=hrs)
-        h_amt = compute_horizon_amt(conn, sym, s_dt, target_dt)
+        h_amt = _hz(target_dt - timedelta(hours=hrs), target_dt)
         if h_amt:
             ipda_ranges[h_str] = {
                 "high": round(h_amt["high"], 4),
@@ -609,179 +514,113 @@ def compute_session_reference_levels(
                 "total_volume": h_amt.get("total_volume"),
             }
         else:
-            ipda_ranges[h_str] = {
-                "high": None,
-                "low": None,
-                "range": None,
-                "midpoint": None,
-                "composite_poc": None,
-                "composite_vah": None,
-                "composite_val": None,
-                "total_volume": None,
-            }
+            ipda_ranges[h_str] = dict(empty_range)
 
     # Quarterly Theory Context with Real AMT Volume Profiles
-    w_quarter = get_weekly_quarter(target_d)
-    m_quarter = get_monthly_quarter(target_d)
-    active_qt = get_active_quarterly_cycles(target_dt)
-
-    # Active Quarter AMT Profile (6 Hours)
-    qs = datetime.fromisoformat(active_qt["quarter_start_utc"])
-    qe = datetime.fromisoformat(active_qt["quarter_end_utc"])
-    active_q_amt = compute_horizon_amt(conn, sym, qs, qe)
-
-    # Active 90m Sub-Quarter AMT Profile
-    sub_s = datetime.fromisoformat(active_qt["sub_quarter_start_utc"])
-    sub_e = datetime.fromisoformat(active_qt["sub_quarter_end_utc"])
-    active_sub_amt = compute_horizon_amt(conn, sym, sub_s, sub_e)
-
-    # Prior 90m Sub-Quarter AMT Profile
+    w_quarter = get_weekly_quarter(session_date)
+    m_quarter = get_monthly_quarter(target_dt)
+    qs = parse_as_of(active_qt["quarter_start_utc"])
+    qe = parse_as_of(active_qt["quarter_end_utc"])
+    active_q_amt = _hz(qs, qe)
+    active_sub_amt = _hz(sub_s, sub_e)
     prior_sub_amt = None
-    if active_qt.get("prior_sub_quarter_start_utc") and active_qt.get("prior_sub_quarter_end_utc"):
-        p_sub_s = datetime.fromisoformat(active_qt["prior_sub_quarter_start_utc"])
-        p_sub_e = datetime.fromisoformat(active_qt["prior_sub_quarter_end_utc"])
-        prior_sub_amt = compute_horizon_amt(conn, sym, p_sub_s, p_sub_e)
+    if active_qt.get("prior_sub_quarter_start_utc"):
+        prior_sub_amt = _hz(
+            parse_as_of(active_qt["prior_sub_quarter_start_utc"]),
+            parse_as_of(active_qt["prior_sub_quarter_end_utc"]),
+        )
+    active_micro_amt = _hz(
+        parse_as_of(active_qt["micro_cycle_start_utc"]),
+        parse_as_of(active_qt["micro_cycle_end_utc"]),
+    )
 
-    # Active 22.5m Micro-Cycle AMT Profile
-    mic_s = datetime.fromisoformat(active_qt["micro_cycle_start_utc"])
-    mic_e = datetime.fromisoformat(active_qt["micro_cycle_end_utc"])
-    active_micro_amt = compute_horizon_amt(conn, sym, mic_s, min(mic_e, target_dt))
-
-    # All 4 Daily Quarters in Quarterly Theory
-    all_daily_quarters = {}
+    # All 4 Daily Quarters of the QT trading day
+    all_daily_quarters: dict[str, Any] = {}
     for q_name, (qs_b, qe_b) in q_bounds.items():
-        if qs_b < target_dt:
-            q_p = compute_horizon_amt(conn, sym, qs_b, min(qe_b, target_dt))
-            if q_p:
-                all_daily_quarters[q_name] = {
-                    "vah": q_p.get("vah"),
-                    "val": q_p.get("val"),
-                    "poc": q_p.get("poc"),
-                    "total_volume": q_p.get("total_volume"),
-                    "vwap": q_p.get("vwap"),
-                }
-            else:
-                all_daily_quarters[q_name] = "Awaiting"
-        else:
+        if qs_b >= target_dt:
             all_daily_quarters[q_name] = "Upcoming"
+            continue
+        q_p = _hz(qs_b, qe_b)
+        all_daily_quarters[q_name] = (
+            {k: q_p.get(k) for k in ("vah", "val", "poc", "total_volume", "vwap")}
+            if q_p
+            else "Awaiting"
+        )
 
-    # All 4 Sub-Quarters 90m for the Active Quarter
-    active_quarter_sub_quarters = []
-    for idx, (ss, se) in enumerate(subdivide_quarter_90m(qs, qe)):
-        s_amt = compute_horizon_amt(conn, sym, ss, min(se, target_dt)) if ss < target_dt else None
-        if s_amt:
-            active_quarter_sub_quarters.append(
-                {
-                    "sub_quarter": f"Sub-{idx + 1}",
-                    "status": "COMPLETED" if target_dt >= se else "ACTIVE",
-                    "vah": s_amt["vah"],
-                    "val": s_amt["val"],
-                    "poc": s_amt["poc"],
-                    "total_volume": s_amt["total_volume"],
-                }
-            )
-        else:
-            lbl = "UPCOMING" if ss >= target_dt else "AWAITING_BARS"
-            active_quarter_sub_quarters.append(
-                {
-                    "sub_quarter": f"Sub-{idx + 1}",
-                    "status": lbl,
-                    "vah": lbl,
-                    "val": lbl,
-                    "poc": lbl,
-                    "total_volume": 0.0,
-                }
-            )
+    def _slices(windows: list[tuple[datetime, datetime]], label: str) -> list[dict[str, Any]]:
+        """AMT value area of each fractal slice: COMPLETED / ACTIVE / UPCOMING / AWAITING_BARS."""
+        out = []
+        for idx, (ss, se) in enumerate(windows):
+            amt_s = _hz(ss, se) if ss < target_dt else None
+            if amt_s:
+                out.append(
+                    {
+                        label: f"{label.split('_')[0].title()}-{idx + 1}",
+                        "status": "COMPLETED" if target_dt >= se else "ACTIVE",
+                        "vah": amt_s["vah"],
+                        "val": amt_s["val"],
+                        "poc": amt_s["poc"],
+                        "total_volume": amt_s["total_volume"],
+                    }
+                )
+            else:
+                lbl = "UPCOMING" if ss >= target_dt else "AWAITING_BARS"
+                out.append(
+                    {
+                        label: f"{label.split('_')[0].title()}-{idx + 1}",
+                        "status": lbl,
+                        "vah": lbl,
+                        "val": lbl,
+                        "poc": lbl,
+                        "total_volume": 0.0,
+                    }
+                )
+        return out
 
-    # All 4 Micro-Cycles 22.5m for the Active Sub-Quarter
-    active_sub_quarter_micros = []
-    for idx, (ms, me) in enumerate(subdivide_micro_22m(sub_s, sub_e)):
-        m_amt = compute_horizon_amt(conn, sym, ms, min(me, target_dt)) if ms < target_dt else None
-        if m_amt:
-            active_sub_quarter_micros.append(
-                {
-                    "micro_cycle": f"Micro-{idx + 1}",
-                    "status": "COMPLETED" if target_dt >= me else "ACTIVE",
-                    "vah": m_amt["vah"],
-                    "val": m_amt["val"],
-                    "poc": m_amt["poc"],
-                    "total_volume": m_amt["total_volume"],
-                }
-            )
-        else:
-            lbl = "UPCOMING" if ms >= target_dt else "AWAITING_BARS"
-            active_sub_quarter_micros.append(
-                {
-                    "micro_cycle": f"Micro-{idx + 1}",
-                    "status": lbl,
-                    "vah": lbl,
-                    "val": lbl,
-                    "poc": lbl,
-                    "total_volume": 0.0,
-                }
-            )
-    monday = target_d - timedelta(days=target_d.weekday())
-    days_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4}
-    weekly_days_profile = {}
+    active_quarter_sub_quarters = _slices(subdivide_quarter_90m(qs, qe), "sub_quarter")
+    active_sub_quarter_micros = _slices(subdivide_micro_22m(sub_s, sub_e), "micro_cycle")
+
+    # Weekly days (Mon-Fri of the session's week) + Midweek 72H Composite (Mon-Wed)
+    monday = session_date - timedelta(days=session_date.weekday())
+    weekly_days_profile: dict[str, dict[str, Any]] = {}
     bars_72h = []
-    for day_name, d_offset in days_map.items():
+    for d_offset, day_name in enumerate(("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")):
         curr_day = monday + timedelta(days=d_offset)
         day_str = curr_day.isoformat()
-        if curr_day < target_d:
-            row = conn.execute(
-                "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND ts=? AND source IN ('YAHOO', 'EODHD')",
-                (sym, day_str),
-            ).fetchone()
-            if row and row[2] is not None and row[3] is not None:
-                b_tup = (
-                    row[0],
-                    float(row[1] or row[4]),
-                    float(row[2]),
-                    float(row[3]),
-                    float(row[4]),
-                    float(row[5]),
-                )
-                if d_offset <= 2:
-                    bars_72h.append(b_tup)
-                weekly_days_profile[day_name] = {
-                    "date": day_str,
-                    "status": "COMPLETED",
-                    "high": float(row[2]),
-                    "low": float(row[3]),
-                    "close": float(row[4]),
-                    "volume": float(row[5]),
-                }
-            else:
-                weekly_days_profile[day_name] = {
-                    "date": day_str,
-                    "status": "AWAITING_DATA",
-                    "high": "AWAITING_DATA",
-                    "low": "AWAITING_DATA",
-                    "close": "AWAITING_DATA",
-                    "volume": 0.0,
-                }
-        elif curr_day == target_d:
+        if curr_day < session_date and day_str in by_date:
+            b = by_date[day_str]
+            if d_offset <= 2:
+                bars_72h.append(b)
+            weekly_days_profile[day_name] = {
+                "date": day_str,
+                "status": "COMPLETED",
+                "high": b[2],
+                "low": b[3],
+                "close": b[4],
+                "volume": b[5],
+            }
+        elif curr_day == session_date:
             weekly_days_profile[day_name] = {
                 "date": day_str,
                 "status": "ACTIVE_TODAY",
-                "high": pdh,
-                "low": pdl,
+                "high": max((b[2] for b in curr_bars), default=None),
+                "low": min((b[3] for b in curr_bars), default=None),
                 "close": last_price,
-                "volume": va_profile.get("total_volume", 0.0),
+                "volume": sum(b[5] for b in curr_bars),
             }
         else:
+            lbl = "AWAITING_DATA" if curr_day < session_date else "UPCOMING"
             weekly_days_profile[day_name] = {
                 "date": day_str,
-                "status": "UPCOMING",
-                "high": "UPCOMING",
-                "low": "UPCOMING",
-                "close": "UPCOMING",
+                "status": lbl,
+                "high": lbl,
+                "low": lbl,
+                "close": lbl,
                 "volume": 0.0,
             }
 
-    # Midweek 72H Composite (Senin - Rabu)
     if bars_72h:
-        cva_72h = compute_value_area(bars_72h, tick_size=ASSET_TICK_SIZES.get(sym))
+        cva_72h = compute_value_area(bars_72h, tick_size=tick)
         midweek_72h_composite = {
             "status": "COMPLETED",
             "composite_poc": cva_72h.get("poc"),
@@ -798,108 +637,74 @@ def compute_session_reference_levels(
             "total_volume": 0.0,
         }
 
-    # 1. Yearly Cycle & Prior Yearly Quarters Lookback
-    yearly_cycle = get_yearly_cycle(target_d)
-    y_curr = target_d.year
+    def _composite(bars: list[tuple], **extra: Any) -> dict[str, Any]:
+        va = compute_value_area(bars, tick_size=tick)
+        return {
+            **extra,
+            "high": max(b[2] for b in bars),
+            "low": min(b[3] for b in bars),
+            "composite_poc": va.get("poc"),
+            "composite_vah": va.get("vah"),
+            "composite_val": va.get("val"),
+            "total_volume": va.get("total_volume"),
+        }
+
+    # 1. Yearly Cycle & Prior (completed) Yearly Quarters of the session's year
+    yearly_cycle = get_yearly_cycle(session_date)
+    y_curr = session_date.year
+    curr_q_num = (session_date.month - 1) // 3 + 1
     prior_yearly_quarters_amt = {}
-    curr_q_num = ((target_d.month - 1) // 3) + 1
-    for q_idx, (q_lbl, q_m_start, q_m_end) in enumerate(
-        [("Q1", 1, 3), ("Q2", 4, 6), ("Q3", 7, 9), ("Q4", 10, 12)]
-    ):
-        if q_idx + 1 < curr_q_num:
-            import calendar as _cal
+    for q_idx, q_lbl in enumerate(("Q1", "Q2", "Q3", "Q4")[: curr_q_num - 1]):
+        q_start = date(y_curr, 3 * q_idx + 1, 1)
+        q_end = date(y_curr, 3 * q_idx + 3, monthrange(y_curr, 3 * q_idx + 3)[1])
+        b_yq = _days(q_start - timedelta(days=1), q_end)
+        if b_yq:
+            prior_yearly_quarters_amt[f"{y_curr}_{q_lbl}"] = _composite(
+                b_yq, period=f"{q_start} -> {q_end}"
+            )
 
-            q_start_str = f"{y_curr}-{q_m_start:02d}-01"
-            _, last_q_day = _cal.monthrange(y_curr, q_m_end)
-            q_end_str = f"{y_curr}-{q_m_end:02d}-{last_q_day:02d}"
-            rows_yq = conn.execute(
-                "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND ts >= ? AND ts <= ? AND source IN ('YAHOO', 'EODHD') ORDER BY ts ASC",
-                (sym, q_start_str, q_end_str),
-            ).fetchall()
-            b_yq = [
-                (r[0], float(r[1] or r[4]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
-                for r in rows_yq
-                if r[2] is not None and r[3] is not None and r[4] is not None
-            ]
-            if b_yq:
-                va_yq = compute_value_area(b_yq, tick_size=ASSET_TICK_SIZES.get(sym))
-                prior_yearly_quarters_amt[f"{y_curr}_{q_lbl}"] = {
-                    "period": f"{q_start_str} -> {q_end_str}",
-                    "high": max(b[2] for b in b_yq),
-                    "low": min(b[3] for b in b_yq),
-                    "composite_poc": va_yq.get("poc"),
-                    "composite_vah": va_yq.get("vah"),
-                    "composite_val": va_yq.get("val"),
-                    "total_volume": va_yq.get("total_volume"),
-                }
+    # 2. Prior QT Months (M-1, M-2) before the month that owns as_of (PineScript anchors)
+    def _prev_month(y: int, m: int) -> tuple[int, int]:
+        return (y, m - 1) if m > 1 else (y - 1, 12)
 
-    # 2. Prior Months Lookback (M-1 and M-2) using PineScript Anchors
-    prior_months_amt = {}
-    curr_y = target_d.year
-    curr_m = target_d.month
-    m1_y = curr_y if curr_m > 1 else curr_y - 1
-    m1_m = curr_m - 1 if curr_m > 1 else 12
-    m2_y = m1_y if m1_m > 1 else m1_y - 1
-    m2_m = m1_m - 1 if m1_m > 1 else 12
-
+    o_y, o_m = map(int, m_quarter["owning_year_month"].split("-"))
+    m1_y, m1_m = _prev_month(o_y, o_m)
+    m2_y, m2_m = _prev_month(m1_y, m1_m)
+    curr_anc = get_month_week_anchor_ny(o_y, o_m)
     m1_anc = get_month_week_anchor_ny(m1_y, m1_m)
-    curr_anc = get_month_week_anchor_ny(curr_y, curr_m)
     m2_anc = get_month_week_anchor_ny(m2_y, m2_m)
-
+    prior_months_amt = {}
     for m_lbl, (anc_s, anc_e) in [
         (f"M-1_{m1_y}_{m1_m:02d}", (m1_anc, curr_anc)),
         (f"M-2_{m2_y}_{m2_m:02d}", (m2_anc, m1_anc)),
     ]:
-        rows_pm = conn.execute(
-            "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND ts >= ? AND ts <= ? AND source IN ('YAHOO', 'EODHD') ORDER BY ts ASC",
-            (sym, anc_s.strftime("%Y-%m-%d"), anc_e.strftime("%Y-%m-%d")),
-        ).fetchall()
-        b_pm = [
-            (r[0], float(r[1] or r[4]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
-            for r in rows_pm
-            if r[2] is not None and r[3] is not None and r[4] is not None
-        ]
+        b_pm = _days(anc_s.date(), anc_e.date())
         if b_pm:
-            va_pm = compute_value_area(b_pm, tick_size=ASSET_TICK_SIZES.get(sym))
-            prior_months_amt[m_lbl] = {
-                "anchor_start": anc_s.strftime("%Y-%m-%d %H:%M ET"),
-                "anchor_end": anc_e.strftime("%Y-%m-%d %H:%M ET"),
-                "high": max(b[2] for b in b_pm),
-                "low": min(b[3] for b in b_pm),
-                "composite_poc": va_pm.get("poc"),
-                "composite_vah": va_pm.get("vah"),
-                "composite_val": va_pm.get("val"),
-                "total_volume": va_pm.get("total_volume"),
-            }
+            prior_months_amt[m_lbl] = _composite(
+                b_pm,
+                anchor_start=anc_s.strftime("%Y-%m-%d %H:%M ET"),
+                anchor_end=anc_e.strftime("%Y-%m-%d %H:%M ET"),
+            )
 
     # 3. Monthly Weeks Schedule Composite Blocks (PineScript Weeks 1-4 / Joker)
     monthly_quarter_blocks = {}
     for w_info in m_quarter.get("weeks_schedule", []):
         b_name = f"WEEK_{w_info['week_index']}_{w_info['quarter']}"
-        b_start = w_info["start_et"][:10]
-        b_end = w_info["end_et"][:10]
-        rows = conn.execute(
-            "SELECT ts, open, high, low, close, COALESCE(volume, 0.0) FROM instrument_prices WHERE symbol=? AND ts >= ? AND ts <= ? AND source IN ('YAHOO', 'EODHD') ORDER BY ts ASC",
-            (sym, b_start, b_end),
-        ).fetchall()
-        b_bars = [
-            (r[0], float(r[1] or r[4]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
-            for r in rows
-            if r[2] is not None and r[3] is not None and r[4] is not None
-        ]
+        b_start, b_end = w_info["start_et"][:10], w_info["end_et"][:10]
+        b_bars = _days(date.fromisoformat(b_start), date.fromisoformat(b_end))
         if b_bars:
-            va_mb = compute_value_area(b_bars, tick_size=ASSET_TICK_SIZES.get(sym))
+            va_mb = compute_value_area(b_bars, tick_size=tick)
             monthly_quarter_blocks[b_name] = {
                 "start_date": b_start,
                 "end_date": b_end,
-                "status": "COMPLETED" if target_d.isoformat() >= b_end else "ACTIVE",
+                "status": w_info["status"],
                 "composite_poc": va_mb.get("poc"),
                 "composite_vah": va_mb.get("vah"),
                 "composite_val": va_mb.get("val"),
                 "total_volume": va_mb.get("total_volume"),
             }
         else:
-            lbl = "UPCOMING" if target_d.isoformat() < b_start else "AWAITING_BARS"
+            lbl = "UPCOMING" if w_info["status"] == "UPCOMING" else "AWAITING_BARS"
             monthly_quarter_blocks[b_name] = {
                 "start_date": b_start,
                 "end_date": b_end,
@@ -909,6 +714,28 @@ def compute_session_reference_levels(
                 "composite_val": lbl,
                 "total_volume": 0.0,
             }
+
+    london_rth = split_rth(curr_bars, london_open)[1]
+    m1_vah = prior_months_amt.get(f"M-1_{m1_y}_{m1_m:02d}", {}).get("composite_vah")
+    p90_vah = prior_sub_amt["vah"] if prior_sub_amt else None
+    p90_val = prior_sub_amt["val"] if prior_sub_amt else None
+    recent_closes = [b[4] for b in curr_bars[-12:]]
+
+    def _accept(vah: Any, val: Any) -> str:
+        if isinstance(vah, int | float) and isinstance(val, int | float):
+            return evaluate_time_acceptance(recent_closes, vah, val)["status"]
+        return "AWAITING_BARS"
+
+    def _npoc_tier(npocs: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "total_naked_pocs": npocs.get("total_naked_pocs", 0),
+            "nearest_naked_poc_above": npocs.get("nearest_naked_poc_above")
+            or "NONE_IN_LOOKBACK (All-Time High / Blue Sky)",
+            "nearest_naked_poc_below": npocs.get("nearest_naked_poc_below")
+            or "NONE_IN_LOOKBACK (All-Time Low)",
+            "all_naked_pocs": npocs.get("all_naked_pocs", []),
+        }
+
     return {
         "symbol": sym,
         "as_of": target_dt.isoformat(timespec="seconds"),
@@ -1018,82 +845,17 @@ def compute_session_reference_levels(
             "dynamic_cva_days": dynamic_cva["composite_days_count"] if dynamic_cva else 1,
             "naked_pocs_count": naked_pocs["total_naked_pocs"],
             "hierarchical_naked_pocs": {
-                "intraday_90m_naked_pocs": {
-                    "total_naked_pocs": intraday_90m_npocs.get("total_naked_pocs", 0),
-                    "nearest_naked_poc_above": (
-                        intraday_90m_npocs["nearest_naked_poc_above"]
-                        if intraday_90m_npocs.get("nearest_naked_poc_above")
-                        else "NONE_IN_LOOKBACK (All-Time High / Blue Sky)"
-                    ),
-                    "nearest_naked_poc_below": (
-                        intraday_90m_npocs["nearest_naked_poc_below"]
-                        if intraday_90m_npocs.get("nearest_naked_poc_below")
-                        else "NONE_IN_LOOKBACK (All-Time Low)"
-                    ),
-                    "all_naked_pocs": intraday_90m_npocs.get("all_naked_pocs", []),
-                },
-                "session_naked_pocs": {
-                    "total_naked_pocs": session_naked_pocs.get("total_naked_pocs", 0),
-                    "nearest_naked_poc_above": (
-                        session_naked_pocs["nearest_naked_poc_above"]
-                        if session_naked_pocs.get("nearest_naked_poc_above")
-                        else "NONE_IN_LOOKBACK (All-Time High / Blue Sky)"
-                    ),
-                    "nearest_naked_poc_below": (
-                        session_naked_pocs["nearest_naked_poc_below"]
-                        if session_naked_pocs.get("nearest_naked_poc_below")
-                        else "NONE_IN_LOOKBACK (All-Time Low)"
-                    ),
-                    "all_naked_pocs": session_naked_pocs.get("all_naked_pocs", []),
-                },
-                "weekly_virgin_pocs": {
-                    "total_naked_pocs": weekly_naked_pocs.get("total_naked_pocs", 0),
-                    "nearest_naked_poc_above": (
-                        weekly_naked_pocs["nearest_naked_poc_above"]
-                        if weekly_naked_pocs.get("nearest_naked_poc_above")
-                        else "NONE_IN_LOOKBACK (All-Time High / Blue Sky)"
-                    ),
-                    "nearest_naked_poc_below": (
-                        weekly_naked_pocs["nearest_naked_poc_below"]
-                        if weekly_naked_pocs.get("nearest_naked_poc_below")
-                        else "NONE_IN_LOOKBACK (All-Time Low)"
-                    ),
-                    "all_naked_pocs": weekly_naked_pocs.get("all_naked_pocs", []),
-                },
-                "monthly_virgin_pocs": {
-                    "total_naked_pocs": monthly_naked_pocs.get("total_naked_pocs", 0),
-                    "nearest_naked_poc_above": (
-                        monthly_naked_pocs["nearest_naked_poc_above"]
-                        if monthly_naked_pocs.get("nearest_naked_poc_above")
-                        else "NONE_IN_LOOKBACK (All-Time High / Blue Sky)"
-                    ),
-                    "nearest_naked_poc_below": (
-                        monthly_naked_pocs["nearest_naked_poc_below"]
-                        if monthly_naked_pocs.get("nearest_naked_poc_below")
-                        else "NONE_IN_LOOKBACK (All-Time Low)"
-                    ),
-                    "all_naked_pocs": monthly_naked_pocs.get("all_naked_pocs", []),
-                },
-                "yearly_virgin_pocs": {
-                    "total_naked_pocs": yearly_naked_pocs.get("total_naked_pocs", 0),
-                    "nearest_naked_poc_above": (
-                        yearly_naked_pocs["nearest_naked_poc_above"]
-                        if yearly_naked_pocs.get("nearest_naked_poc_above")
-                        else "NONE_IN_LOOKBACK (All-Time High / Blue Sky)"
-                    ),
-                    "nearest_naked_poc_below": (
-                        yearly_naked_pocs["nearest_naked_poc_below"]
-                        if yearly_naked_pocs.get("nearest_naked_poc_below")
-                        else "NONE_IN_LOOKBACK (All-Time Low)"
-                    ),
-                    "all_naked_pocs": yearly_naked_pocs.get("all_naked_pocs", []),
-                },
+                "intraday_90m_naked_pocs": _npoc_tier(intraday_90m_npocs),
+                "session_naked_pocs": _npoc_tier(session_naked_pocs),
+                "weekly_virgin_pocs": _npoc_tier(weekly_naked_pocs),
+                "monthly_virgin_pocs": _npoc_tier(monthly_naked_pocs),
+                "yearly_virgin_pocs": _npoc_tier(yearly_naked_pocs),
             },
             "multi_desk_initial_balance": {
                 "asia_open_ib": asia_ib,
                 "frankfurt_open_ib": frankfurt_ib,
                 "london_open_ib": london_ib,
-                "us_cash_open_ib": us_rth_ib,
+                "us_cash_open_ib": ib_data,
                 "weekly_initial_balance_monday": {
                     "ib_day": "Monday",
                     "ib_high": weekly_days_profile.get("Monday", {}).get("high", "FORMING"),
@@ -1109,24 +871,20 @@ def compute_session_reference_levels(
                 },
                 "yearly_initial_balance_q1": {
                     "ib_period": "Yearly_Q1",
-                    "ib_poc": prior_yearly_quarters_amt.get(f"{target_d.year}_Q1", {}).get(
+                    "ib_poc": prior_yearly_quarters_amt.get(f"{y_curr}_Q1", {}).get(
                         "composite_poc", "FORMING"
                     ),
-                    "status": ("COMPLETED" if target_d.month > 3 else "ACTIVE"),
+                    "status": "COMPLETED" if curr_q_num > 1 else "ACTIVE",
                 },
                 "sub_quarter_90m_micro_ib": sub_90m_ib,
             },
             "multi_horizon_open_types": {
                 "sub_quarter_90m_open_type": (
                     "OPEN_ABOVE_PRIOR_90M_VAH"
-                    if isinstance(prior_sub_amt, dict)
-                    and prior_sub_amt.get("vah")
-                    and last_price > prior_sub_amt["vah"]
+                    if p90_vah is not None and last_price > p90_vah
                     else (
                         "OPEN_BELOW_PRIOR_90M_VAL"
-                        if isinstance(prior_sub_amt, dict)
-                        and prior_sub_amt.get("val")
-                        and last_price < prior_sub_amt["val"]
+                        if p90_val is not None and last_price < p90_val
                         else "OPEN_IN_PRIOR_90M_VALUE"
                     )
                 ),
@@ -1139,25 +897,14 @@ def compute_session_reference_levels(
                 "us_cash_conviction": open_type_info["conviction"],
                 "london_open_type": (
                     classify_open_type(
-                        [
-                            b
-                            for b in curr_bars
-                            if datetime.fromisoformat(b[0]).astimezone(UTC).time() >= time(7, 0)
-                        ],
+                        london_rth,
                         pdh,
                         pdl,
-                        va_profile["vah"],
-                        va_profile["val"],
+                        va_profile["vah"] or last_price,
+                        va_profile["val"] or last_price,
                         atr_proxy,
                     )["open_type"]
-                    if len(
-                        [
-                            b
-                            for b in curr_bars
-                            if datetime.fromisoformat(b[0]).astimezone(UTC).time() >= time(7, 0)
-                        ]
-                    )
-                    >= 3
+                    if len(london_rth) >= 3
                     else "AWAITING_SESSION"
                 ),
                 "weekly_open_type": (
@@ -1168,8 +915,7 @@ def compute_session_reference_levels(
                 ),
                 "monthly_open_type": (
                     "OPEN_ABOVE_PRIOR_MONTH_VAH"
-                    if prior_months_amt.get(f"M-1_{m1_y}_{m1_m:02d}", {}).get("composite_vah")
-                    and last_price > prior_months_amt[f"M-1_{m1_y}_{m1_m:02d}"]["composite_vah"]
+                    if m1_vah is not None and last_price > m1_vah
                     else "OPEN_IN_PRIOR_MONTH_VALUE"
                 ),
             },
@@ -1193,34 +939,13 @@ def compute_session_reference_levels(
             "overnight_cva": overnight_cva,
             "multi_horizon_time_acceptance": {
                 "prior_day_value_acceptance": time_acc["status"],
-                "london_desk_value_acceptance": (
-                    evaluate_time_acceptance(
-                        [b[4] for b in curr_bars[-12:]],
-                        london_prof["vah"],
-                        london_prof["val"],
-                    )["status"]
-                    if london_prof and london_prof.get("vah") and london_prof.get("val")
-                    else "AWAITING_BARS"
+                "london_desk_value_acceptance": _accept(
+                    london_prof and london_prof["vah"], london_prof and london_prof["val"]
                 ),
-                "midweek_72h_value_acceptance": (
-                    evaluate_time_acceptance(
-                        [b[4] for b in curr_bars[-12:]],
-                        midweek_72h_composite["composite_vah"],
-                        midweek_72h_composite["composite_val"],
-                    )["status"]
-                    if midweek_72h_composite
-                    and isinstance(midweek_72h_composite.get("composite_vah"), int | float)
-                    else "AWAITING_BARS"
+                "midweek_72h_value_acceptance": _accept(
+                    midweek_72h_composite["composite_vah"], midweek_72h_composite["composite_val"]
                 ),
-                "weekly_value_acceptance": (
-                    evaluate_time_acceptance(
-                        [b[4] for b in curr_bars[-12:]],
-                        weekly_va["vah"],
-                        weekly_va["val"],
-                    )["status"]
-                    if weekly_va and weekly_va.get("vah") and weekly_va.get("val")
-                    else "AWAITING_BARS"
-                ),
+                "weekly_value_acceptance": _accept(weekly_va["vah"], weekly_va["val"]),
             },
             "profile_shape": shape_data["shape"],
             "profile_meaning": shape_data["meaning"],

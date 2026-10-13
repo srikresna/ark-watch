@@ -11,14 +11,16 @@ import argparse
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import requests
 
 from .. import db as _db
-from ..config import _load_yaml
+from ..config import _load_yaml, missing_env
+from ..db import default_db_path
+from . import fetch_log
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
+RETRY_PAUSE_S = 5.0  # pause before the single retry pass of errored symbols
 UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
 }
@@ -64,9 +66,7 @@ def insert_prices(conn, symbol: str, source: str, rows: list[dict]) -> int:
     try:
         tomb = {
             (r[0], r[1], r[2])
-            for r in conn.execute(
-                "SELECT symbol, ts, source FROM price_quarantine"
-            ).fetchall()
+            for r in conn.execute("SELECT symbol, ts, source FROM price_quarantine").fetchall()
         }
     except Exception:
         tomb = set()  # pre-v17 DB (no table) — no quarantine yet
@@ -127,6 +127,9 @@ def backfill(
     conn = _db.get_conn(db_path, allow_init=True)
     out: dict[str, int] = {}
     tok = os.environ.get("EODHD_API_TOKEN", "")
+    if skip := missing_env("EODHD_API_TOKEN"):
+        eodhd = False
+        print(f"  · EODHD skipped ({skip})")
     for ins in instruments():
         sym = ins["symbol"]
         if only and sym != only:
@@ -223,7 +226,11 @@ def _cross_validate(conn, db_path: str) -> int:
         from .fetch_log import log_collection
 
         log_collection(
-            conn, "instruments", "INSTRUMENTS:XVAL", None, 0,
+            conn,
+            "instruments",
+            "INSTRUMENTS:XVAL",
+            None,
+            0,
             err=f"{len(wedges)} wedge(s): " + "; ".join(wedges[:4])[:160],
         )
         print(f"  ⚠ xval: {len(wedges)} wedge(s): {'; '.join(wedges[:4])}")
@@ -240,25 +247,40 @@ def sweep(db_path: str = str(DEFAULT_DB)) -> dict[str, int]:
     conn = _db.get_conn(db_path, allow_init=True)
     out: dict[str, int] = {}
     tok = os.environ.get("EODHD_API_TOKEN", "")
+    if skip := missing_env("EODHD_API_TOKEN"):  # once per run, not an ERROR per symbol
+        log_collection(conn, "instruments", "EODHD", None, 0, err=skip, status="SKIPPED")
     start_ts = int(time.time()) - 7 * 86400
-    for ins in instruments():
+
+    def fetch(src: str, ins: dict, final: bool) -> None:
         sym = ins["symbol"]
-        if ins.get("eodhd"):
-            try:
+        try:
+            if src == "EODHD":
                 rows = fetch_eodhd_daily(tok, ins["eodhd"], days=7)
-                out[f"{sym}|EODHD"] = insert_prices(conn, sym, "EODHD", rows)
-                log_collection(conn, "instruments", f"{sym}:EODHD", rows[0] if rows else None, len(rows))
-            except Exception as ex:
-                out[f"{sym}|EODHD"] = -1
-                log_collection(conn, "instruments", f"{sym}:EODHD", None, 0, err=str(ex))
-        if ins.get("yahoo"):
-            try:
+            else:
                 rows = yh.fetch_daily(ins["yahoo"], start_ts=start_ts)
-                out[f"{sym}|YAHOO"] = insert_prices(conn, sym, "YAHOO", rows)
-                log_collection(conn, "instruments", f"{sym}:YAHOO", rows[0] if rows else None, len(rows))
-            except Exception as ex:
-                out[f"{sym}|YAHOO"] = -1
-                log_collection(conn, "instruments", f"{sym}:YAHOO", None, 0, err=str(ex))
+            out[f"{sym}|{src}"] = insert_prices(conn, sym, src, rows)
+            log_collection(
+                conn, "instruments", f"{sym}:{src}", rows[0] if rows else None, len(rows)
+            )
+        except Exception as ex:
+            out[f"{sym}|{src}"] = -1
+            if final:  # a first-pass error is only logged if the retry fails too
+                log_collection(conn, "instruments", f"{sym}:{src}", None, 0, err=str(ex))
+
+    work = [
+        (src, ins)
+        for ins in instruments()
+        for src in ("EODHD", "YAHOO")
+        if ins.get(src.lower()) and not (src == "EODHD" and skip)
+    ]
+    for src, ins in work:
+        fetch(src, ins, final=False)
+    # ONE retry pass: a transient SOCKS/proxy error (VPS 2026-10-09:
+    # BTCUSD:YAHOO SOCKSHTTPSConnectionPool Max retries) must not fail the sweep
+    if retry := [(s, i) for s, i in work if out[f"{i['symbol']}|{s}"] < 0]:
+        time.sleep(RETRY_PAUSE_S)
+        for src, ins in retry:
+            fetch(src, ins, final=True)
     _cross_validate(conn, db_path)
     conn.close()
     return out
@@ -282,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {k:<22} {v:>7,}")
     for k in fail:
         print(f"  ✗ {k}")
-    return 1 if fail else 0
+    return fetch_log.exit_code(ok, len(fail))
 
 
 if __name__ == "__main__":

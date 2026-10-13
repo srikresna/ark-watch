@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import email.utils
 import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+
+from defusedxml.ElementTree import fromstring
 
 FEEDS = {
     "FED": "https://www.federalreserve.gov/feeds/press_all.xml",
@@ -24,7 +25,9 @@ FEEDS = {
     "COINTELEGRAPH": "https://cointelegraph.com/rss",
     "MARKETWATCH": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
     "CNBC": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-    "YAHOO": "https://finance.yahoo.com/news/rssindex",
+    # finance.yahoo.com/news/rssindex is gone (404 since 2026-10); the headline feed still serves
+    "YAHOO": "https://feeds.finance.yahoo.com/rss/2.0/headline"
+    "?s=%5EGSPC,%5EIXIC,%5ETNX,GC%3DF,CL%3DF,DX-Y.NYB,BTC-USD&region=US&lang=en-US",
 }
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) arkwatch/0.1"
@@ -72,36 +75,48 @@ def _tag_symbols(source_name: str) -> list[str]:
     return []
 
 
+class FeedGone(RuntimeError):
+    pass
+
+
 def fetch_rss_feed(source_name: str, url: str, timeout: int = 10) -> list[dict]:
     """Fetch and parse an RSS feed, returning standardized news dictionaries."""
+    from ..net import proxies_for
+
     data = None
+    proxies = proxies_for(url)
     try:
         from curl_cffi import requests as creq
 
         s = creq.Session(impersonate="chrome")
-        r = s.get(url, timeout=timeout)
+        r = s.get(url, timeout=timeout, proxies=proxies)  # pyright: ignore[reportArgumentType] -- {http, https} dict is a ProxySpec
         if r.status_code == 200:
             data = r.content
+        elif r.status_code in (404, 410):  # gone for any client: a second request only adds load
+            raise FeedGone(f"{source_name} feed HTTP {r.status_code}")
+    except FeedGone:
+        raise
     except Exception:
         pass
 
-    if data is None:
+    if data is None and proxies:
+        # proxied hosts (Yahoo 429s the datacenter IP): the fallback must keep the
+        # proxy; a direct urllib retry is the request that got 429'd
+        import requests
+
+        r = requests.get(url, timeout=timeout, proxies=proxies, headers={"User-Agent": USER_AGENT})
+        r.raise_for_status()
+        data = r.content
+    elif data is None:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                data = response.read()
-        except Exception:
-            return []
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = response.read()
 
     if not data:
         return []
 
-    try:
-        root = ET.fromstring(data)
-    except Exception:
-        return []
-
-    items = root.findall(".//item")
+    # defusedxml: third-party feeds must not get entity expansion / DTD tricks
+    items = fromstring(data).findall(".//item")
     out = []
     for it in items:
         title = (it.findtext("title") or "").strip()
@@ -132,12 +147,18 @@ def fetch_rss_feed(source_name: str, url: str, timeout: int = 10) -> list[dict]:
 
 
 def fetch_all_rss_feeds() -> list[dict]:
-    """Fetch all configured RSS news feeds (FED, YAHOO, CNBC)."""
-    out = []
+    """Fetch all configured RSS feeds; one dead feed degrades only itself.
+
+    Per-feed failures print a warning; if EVERY feed fails, raise so
+    market_news.run records a fetch_log ERROR for RSS_FEEDS (it used to log a
+    healthy-looking empty run)."""
+    out, errors = [], []
     for name, url in FEEDS.items():
         try:
-            items = fetch_rss_feed(name, url)
-            out.extend(items)
-        except Exception:
-            pass
+            out.extend(fetch_rss_feed(name, url))
+        except Exception as ex:
+            errors.append(f"{name}: {type(ex).__name__}: {str(ex)[:80]}")
+            print(f"  ⚠ RSS {errors[-1]}")
+    if errors and len(errors) == len(FEEDS):
+        raise RuntimeError("all RSS feeds failed: " + " | ".join(errors)[:400])
     return out

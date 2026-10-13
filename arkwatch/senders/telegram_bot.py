@@ -246,7 +246,7 @@ def _handle_tracker_cmd(conn: sqlite3.Connection, args: list[str], user_tz: str)
         f"• <b>Completed Trades :</b> {res.get('completed_trades', 0)} ({res.get('wins', 0)}W / {res.get('losses', 0)}L / {res.get('breakevens', 0)}BE)",
         f"• <b>Win Rate         :</b> <b>{res.get('win_rate_pct', 0.0)}%</b>",
         f"• <b>Profit Factor    :</b> <b>{res.get('profit_factor', 0.0)}</b>",
-        f"• <b>Avg R-Multiple   :</b> <b>{res.get('avg_r_multiple', 0.0):+.2f}R</b>",
+        f"• <b>Avg R-Multiple   :</b> <b>{res.get('avg_r_multiple') or 0.0:+.2f}R</b>",
         f"• <b>Avg MFE / MAE    :</b> +{res.get('avg_mfe', 0.0)} / -{res.get('avg_mae', 0.0)} pts",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]

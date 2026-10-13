@@ -5,26 +5,32 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import requests
 
 from .. import db as _db
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited
+from ..db import default_db_path
 from .fetch_log import log_collection
 
 
 def _constituents(key: str) -> list[str]:
+    statuses = []
     for url in (
         "https://financialmodelingprep.com/stable/sp500-constituent",
         "https://financialmodelingprep.com/api/v3/sp500_constituent",
     ):
         response = requests.get(url, params={"apikey": key}, timeout=(10, 45))
+        statuses.append(response.status_code)
         if response.status_code == 200 and isinstance(response.json(), list):
             symbols = sorted(
                 {str(row.get("symbol") or "").strip() for row in response.json()} - {""}
             )
             if len(symbols) >= 450:
                 return symbols
+    if any(s in PLAN_LIMIT_STATUSES for s in statuses):  # plan/quota: SKIPPED, not a crash
+        raise PlanLimited("plan-limited: FMP sp500-constituent")
     raise RuntimeError("FMP S&P 500 constituent list unavailable or incomplete")
 
 
@@ -55,7 +61,21 @@ def _quotes(key: str, symbols: list[str]) -> list[dict]:
     return out
 
 
-def run(db_path: str = "data/arkwatch.db") -> dict:
+# the free plan answers the constituent list with 402 every hour, two calls each time:
+# ~48 of the 250 daily FMP calls the recession, earnings and COT-gate jobs also need
+PLAN_RECHECK = timedelta(hours=24)
+
+
+def _plan_limited_recently(conn) -> bool:
+    since = (datetime.now(UTC) - PLAN_RECHECK).isoformat(timespec="seconds")
+    sql = (
+        "SELECT 1 FROM fetch_log WHERE fetcher = 'equity_breadth' AND status = 'SKIPPED'"
+        " AND error LIKE 'plan-limited%' AND ts >= ? LIMIT 1"
+    )
+    return conn.execute(sql, (since,)).fetchone() is not None
+
+
+def run(db_path: str | None = None) -> dict:
     key = os.environ.get("FMP_API_KEY", "")
     if not key:
         raise RuntimeError("FMP_API_KEY not set")
@@ -82,7 +102,7 @@ def run(db_path: str = "data/arkwatch.db") -> dict:
     declines = sum(change < 0 for change, _ in returns)
     total_cap = sum(cap for _, cap in returns)
     cap_return = sum(change * cap for change, cap in returns) / total_cap if total_cap else None
-    conn = _db.get_conn(db_path, allow_init=True)
+    conn = _db.get_conn(db_path or default_db_path(), allow_init=True)
     conn.executemany(
         "INSERT OR REPLACE INTO equity_breadth_components VALUES (?,?,?,?,?,?)", components
     )
@@ -111,6 +131,20 @@ def main(argv=None):
 
     load_dotenv()
     parser = argparse.ArgumentParser(prog="arkwatch breadth")
-    parser.add_argument("--db", default="data/arkwatch.db")
-    print(run(parser.parse_args(argv).db))
+    parser.add_argument("--db", default=str(default_db_path()))
+    db_path = parser.parse_args(argv).db
+    conn = _db.get_conn(db_path, allow_init=True)
+    try:
+        if _plan_limited_recently(conn):
+            print("skipped: FMP plan does not include constituents (rechecked daily)")
+            return 0
+    finally:
+        conn.close()
+    try:
+        print(run(db_path))
+    except PlanLimited as ex:
+        print("skipped: FMP plan does not include constituents")
+        conn = _db.get_conn(db_path, allow_init=True)
+        log_collection(conn, "equity_breadth", "FMP:SP500", None, 0, err=str(ex), status="SKIPPED")
+        conn.close()
     return 0

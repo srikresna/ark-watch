@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from pathlib import Path
 
 from ..config import load_registry
+from ..db import default_db_path, get_conn
 from ..transforms.core import zscore
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 _TRACE_WINDOWS = {"D": 1260, "W": 260, "M": 60, "Q": 20, "A": 5}
 
 
@@ -32,7 +32,7 @@ def explore_block(conn: sqlite3.Connection, block: str):
     if not entries:
         print(f"Block {block} not found or empty")
         return
-    print(f"=== BLOCK {block.upper()} — {len(entries)} series ===")
+    print(f"=== BLOCK {block.upper()}, {len(entries)} series ===")
     print(f"{'series_id':<28} {'value':>12} {'ts':<12} {'fresh':>6} {'source'}")
     print("-" * 80)
     for e in entries:
@@ -69,7 +69,7 @@ def explore_series(conn: sqlite3.Connection, sid: str):
     if entry is None:
         # ROUND-4: an unregistered id printed a bare header and exited 0 —
         # indistinguishable from an empty-but-registered series
-        print("  ✗ NOT IN REGISTRY — never registered, or the id is misspelled/")
+        print("  ✗ NOT IN REGISTRY, never registered, or the id is misspelled/")
         print("    inactive. No observations are being collected for it.")
         near = [e["series_id"] for e in reg if sid.upper() in e["series_id"].upper()][:5]
         if near:
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     a = p.parse_args(argv)
 
-    conn = sqlite3.connect(a.db)
+    conn = get_conn(a.db, read_only=True)
 
     if a.target == "blocks":
         explore_blocks()

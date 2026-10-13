@@ -50,10 +50,49 @@ def test_init_creates_all_tables_and_version(conn):
     )
 
 
+def test_migration_already_applied_by_a_concurrent_writer(conn):
+    # the race: this process read v33, another one applied v34 before our BEGIN IMMEDIATE
+    db._apply_migrations(conn, from_version=db.SCHEMA_VERSION - 1)
+    assert db._schema_version(conn) == db.SCHEMA_VERSION and not conn.in_transaction
+
+
+def test_v35_relabels_advance_goods_trade_rows(tmp_path):
+    conn = db.get_conn(tmp_path / "t.db", allow_init=True)
+    conn.execute(
+        "INSERT INTO events(event_uid,ts_utc,release_ts,country,name,normalized_name,indicator_key)"
+        " VALUES ('g','2026-09-26T12:30:00+00:00','na','US','Goods Trade Balance Adv',"
+        "'GOODS TRADE BALANCE ADV','GOODS TRADE BALANCE ADV')"
+    )
+    conn.execute("ALTER TABLE series_registry DROP COLUMN max_age_days")
+    conn.execute("DELETE FROM schema_migrations WHERE version = 35")
+    db._apply_migrations(conn, from_version=34)
+    key = conn.execute("SELECT indicator_key FROM events WHERE event_uid='g'").fetchone()[0]
+    assert key == "GOODS TRADE BALANCE"
+
+
 def test_pragma_pack(conn):
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10000
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert conn.execute("PRAGMA temp_store").fetchone()[0] == 2  # MEMORY
+    assert conn.execute("PRAGMA cache_size").fetchone()[0] == -16384
+
+
+def test_read_only_pragmas_and_v34_indexes(tmp_path):
+    path = tmp_path / "v34.db"
+    db.get_conn(path, allow_init=True).close()
+    ro = db.get_conn(path, read_only=True)
+    assert ro.execute("PRAGMA temp_store").fetchone()[0] == 2
+    assert ro.execute("PRAGMA cache_size").fetchone()[0] == -16384
+    idx = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    ro.close()
+    assert {"idx_fetch_log_target_id", "idx_fetch_log_ts", "idx_intraday_sym_int_ts"} <= idx
+    assert not {"idx_intraday_symbol_ts", "idx_raw_series_ts"} & idx
+    w = db.get_conn(path)
+    w.executescript(db.MIGRATIONS[34])  # idempotent replay
+    plan = w.execute("EXPLAIN QUERY PLAN SELECT MAX(id) FROM fetch_log WHERE target = 'X'")
+    assert "idx_fetch_log_target_id" in str(plan.fetchall())
+    w.close()
 
 
 def test_gdelt_gzip_migration_preserves_existing_raw_json(tmp_path):
@@ -94,6 +133,10 @@ def test_gdelt_gzip_migration_preserves_existing_raw_json(tmp_path):
         "sigma_low_conf",
     ):
         conn.execute(f"ALTER TABLE events DROP COLUMN {column}")
+    # undo v33's non-idempotent parts too (the replay re-runs 28..latest)
+    conn.execute("ALTER TABLE series_registry DROP COLUMN locked_by_ui")
+    conn.execute("ALTER TABLE playbook_scenarios DROP COLUMN note")
+    conn.execute("ALTER TABLE series_registry DROP COLUMN max_age_days")  # v35
     conn.execute("DELETE FROM schema_migrations WHERE version>=28")
     conn.close()
 

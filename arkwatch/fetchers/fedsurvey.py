@@ -11,11 +11,13 @@ Sources handled (all from federalreserve.gov):
 Each narrative source returns {'text': str, 'ts': str, 'meta': dict} that plugs
 directly into the NLP analysis layer (nlp.py analyze_tone/extract_data).
 """
+
 from __future__ import annotations
 
 import contextlib
 import html as _html
 import re
+from typing import cast
 
 import requests
 
@@ -58,7 +60,8 @@ def fetch_sloos(yyyymm: str | None = None) -> dict:
         if not urls:
             raise FedSurveyError("SLOOS: no surveys found")
         url = urls[0]
-        yyyymm = re.search(r"sloos-(\d{6})", url).group(1)
+        # url came from the listing regex, so this always matches
+        yyyymm = cast(str, re.search(r"sloos-(\d{6})", url).group(1))  # pyright: ignore[reportOptionalMemberAccess]
     else:
         url = f"{BASE}/data/sloos/sloos-{yyyymm}.htm"
 
@@ -114,7 +117,8 @@ def fetch_beige_book(yyyymm: str | None = None) -> dict:
         if not urls:
             raise FedSurveyError("Beige Book: no reports found")
         url = urls[0]
-        yyyymm = re.search(r"beigebook(\d{6})", url).group(1)
+        # url came from the listing regex, so this always matches
+        yyyymm = cast(str, re.search(r"beigebook(\d{6})", url).group(1))  # pyright: ignore[reportOptionalMemberAccess]
     else:
         url = f"{BASE}/monetarypolicy/beigebook{yyyymm}-summary.htm"
 
@@ -154,10 +158,13 @@ def fetch_scoos(yyyymm: str | None = None) -> dict:
         if not urls:
             raise FedSurveyError("SCOOS: no surveys found")
         url = urls[0]
-        yyyymm = re.search(r"scoos-(\d{6})", url).group(1)
+        # url came from the listing regex, so this always matches
+        yyyymm = cast(str, re.search(r"scoos-(\d{6})", url).group(1))  # pyright: ignore[reportOptionalMemberAccess]
     else:
         url = f"{BASE}/data/scoos/scoos-{yyyymm}.htm"
     text = _clean(_fetch(url))
+    if len(text) < 500:  # same guard as SLOOS/Beige: a short 200 error page must not get a tone
+        raise FedSurveyError(f"SCOOS: page too short ({len(text)} chars)")
     return {"text": text, "ts": f"{yyyymm[:4]}-{yyyymm[4:]}-01", "source": "scoos", "url": url}
 
 
@@ -182,7 +189,7 @@ def fetch_fsr() -> dict:
     import pymupdf
 
     doc = pymupdf.open(stream=r.content, filetype="pdf")
-    text = " ".join(page.get_text() for page in doc)
+    text = " ".join(page.get_text() for page in doc)  # pyright: ignore[reportArgumentType, reportCallIssue] -- no-arg get_text() is str
     doc.close()
     text = re.sub(r"\s+", " ", text).strip()
 
@@ -218,7 +225,11 @@ def fetch_chargeoff() -> list[dict]:
 
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     # the DATA file is CHGDEL_data.xml (first file is the XSD schema)
-    data_xml = next(n for n in zf.namelist() if "data" in n.lower())
+    data_xml = next((n for n in zf.namelist() if "data" in n.lower()), None)
+    if data_xml is None:
+        raise FedSurveyError("Charge-off: no data file in the zip")
+    if zf.getinfo(data_xml).file_size > 200 * 1024 * 1024:  # the real file is a few MB
+        raise FedSurveyError("Charge-off: data file over 200 MB uncompressed (zip bomb?)")
     root = parse_xml(zf.read(data_xml))
 
     # SDMX namespace — actual codes (live-verified from the XML):
@@ -258,12 +269,14 @@ def fetch_chargeoff() -> list[dict]:
             val = obs.get("OBS_VALUE", "")
             if ts and val:
                 with contextlib.suppress(ValueError, TypeError):
-                    out.append({
-                        "series": label,
-                        "ts": ts,
-                        "value": float(val),
-                        "unit": "pct",
-                    })
+                    out.append(
+                        {
+                            "series": label,
+                            "ts": ts,
+                            "value": float(val),
+                            "unit": "pct",
+                        }
+                    )
     return out
 
 
@@ -285,7 +298,7 @@ FRB_CHGDEL_SERIES = {
     "DEL_ALL": "chgoff_del_all_loans",
 }
 
-_chgdel_cache: list[dict] | None = None
+_chgdel_cache: list[tuple[str, str, float]] | None = None
 
 
 def _chgdel_rows() -> list[tuple[str, str, float]]:
@@ -338,11 +351,7 @@ def frb_fetch_window(series_id: str, days: int = 10, *, today: str | None = None
     # quarterly release ~2 months after quarter end — a 10-day window would
     # starve it; 420d always reaches the latest quarter
     cutoff = (now - timedelta(days=max(days, 420))).date().isoformat()
-    return [
-        {"ts": ts, "value": v}
-        for lb, ts, v in _chgdel_rows()
-        if lb == label and ts >= cutoff
-    ]
+    return [{"ts": ts, "value": v} for lb, ts, v in _chgdel_rows() if lb == label and ts >= cutoff]
 
 
 def frb_save_history(conn, *, verbose: bool = True) -> int:
@@ -365,7 +374,7 @@ def frb_save_history(conn, *, verbose: bool = True) -> int:
         total += n_new + n_rev
         if verbose:
             latest = max(by_label[label])
-            print(f"  {sid:16s} {len(rows):4d} obs (new {n_new}, revised {n_rev}) — latest {latest}")
+            print(f"  {sid:16s} {len(rows):4d} obs (new {n_new}, revised {n_rev}), latest {latest}")
     conn.commit()
     return total
 
@@ -380,33 +389,3 @@ def fetch_window(series_id: str, days: int = 10, **kw) -> list[dict]:
 
 
 # --- Convenience: analyze any survey with NLP ----------------------------------------
-
-def analyze_survey(source: str, yyyymm: str | None = None) -> dict:
-    """Fetch + NLP-analyze any Federal Reserve survey/report.
-
-    source: 'sloos' | 'beige_book' | 'scoos' | 'fsr'
-    Returns {'text': ..., 'tone': {...}, 'metrics': {...}}.
-    """
-    fetchers = {
-        "sloos": fetch_sloos,
-        "beige_book": fetch_beige_book,
-        "scoos": fetch_scoos,
-        "fsr": fetch_fsr,
-    }
-    if source not in fetchers:
-        raise FedSurveyError(f"unknown source: {source} (sloos|beige_book|scoos|fsr)")
-
-    data = fetchers[source](yyyymm) if source != "fsr" else fetch_fsr()
-
-    # structural metrics (SLOOS-specific)
-    metrics = sloos_tone_metrics(data["text"]) if source == "sloos" else {}
-
-    # NLP tone analysis
-    from .nlp import analyze_tone
-
-    try:
-        tone = analyze_tone(data["text"], source_type=source.replace("_", " "))
-    except Exception as ex:
-        tone = {"error": str(ex)[:100]}
-
-    return {**data, "tone": tone, "metrics": metrics}

@@ -9,6 +9,7 @@ Two layers:
 URL pattern (live-verified): fomcminutes{YYYYMMDD}.htm where date = the
 meeting's END date. Minutes publish ~3 weeks after the meeting.
 """
+
 from __future__ import annotations
 
 import html as _html
@@ -23,14 +24,31 @@ CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
 # Hawkish/dovish keyword pairs for the structural tone score
 _HAWKISH = (
-    "raise", "hike", "increase the target", "tighten", "inflation remains elevated",
-    "price stability", "upside risks to inflation", "restrictive",
-    "resilient", "solid pace", "robust", "strong demand",
+    "raise",
+    "hike",
+    "increase the target",
+    "tighten",
+    "inflation remains elevated",
+    "price stability",
+    "upside risks to inflation",
+    "restrictive",
+    "resilient",
+    "solid pace",
+    "robust",
+    "strong demand",
 )
 _DOVISH = (
-    "lower", "cut", "reduce the target", "ease", "inflation is easing",
-    "downside risks", "accommodative", "slowdown", "weakening",
-    "softening", "labor market cooling",
+    "lower",
+    "cut",
+    "reduce the target",
+    "ease",
+    "inflation is easing",
+    "downside risks",
+    "accommodative",
+    "slowdown",
+    "weakening",
+    "softening",
+    "labor market cooling",
 )
 
 
@@ -107,7 +125,17 @@ def parse_minutes(date_iso: str) -> dict:
                 if (
                     len(words) >= 2
                     and all(w[0].isupper() or w in ("van", "de", "der") for w in words if w)
-                    and not any(v in n.lower() for v in ("board", "voted", "effective", "addition", "consistent", "who preferred"))
+                    and not any(
+                        v in n.lower()
+                        for v in (
+                            "board",
+                            "voted",
+                            "effective",
+                            "addition",
+                            "consistent",
+                            "who preferred",
+                        )
+                    )
                 ):
                     voters_against.append(n)
 
@@ -132,40 +160,6 @@ def parse_minutes(date_iso: str) -> dict:
     }
 
 
-
-
-
-
-def nlp_sentiment(text: str, api_key: str | None = None) -> dict:
-    """Minutes tone analysis — thin wrapper over the canonical NLP layer.
-
-    AUDIT 2026-09-20: the fedsurvey_harvest rewrite (db61aff) replaced this
-    function's only caller with nlp.analyze_tone, leaving this near-duplicate
-    implementation dead — two prompts that could drift apart invisibly. It
-    stays as a delegation (the agent-harness plan references the API) so there
-    is exactly ONE provider/prompt implementation: nlp.py.
-
-    api_key (backward-compat) is honored via NLP_API_KEY and RESTORED after
-    the call — the round-2 mutation version leaked it into the process env,
-    silently retargeting every later NLP call.
-    """
-    import os as _os
-
-    old = _os.environ.get("NLP_API_KEY")
-    if api_key:
-        _os.environ["NLP_API_KEY"] = api_key
-    try:
-        from .nlp import analyze_tone
-
-        return analyze_tone(text, source_type="minutes")
-    finally:
-        if api_key:
-            if old is None:
-                _os.environ.pop("NLP_API_KEY", None)
-            else:
-                _os.environ["NLP_API_KEY"] = old
-
-
 def minutes_dates() -> list[str]:
     """All minutes release dates (meeting end-dates) from the calendar."""
     r = requests.get(CALENDAR_URL, timeout=(10, 60))
@@ -173,3 +167,19 @@ def minutes_dates() -> list[str]:
         raise MinutesError(f"FOMC calendar: HTTP {r.status_code}")
     dates = sorted(set(re.findall(r"fomcminutes(\d{8})\.htm", r.text)), reverse=True)
     return [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in dates]
+
+
+def policy_excerpt(text: str, budget: int = 12000) -> str:
+    """The part of the minutes that carries the policy tone, within the NLP budget.
+
+    analyze_tone reads 12k characters. Minutes run 60-90k and open with the staff and markets
+    reviews, so the first 12k scored the staff's description, not the Committee: take the
+    participants' views (3/4 of the budget) plus the policy-action section (1/4); fall back to
+    the head when a layout change hides both headings."""
+    views = re.search(r"Participants\W{1,2}Views", text)  # straight or curly apostrophe
+    action = re.search(r"Committee Policy Actions?", text)
+    if not views and not action:
+        return text[:budget]
+    head = text[views.start() : views.start() + budget * 3 // 4] if views else ""
+    tail = text[action.start() : action.start() + budget - len(head)] if action else ""
+    return (head + "\n...\n" + tail if head and tail else head or tail)[:budget]

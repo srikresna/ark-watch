@@ -9,11 +9,23 @@ BROADCAST to every active channel.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
+from ..config import missing_env
+from ..db import get_conn
 from .base import active_channels
 
+CHANNEL_ENV = {
+    "telegram": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"),
+    "discord": ("DISCORD_WEBHOOK_URL",),
+    "ntfy": ("NTFY_URL",),
+}
+
 CLAIM_STALE_MIN = 10  # re-claim a sending row only after >10 min
+# The watch lane also delivers briefs (retries of a failed send, an API retry) but only inside
+# this WIB window: the 04:15 Saturday edition must still wait for the 07:05 send, not ring at 04:16
+BRIEF_WINDOW_WIB = (time(7, 5), time(22, 0))
 BRIEF_MAX_ATTEMPTS = 3
 ALERT_MAX_ATTEMPTS = 5
 ALERT_MIN_GAP_S = 300  # minimum gap between alert attempts
@@ -31,11 +43,10 @@ def _claim_brief_rows(conn: sqlite3.Connection) -> list[tuple]:
     # newest date per channel over ALL rows — if the newest was already
     # SENT, an older pending row must not resurrect as a stale delivery
     newest = conn.execute(
-        "SELECT channel, MAX(brief_date) FROM brief_deliveries"
-        " GROUP BY channel"
+        "SELECT channel, MAX(brief_date) FROM brief_deliveries GROUP BY channel"
     ).fetchall()
     keep_ids: list[int] = []
-    for channel, _max_date in newest:
+    for channel, max_date in newest:
         row = conn.execute(
             "SELECT id FROM brief_deliveries"
             " WHERE channel=? AND brief_date=?"
@@ -43,28 +54,21 @@ def _claim_brief_rows(conn: sqlite3.Connection) -> list[tuple]:
             "  OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?))"
             "  OR (status='failed' AND attempts < ?))"
             " ORDER BY id DESC LIMIT 1",
-            (channel, _max_date, stale, BRIEF_MAX_ATTEMPTS),
+            (channel, max_date, stale, BRIEF_MAX_ATTEMPTS),
         ).fetchone()
         if row:
             keep_ids.append(row[0])
-    # supersede everything older still marked undelivered — but NEVER a
-    # fresh 'sending' row (< CLAIM_STALE_MIN old): a second send_pending
-    # inside the claim window would terminally kill the in-flight delivery
-    if keep_ids:
-        marks = ",".join("?" * len(keep_ids))
+        # supersede what a fresher brief replaced — but NEVER a fresh 'sending' row
+        # (< CLAIM_STALE_MIN old: a second send_pending inside the claim window would kill
+        # the in-flight delivery) and never the newest date's terminal failure (attempts
+        # spent): relabelling it hid the failure and made the API retry refuse it
         conn.execute(
             "UPDATE brief_deliveries SET status='superseded'"
-            f" WHERE id NOT IN ({marks}) AND status IN ('pending','failed')"
-            " OR (id NOT IN (" + marks + ") AND status='sending'"
-            " AND (claimed_at IS NULL OR claimed_at < ?))",
-            (*keep_ids, *keep_ids, stale),
-        )
-    else:
-        conn.execute(
-            "UPDATE brief_deliveries SET status='superseded'"
-            " WHERE status IN ('pending','failed')"
-            " OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?))",
-            (stale,),
+            " WHERE channel=? AND id<>?"
+            " AND (brief_date<? OR NOT (status='failed' AND attempts>=?))"
+            " AND (status IN ('pending','failed')"
+            "  OR (status='sending' AND (claimed_at IS NULL OR claimed_at < ?)))",
+            (channel, row[0] if row else -1, max_date, BRIEF_MAX_ATTEMPTS, stale),
         )
     rows = []
     for row_id in keep_ids:
@@ -82,10 +86,15 @@ def _claim_brief_rows(conn: sqlite3.Connection) -> list[tuple]:
     return rows
 
 
+def in_brief_window(now: datetime | None = None) -> bool:
+    t = (now or datetime.now(UTC)).astimezone(ZoneInfo("Asia/Jakarta")).time()
+    return BRIEF_WINDOW_WIB[0] <= t < BRIEF_WINDOW_WIB[1]
+
+
 def send_pending(db_path: str) -> dict:
     """Read pending outbox rows → dispatch per channel → update status."""
-    conn = sqlite3.connect(db_path)
-    results = {"sent": 0, "failed": 0, "messages": []}
+    conn = get_conn(db_path)
+    results = {"sent": 0, "failed": 0, "skipped": 0, "messages": []}
     try:
         rows = _claim_brief_rows(conn)
         if rows:
@@ -94,12 +103,20 @@ def send_pending(db_path: str) -> dict:
             for row_id, brief_date, channel_name in rows:
                 ch = channels.get(channel_name)
                 if ch is None:
+                    # unconfigured channel = 'skipped' (not retried, not a
+                    # failure); an unknown channel name stays 'failed'
+                    env = CHANNEL_ENV.get(channel_name)
+                    reason = env and missing_env(*env)
                     conn.execute(
-                        "UPDATE brief_deliveries SET status='failed', last_error=? WHERE id=?",
-                        (f"channel '{channel_name}' not active (env not set)", row_id),
+                        "UPDATE brief_deliveries SET status=?, last_error=? WHERE id=?",
+                        (
+                            "skipped" if reason else "failed",
+                            reason or f"channel '{channel_name}' not active",
+                            row_id,
+                        ),
                     )
                     conn.commit()
-                    results["failed"] += 1
+                    results["skipped" if reason else "failed"] += 1
                     continue
                 md_row = conn.execute(
                     "SELECT markdown FROM brief_log WHERE date=?", (brief_date,)
@@ -114,9 +131,13 @@ def send_pending(db_path: str) -> dict:
                     results["failed"] += 1
                     continue
                 try:
-                    ext_id = ch.send_text(md_row[0])
+                    # optional per-channel hook: push channels send a short form
+                    fmt = getattr(ch, "format_brief", None)
+                    ext_id = ch.send_text(fmt(md_row[0], brief_date) if fmt else md_row[0])
                 except Exception as ex:
-                    print(f"  ⚠ {channel_name}: {str(ex)[:80]}")
+                    from ..qa.redact import _redact  # webhook URL / bot token
+
+                    print(f"  ⚠ {channel_name}: {_redact(str(ex))[:80]}")
                     ext_id = None
                 if ext_id:
                     conn.execute(
@@ -148,7 +169,7 @@ def send_pending_alerts(
     Success = ≥1 channel received it (the first channel's id is stored).
     last_attempt pacing: the watch cycle calls this every 60s; each row
     retries at most once per 5 minutes."""
-    conn = sqlite3.connect(db_path)
+    conn = get_conn(db_path)
     now = datetime.now(UTC)
     summary = {"sent": 0, "still_pending": 0}
     try:
@@ -166,12 +187,32 @@ def send_pending_alerts(
         if rows:
             channels = active_channels()
             now_iso = now.isoformat(timespec="seconds")
-            for row_id, message, attempts in rows:
-                conn.execute(
-                    "UPDATE alert_deliveries SET attempts=attempts+1, last_attempt=? WHERE id=?",
-                    (now_iso, row_id),
+            if not channels:
+                # nothing configured to deliver to: not a failure, and no retries burned
+                conn.executemany(
+                    "UPDATE alert_deliveries SET status='skipped', last_error=? WHERE id=?",
+                    [
+                        (
+                            "unconfigured: no alert channel (TELEGRAM_*, DISCORD_WEBHOOK_URL or NTFY_URL)",
+                            r[0],
+                        )
+                        for r in rows
+                    ],
                 )
                 conn.commit()
+                return {"sent": 0, "still_pending": 0, "skipped": len(rows)}
+            for row_id, message, attempts in rows:
+                # claim: the watch lane (every 60 s) and the send job both run this; only the
+                # process whose UPDATE wins sends, so a row never goes out twice
+                claimed = conn.execute(
+                    "UPDATE alert_deliveries SET attempts=attempts+1, last_attempt=?"
+                    " WHERE id=? AND status='pending' AND attempts=?"
+                    " AND (last_attempt IS NULL OR last_attempt < ?)",
+                    (now_iso, row_id, attempts, gap_before),
+                ).rowcount
+                conn.commit()
+                if not claimed:
+                    continue
                 delivered_id = None
                 for ch_name, ch in channels.items():
                     try:
@@ -196,8 +237,7 @@ def send_pending_alerts(
                     # snapshot from ever re-announcing. 'failed' is excluded
                     # from cooldown counting → the condition can re-fire.
                     conn.execute(
-                        "UPDATE alert_deliveries SET status='failed',"
-                        " last_error=? WHERE id=?",
+                        "UPDATE alert_deliveries SET status='failed', last_error=? WHERE id=?",
                         (f"send failed after {attempts + 1} attempts", row_id),
                     )
                     conn.commit()

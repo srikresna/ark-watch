@@ -112,7 +112,7 @@ def _month_start(month_end_iso: str) -> str:
 def _is_quarter_label(v) -> bool:
     """True for '26:Q2' text / datetime cells — False for footnote prose
     ('* 2026Q2 report includes a revision…' rides below the data, live 2026-09)."""
-    return isinstance(v, datetime) or (
+    return isinstance(v, datetime) or (  # pyright: ignore[reportReturnType] -- callers test truthiness
         isinstance(v, str) and re.match(r"^\s*\d{2,4}\s*[:\-]?\s*Q\s*\d\s*$", v, re.IGNORECASE)
     )
 
@@ -190,17 +190,22 @@ def _hhdc() -> dict[str, list[tuple[str, float]]]:
         raise NyFedResearchError(f"hhdc: header with '{must_contain}' not found")
 
     out: dict[str, list[tuple[str, float]]] = {
-        k: [] for k in (
-            "HHDC_TOTAL_DEBT", "HHDC_ORIG_MORTGAGE", "HHDC_ORIG_AUTO",
-            "HHDC_DQ90_FLOW_MORTGAGE", "HHDC_DQ90_FLOW_AUTO",
-            "HHDC_DQ90_FLOW_CC", "HHDC_DQ90_FLOW_STUDENT",
+        k: []
+        for k in (
+            "HHDC_TOTAL_DEBT",
+            "HHDC_ORIG_MORTGAGE",
+            "HHDC_ORIG_AUTO",
+            "HHDC_DQ90_FLOW_MORTGAGE",
+            "HHDC_DQ90_FLOW_AUTO",
+            "HHDC_DQ90_FLOW_CC",
+            "HHDC_DQ90_FLOW_STUDENT",
         )
     }
 
     # Page 3: balances — TRILLIONS → bn_usd (×1000, the single conversion site)
     rows = _sheet_rows("Page 3 Data")
     hi, cols = _by_header(rows, "MORTGAGE")
-    for row in rows[hi + 1:]:
+    for row in rows[hi + 1 :]:
         ts = _quarter_start(row[0]) if row and _is_quarter_label(row[0]) else None
         v = _f(row[cols["TOTAL"]]) if ts else None
         if ts and v is not None:
@@ -210,7 +215,7 @@ def _hhdc() -> dict[str, list[tuple[str, float]]]:
     for page, key in (("Page 6 Data", "HHDC_ORIG_MORTGAGE"), ("Page 8 Data", "HHDC_ORIG_AUTO")):
         rows = _sheet_rows(page)
         hi, cols = _by_header(rows, "TOTAL")
-        for row in rows[hi + 1:]:
+        for row in rows[hi + 1 :]:
             ts = _quarter_start(row[0]) if row and _is_quarter_label(row[0]) else None
             v = _f(row[cols["TOTAL"]]) if ts else None
             if ts and v is not None:
@@ -225,7 +230,7 @@ def _hhdc() -> dict[str, list[tuple[str, float]]]:
         "HHDC_DQ90_FLOW_CC": "CC",
         "HHDC_DQ90_FLOW_STUDENT": "STUDENT LOAN",
     }
-    for row in rows[hi + 1:]:
+    for row in rows[hi + 1 :]:
         ts = _quarter_start(row[0]) if row and _is_quarter_label(row[0]) else None
         if not ts:
             continue
@@ -243,36 +248,51 @@ def _hhdc() -> dict[str, list[tuple[str, float]]]:
 # --- SCE (monthly expectations) ----------------------------------------------------
 
 
-# (series_key, sheet, label-prefix) — labels live-verified 2026-09-19
+# (series_key, header label-prefix). Labels are located by scanning the header
+# rows of every non-'Demo' sheet, so sheet renames/merges do not break the
+# parser: the 2026-10 release dropped 'Five-year ahead Infl Exp' and moved the
+# 5y median into 'Inflation expectations' (live-verified 2026-10-09).
 _SCE_SPECS = [
-    ("SCE_INFL_1Y", "Inflation expectations", "Median one-year ahead expected inflation"),
-    ("SCE_INFL_3Y", "Inflation expectations", "Median three-year ahead expected inflation"),
-    ("SCE_INFL_5Y", "Five-year ahead Infl Exp", "Median five-year ahead expected inflation"),
-    ("SCE_EARN", "Earnings growth", "Median expected earnings growth"),
-    ("SCE_JOBLOSS", "Job separation expectation", "Mean probability of losing a job"),
-    ("SCE_JOBFIND", "Job finding expectations", "Mean probability of finding a job"),
+    ("SCE_INFL_1Y", "Median one-year ahead expected inflation"),
+    ("SCE_INFL_3Y", "Median three-year ahead expected inflation"),
+    ("SCE_INFL_5Y", "Median five-year ahead expected inflation"),
+    ("SCE_EARN", "Median expected earnings growth"),
+    ("SCE_JOBLOSS", "Mean probability of losing a job"),
+    ("SCE_JOBFIND", "Mean probability of finding a job"),
 ]
 
 
 def _sce() -> dict[str, list[tuple[str, float]]]:
-    """Core-module workbook → series. Columns are mapped BY LABEL (row idx 3):
-    job-loss and quit probabilities share a sheet — a positional read swaps
-    them (a claim-drift class defect)."""
+    """Core-module workbook -> series. Columns are mapped BY LABEL: job-loss and
+    quit probabilities share a sheet - a positional read swaps them (a
+    claim-drift class defect). 'Demo' sheets repeat core labels per
+    demographic group and are skipped."""
     import openpyxl
 
     wb = openpyxl.load_workbook(io.BytesIO(_download("sce")), read_only=True, data_only=True)
+    sheets = [
+        [list(r) for r in wb[n].iter_rows(values_only=True)]
+        for n in wb.sheetnames
+        if not n.strip().endswith("Demo")
+    ]
+    wb.close()
     out: dict[str, list[tuple[str, float]]] = {}
-    for key, sheet, label in _SCE_SPECS:
-        ws = wb[sheet]
-        rows = [list(r) for r in ws.iter_rows(values_only=True)]
-        col = next(
-            (j for j, c in enumerate(rows[3]) if isinstance(c, str) and c.strip().startswith(label)),
+    for key, label in _SCE_SPECS:
+        hit = next(
+            (
+                (rows, j)
+                for rows in sheets
+                for row in rows[:10]
+                for j, c in enumerate(row)
+                if isinstance(c, str) and c.strip().startswith(label)
+            ),
             None,
         )
-        if col is None:
-            raise NyFedResearchError(f"sce: label {label!r} not found in sheet {sheet!r}")
+        if hit is None:
+            raise NyFedResearchError(f"sce: label {label!r} not found in any sheet")
+        rows, col = hit
         vals = []
-        for row in rows[4:]:
+        for row in rows:
             ym = row and row[0]
             v = _f(row[col]) if col < len(row) else None
             if isinstance(ym, (int, float)) and int(ym) > 190000 and v is not None:
@@ -281,7 +301,6 @@ def _sce() -> dict[str, list[tuple[str, float]]]:
         if not vals:
             raise NyFedResearchError(f"sce: no rows for {key}")
         out[key] = vals
-    wb.close()
     return out
 
 
@@ -440,14 +459,10 @@ def _lw() -> dict[str, list[tuple[str, float]]]:
     if rstar_col is None:
         raise NyFedResearchError("lw: rstar column not found")
     gap_col = next(
-        (
-            j
-            for j, c in enumerate(names)
-            if j > rstar_col and "gap" in str(c or "").strip().lower()
-        ),
+        (j for j, c in enumerate(names) if j > rstar_col and "gap" in str(c or "").strip().lower()),
         rstar_col + 3,
     )
-    for row in rows[hi + 1:]:
+    for row in rows[hi + 1 :]:
         if not row or not isinstance(row[0], datetime):
             continue
         ts = f"{row[0].year}-{(row[0].month - 1) // 3 * 3 + 1:02d}-01"
@@ -463,6 +478,8 @@ def _lw() -> dict[str, list[tuple[str, float]]]:
     # above the US column (live-caught: grp_col+1 landed on CANADA's 1.76)
     rows = _estimates("hlw", "HLW Estimates")
     hi = _header_idx(rows)
+    if hi is None:
+        raise NyFedResearchError("hlw: 'Date' header not found")
     groups = rows[hi - 1] if hi >= 1 else []
     rstar_col = next(
         (
@@ -475,7 +492,7 @@ def _lw() -> dict[str, list[tuple[str, float]]]:
     )
     if rstar_col is None:
         raise NyFedResearchError("hlw: US r* column (Natural Rate group) not found")
-    for row in rows[hi + 1:]:
+    for row in rows[hi + 1 :]:
         if not row or not isinstance(row[0], datetime):
             continue
         v = _f(row[rstar_col]) if rstar_col < len(row) else None
@@ -506,7 +523,7 @@ def _mct() -> dict[str, list[tuple[str, float]]]:
             continue
         ts = _m_dy(parts[1])
         lo, pt, hi = _f(parts[2]), _f(parts[3]), _f(parts[4])
-        if None in (lo, pt, hi):
+        if lo is None or pt is None or hi is None:
             continue
         if not (lo <= pt <= hi):
             raise NyFedResearchError(
@@ -533,26 +550,51 @@ FAMILY_PARSERS = {
 
 # series key (sans NYFED:) → family. Keys must match the parser outputs above.
 SERIES_FAMILY = {
-    "HHDC_TOTAL_DEBT": "hhdc", "HHDC_ORIG_MORTGAGE": "hhdc", "HHDC_ORIG_AUTO": "hhdc",
-    "HHDC_DQ90_FLOW_MORTGAGE": "hhdc", "HHDC_DQ90_FLOW_AUTO": "hhdc",
-    "HHDC_DQ90_FLOW_CC": "hhdc", "HHDC_DQ90_FLOW_STUDENT": "hhdc",
-    "SCE_INFL_1Y": "sce", "SCE_INFL_3Y": "sce", "SCE_INFL_5Y": "sce", "SCE_EARN": "sce",
-    "SCE_JOBLOSS": "sce", "SCE_JOBFIND": "sce",
+    "HHDC_TOTAL_DEBT": "hhdc",
+    "HHDC_ORIG_MORTGAGE": "hhdc",
+    "HHDC_ORIG_AUTO": "hhdc",
+    "HHDC_DQ90_FLOW_MORTGAGE": "hhdc",
+    "HHDC_DQ90_FLOW_AUTO": "hhdc",
+    "HHDC_DQ90_FLOW_CC": "hhdc",
+    "HHDC_DQ90_FLOW_STUDENT": "hhdc",
+    "SCE_INFL_1Y": "sce",
+    "SCE_INFL_3Y": "sce",
+    "SCE_INFL_5Y": "sce",
+    "SCE_EARN": "sce",
+    "SCE_JOBLOSS": "sce",
+    "SCE_JOBFIND": "sce",
     "GSCPI": "gscpi",
-    "ESMS_HEADLINE": "empire", "ESMS_NEW_ORDERS": "empire", "ESMS_SHIPMENTS": "empire",
-    "ESMS_PRICES_PAID": "empire", "ESMS_PRICES_RECEIVED": "empire",
-    "ESMS_EMPLOYMENT": "empire", "ESMS_AVG_WORKWEEK": "empire",
-    "ACMTP01": "acm", "ACMTP02": "acm", "ACMTP05": "acm", "ACMTP10": "acm",
+    "ESMS_HEADLINE": "empire",
+    "ESMS_NEW_ORDERS": "empire",
+    "ESMS_SHIPMENTS": "empire",
+    "ESMS_PRICES_PAID": "empire",
+    "ESMS_PRICES_RECEIVED": "empire",
+    "ESMS_EMPLOYMENT": "empire",
+    "ESMS_AVG_WORKWEEK": "empire",
+    "ACMTP01": "acm",
+    "ACMTP02": "acm",
+    "ACMTP05": "acm",
+    "ACMTP10": "acm",
     "HPW_IDX_M": "hpw",
-    "LW_RSTAR": "lw", "LW_GAP": "lw", "HLW_RSTAR": "lw",
-    "MCT": "mct", "MCT_BAND_LO": "mct", "MCT_BAND_HI": "mct",
+    "LW_RSTAR": "lw",
+    "LW_GAP": "lw",
+    "HLW_RSTAR": "lw",
+    "MCT": "mct",
+    "MCT_BAND_LO": "mct",
+    "MCT_BAND_HI": "mct",
 }
 
 # window floors: a 10-day default would starve monthly/quarterly families —
 # the window must always reach at least the latest observation
 FLOOR_DAYS = {
-    "hhdc": 420, "sce": 120, "gscpi": 150, "empire": 150, "hpw": 150,
-    "lw": 550, "mct": 150, "acm": 10,
+    "hhdc": 420,
+    "sce": 120,
+    "gscpi": 150,
+    "empire": 150,
+    "hpw": 150,
+    "lw": 550,
+    "mct": 150,
+    "acm": 10,
 }
 
 _parsed_cache: dict[str, dict[str, list[tuple[str, float]]]] = {}
@@ -617,6 +659,8 @@ def save_history(conn, *, verbose: bool = True) -> int:
         n_rev = db.apply_realtime_revisions(conn, payload)
         total += n_new + n_rev
         if verbose and rows:
-            print(f"  {sid:28s} {len(rows):4d} obs (new {n_new}, revised {n_rev}) — latest {rows[-1]}")
+            print(
+                f"  {sid:28s} {len(rows):4d} obs (new {n_new}, revised {n_rev}), latest {rows[-1]}"
+            )
     conn.commit()
     return total

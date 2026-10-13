@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 
 import requests
 
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited
+
 UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
 }
@@ -59,12 +61,14 @@ def _iso(date_str: str) -> str:
 def fetch_fmp(from_d: str, to_d: str) -> list[dict]:
     key = os.environ.get("FMP_API_KEY", "")
     if not key:
-        raise RuntimeError("FMP_API_KEY empty — set env (see API.md)")
+        raise RuntimeError("FMP_API_KEY empty, set env (see API.md)")
     r = requests.get(
         "https://financialmodelingprep.com/stable/economic-calendar",
         params={"country": "US", "from": from_d, "to": to_d, "apikey": key},
         timeout=(10, 30),
     )
+    if r.status_code in PLAN_LIMIT_STATUSES:
+        raise PlanLimited(f"plan-limited: FMP economic-calendar (HTTP {r.status_code})")
     r.raise_for_status()
     out = []
     for x in r.json():
@@ -184,6 +188,8 @@ def fetch_cme(from_d: str, to_d: str) -> list[dict]:
 
 def fetch_eodhd(from_d: str, to_d: str) -> list[dict]:
     tok = os.environ.get("EODHD_API_TOKEN", "")
+    if not tok:
+        return []  # optional provider unconfigured: no 401 per pull
     r = requests.get(
         "https://eodhd.com/api/economic-events",
         params={"from": from_d, "to": to_d, "country": "US", "api_token": tok, "fmt": "json"},

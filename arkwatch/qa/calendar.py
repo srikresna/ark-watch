@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from .. import db
 from ..config import load_curated_calendar
+from ..db import default_db_path
 from ..fetchers import calendar as cal
 from ..timezones import ET
+from .redact import _redact
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
+
 TIME_PRECEDENCE = {"CURATED": 0, "TV": 1, "CME": 2, "FMP": 3, "EODHD": 4}
 VALUE_PRECEDENCE = {"FMP": 0, "EODHD": 1, "CME": 2, "TV": 3}
 
@@ -87,6 +90,8 @@ _ALIASES = {
     # actual 0.4 == the FMP twin's — same release under a split key)
     "PPI MOM": "PRODUCER PRICE INDEX MOM",
     "PPI YOY": "PRODUCER PRICE INDEX YOY",
+    # TV/CME name the advance goods release with an ADV tail (CAL:GOODS_TRADE_BALANCE stayed empty)
+    "GOODS TRADE BALANCE ADV": "GOODS TRADE BALANCE",
 }
 
 
@@ -111,7 +116,9 @@ def _std_time_et(name_norm: str):
     return None
 
 
-def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict], dict]:
+def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict], dict, dict]:
+    """(events, rows per source, why a source gave nothing: 'plan-limited: ...', 'unconfigured: ...'
+    or the redacted error), so fetch_log can tell a skipped provider from a dead one."""
     now = datetime.now(UTC)
     # trailing window 10d (2026-09-17 audit: the old 3d heal window could not
     # survive a daemon outage — a 63h PC outage + T+1/T+2 vendor actual lag
@@ -119,6 +126,9 @@ def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict]
     from_d = from_d or (now - timedelta(days=10)).strftime("%Y-%m-%d")
     to_d = to_d or (now + timedelta(days=14)).strftime("%Y-%m-%d")
     fetched: dict[str, list[dict]] = {}
+    why: dict[str, str] = {}
+    if not os.environ.get("EODHD_API_TOKEN"):
+        why["EODHD"] = "unconfigured: EODHD_API_TOKEN"
     for src, fn in (
         ("FMP", cal.fetch_fmp),
         ("TV", cal.fetch_tv),
@@ -128,8 +138,9 @@ def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict]
         try:
             fetched[src] = fn(from_d, to_d)
         except Exception as ex:
-            print(f"  ⚠ {src} failed: {str(ex)[:110]}")
+            print(f"  ⚠ {src} failed: {_redact(str(ex))[:110]}")
             fetched[src] = []
+            why[src] = _redact(str(ex))[:200]
     counts = {k: len(v) for k, v in fetched.items()}
 
     # Merge with precedence, tracking provenance per field: actual/consensus can
@@ -206,7 +217,7 @@ def pull(from_d: str | None = None, to_d: str | None = None) -> tuple[list[dict]
                 )
                 e["ts_utc"] = dt_et.astimezone(UTC).isoformat(timespec="seconds")
                 e["is_curated"] = 1
-    return events, counts
+    return events, counts, why
 
 
 def event_uid(normalized_name: str, ts_utc: str) -> str:
@@ -218,7 +229,9 @@ def event_uid(normalized_name: str, ts_utc: str) -> str:
     actuals silently never filled for them. ONE canonical helper for ALL
     writers; the uid uses only the DATE because the winning TIME can change
     between pulls (dedup key is name+date)."""
-    return hashlib.sha1(f"{normalized_name}|{ts_utc[:10]}|US".encode()).hexdigest()[:16]
+    return hashlib.sha1(
+        f"{normalized_name}|{ts_utc[:10]}|US".encode(), usedforsecurity=False
+    ).hexdigest()[:16]
 
 
 # Sub-component event families whose vendor feed is DEAD: no consensus AND no
@@ -373,11 +386,12 @@ def save(db_path: str, events: list[dict]) -> int:
             rows,
         )
         conn.executemany(
-            "UPDATE events SET consensus=?2, consensus_source=?3, "
-            "  importance=CASE WHEN ?4<>'low' AND ?4 IS NOT NULL THEN ?4 ELSE importance END "
-            "WHERE event_uid=?1 AND actual IS NULL "
-            "AND (?2 IS NOT NULL AND events.consensus IS NOT ?2)",
-            [(r[0], r[7], r[8], r[6]) for r in rows],
+            "UPDATE events SET consensus=?, consensus_source=?, "
+            "  importance=CASE WHEN ?<>'low' AND ? IS NOT NULL THEN ? ELSE importance END "
+            "WHERE event_uid=? AND actual IS NULL "
+            "AND (? IS NOT NULL AND events.consensus IS NOT ?)",
+            # plain qmarks: numbered ?N with a sequence is deprecated (error in Python 3.14)
+            [(r[7], r[8], r[6], r[6], r[6], r[0], r[7], r[7]) for r in rows],
         )
         # Sibling heal (2026-09-17 audit): a TV twin of a release whose FMP
         # row carries the actual stays actual-NULL forever when the twin's
@@ -391,12 +405,12 @@ def save(db_path: str, events: list[dict]) -> int:
         # Only heal within a plausible 0.1x..10x band of the target's own
         # consensus (a consensus-less target falls back to the family gate).
         conn.executemany(
-            "UPDATE events SET actual=?2, actual_source=?3 "
-            "WHERE indicator_key=?4 AND substr(ts_utc,1,10)=substr(?5,1,10) "
-            "AND actual IS NULL AND event_uid<>?6 "
-            "AND (consensus IS NULL OR (ABS(?2) >= 0.1*ABS(consensus)"
-            "     AND ABS(?2) <= 10*ABS(consensus)))",
-            [(r[0], r[9], r[10], r[14], r[1], r[0]) for r in rows if r[9] is not None],
+            "UPDATE events SET actual=?, actual_source=? "
+            "WHERE indicator_key=? AND substr(ts_utc,1,10)=substr(?,1,10) "
+            "AND actual IS NULL AND event_uid<>? "
+            "AND (consensus IS NULL OR (ABS(?) >= 0.1*ABS(consensus)"
+            "     AND ABS(?) <= 10*ABS(consensus)))",
+            [(r[9], r[10], r[14], r[1], r[0], r[9], r[9]) for r in rows if r[9] is not None],
         )
         conn.execute("COMMIT")
     except Exception:
@@ -415,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     from dotenv import load_dotenv
 
     load_dotenv()
-    events, counts = pull(a.from_d, a.to_d)
+    events, counts, why = pull(a.from_d, a.to_d)
     n_new = save(a.db, events)
     # ROUND-7: per-source fetch_log rows — a dead TV/CME-calendar endpoint
     # was invisible (the job always exits 0, failures only printed). A dead
@@ -428,7 +442,10 @@ def main(argv: list[str] | None = None) -> int:
 
         _conn = _sq.connect(a.db, isolation_level=None)
         for src, n in counts.items():
-            _lc_cal(_conn, "calendar", f"CAL:{src}", None, n)
+            reason = why.get(src, "") if not n else ""
+            skip = reason.startswith(("plan-limited", "unconfigured"))
+            _lc_cal(_conn, "calendar", f"CAL:{src}", None, n, err=reason or None,
+                    status="SKIPPED" if skip else None)  # fmt: skip
         _conn.close()
     except Exception:
         pass  # observability must never fail the calendar job

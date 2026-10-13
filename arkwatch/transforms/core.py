@@ -8,16 +8,6 @@ N trading days (D series) or N months (M series).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-
-
-@dataclass
-class TransformResult:
-    value: float | None
-    z: float | None = None
-    percentile: float | None = None  # 0-100
-    momentum: float | None = None
-    state: str = "INSUFFICIENT"
 
 
 def zscore(values: list[float], window: int = 1260, min_frac: float = 0.8) -> float | None:
@@ -32,7 +22,8 @@ def zscore(values: list[float], window: int = 1260, min_frac: float = 0.8) -> fl
     mean = sum(recent) / len(recent)
     var = sum((v - mean) ** 2 for v in recent) / len(recent)  # population
     std = math.sqrt(var) if var > 0 else 0
-    if std == 0:
+    # a constant series leaves float residue (3.63 x 1260 -> var 2e-31, z = -1.0): relative test
+    if std <= 1e-12 * max(1.0, abs(mean)):
         return None
     return (x - mean) / std
 

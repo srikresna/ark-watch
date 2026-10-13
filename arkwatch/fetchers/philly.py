@@ -136,7 +136,7 @@ def _growth_rows() -> list[tuple[str, dict[str, float]]]:
             if not isinstance(y, (int, float)) or not isinstance(q, (int, float)):
                 continue
             rec = {
-                header[i]: float(row[i])
+                header[i]: float(row[i])  # pyright: ignore[reportArgumentType] -- isinstance-filtered below
                 for i in range(2, len(header))
                 if header[i] and isinstance(row[i], (int, float))
             }
@@ -179,7 +179,11 @@ def _anxious_latest() -> dict:
     rows = list(ws.iter_rows(values_only=True))
     # header at row index 3: Obs Year | Obs Quarter | Anxious Index | RECESS
     header_i = next(
-        (i for i, r in enumerate(rows[:6]) if r and any(str(c or "").strip() == "Obs Year" for c in r)),
+        (
+            i
+            for i, r in enumerate(rows[:6])
+            if r and any(str(c or "").strip() == "Obs Year" for c in r)
+        ),
         None,
     )
     if header_i is None:

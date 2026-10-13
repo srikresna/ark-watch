@@ -96,9 +96,7 @@ def _fetch_farside(path: str) -> dict:
             per_issuer, total = dict(zip(issuers, signed, strict=True)), None
         else:
             continue
-        rows.append(
-            {"ts": date, "date_iso": iso, "net_flow_musd": total, "issuers": per_issuer}
-        )
+        rows.append({"ts": date, "date_iso": iso, "net_flow_musd": total, "issuers": per_issuer})
     if not rows:
         raise RuntimeError(f"Farside {path}: no filled date rows")
 
@@ -185,8 +183,10 @@ def fetch_tic_slt5() -> dict:
                 break
     if "china" not in values:
         raise RuntimeError("TIC: China, Mainland row not found")
+    if not periods:  # a literal "latest" period passed the monthly stale gate as a string
+        raise RuntimeError("TIC: no YYYY-mm period on the page")
     return {
-        "ts": periods[0] if periods else "latest",
+        "ts": max(periods),  # the month picker's order is not guaranteed
         "values": values,  # {key: $B}, china guaranteed
     }
 
@@ -259,8 +259,7 @@ def fetch_pboc_gold() -> dict:
         raise RuntimeError("SAFE: gold volume row (万盎司) not found")
 
     months = [
-        {"ts": ts, "wan_oz": w, "tonnes": round(wan_oz_to_tonnes(w), 1)}
-        for ts, w in tonnage_rows
+        {"ts": ts, "wan_oz": w, "tonnes": round(wan_oz_to_tonnes(w), 1)} for ts, w in tonnage_rows
     ]
     latest = months[-1]
     gold_share = round(gold_val / total * 100, 2) if gold_val and total else None
@@ -329,7 +328,7 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
         if (year, month) < (now.year, now.month):
             raise RuntimeError(
                 f"LME soft-404: stocks-{_LME_MONTHS[month - 1]}-{year}.xlsx"
-                f" serves HTTP {r.status_code} non-XLSX — path moved/blocked"
+                f" serves HTTP {r.status_code} non-XLSX, path moved/blocked"
             )
         return []
     wb = load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
@@ -348,7 +347,7 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
                 ca_col = cells.index("CA")
                 break
             hdr_i = None  # header row without a CA column -> keep looking
-    if hdr_i is None or ca_col is None:
+    if hdr_i is None or ca_col is None or date_col is None:  # date_col is set with hdr_i
         raise RuntimeError(
             f"LME format drift: stocks-{_LME_MONTHS[month - 1]}-{year}.xlsx"
             f" has no BusinessDate/Stock Date + CA header"
@@ -360,9 +359,9 @@ def fetch_lme_stocks(year: int, month: int, session=None) -> list[dict]:
         d, v = row[date_col], row[ca_col]
         if d is None or v is None:
             continue
-        ts = d.date().isoformat() if hasattr(d, "date") else str(d)[:10]
+        ts = d.date().isoformat() if hasattr(d, "date") else str(d)[:10]  # pyright: ignore[reportAttributeAccessIssue] -- hasattr-guarded
         try:
-            out.append({"ts": ts, "copper_tonnes": float(v)})
+            out.append({"ts": ts, "copper_tonnes": float(v)})  # pyright: ignore[reportArgumentType] -- non-numeric cells hit the except
         except (TypeError, ValueError):
             continue
     return out
@@ -384,10 +383,26 @@ _LBMA_MONTHS = {
 }
 
 
-_LME_OW_MONTHS = {m: f"{i:02d}" for i, m in enumerate(
-    ("january", "february", "march", "april", "may", "june", "july",
-     "august", "september", "october", "november", "december"), start=1
-)}
+_LME_OW_MONTHS = {
+    m: f"{i:02d}"
+    for i, m in enumerate(
+        (
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ),
+        start=1,
+    )
+}
 
 
 def fetch_lme_offwarrant(session=None) -> list[dict]:
@@ -412,15 +427,20 @@ def fetch_lme_offwarrant(session=None) -> list[dict]:
     )
     if r.status_code != 200:
         raise RuntimeError(f"LME off-warrant: HTTP {r.status_code}")
-    links = sorted(set(re.findall(
-        r'href="(/-/media/files/data/reports-and-data/warehouse-and-stock-reports/'
-        r'off-warrant-stock-reporting/[^"]+\.xlsx)"', r.text
-    )))
+    links = sorted(
+        set(
+            re.findall(
+                r'href="(/-/media/files/data/reports-and-data/warehouse-and-stock-reports/'
+                r'off-warrant-stock-reporting/[^"]+\.xlsx)"',
+                r.text,
+            )
+        )
+    )
     out = []
     for href in links:
         m = re.search(r"-([a-z]+)-(\d{4})\.xlsx$", href, re.I)
         mm = _LME_OW_MONTHS.get(m.group(1).lower()) if m else None
-        if not mm:
+        if m is None or not mm:
             continue
         ts = f"{m.group(2)}-{mm}"
         r2 = s.get(f"https://www.lme.com{href}", timeout=(10, 60))
@@ -436,7 +456,7 @@ def fetch_lme_offwarrant(session=None) -> list[dict]:
             if "LOCATION" in cells and "CU" in cells:
                 hdr_i, cu_col = i, cells.index("CU")
                 break
-        if hdr_i is None:
+        if hdr_i is None or cu_col is None:  # cu_col is set with hdr_i
             continue
         regions: dict[str, float] = {}
         total = 0.0
@@ -510,7 +530,7 @@ def fetch_lme_owsr_daily(session=None) -> list[dict]:
     except ValueError as exc:
         # JSON body -> HTML means the auth cookie died and the server
         # answered with a login page: name the fix, don't bury it
-        raise LmeOwsrError("LME cookie expired — re-export from the browser") from exc
+        raise LmeOwsrError("LME cookie expired, re-export from the browser") from exc
     out = []
     for item in results:
         m = re.search(r"(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})", item.get("Name", ""))
@@ -537,7 +557,7 @@ def fetch_lme_owsr_daily(session=None) -> list[dict]:
             if "CU" in cells and "REGION" in cells:
                 hdr_i, cu_col = i, cells.index("CU")
                 break
-        if hdr_i is None:
+        if hdr_i is None or cu_col is None:  # cu_col is set with hdr_i
             continue
         regions: dict[str, float] = {}
         total = None
@@ -583,7 +603,9 @@ def fetch_lbma_vault() -> dict:
         now = datetime.now(UTC)
         py, pm = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
         name = next(n for n, mm in _LBMA_MONTHS.items() if mm == f"{pm:02d}")
-        links = [f"https://cdn.lbma.org.uk/downloads/LBMA-London-Vault-Holdings-Data-{name}-{py}.xlsx"]
+        links = [
+            f"https://cdn.lbma.org.uk/downloads/LBMA-London-Vault-Holdings-Data-{name}-{py}.xlsx"
+        ]
     r2 = s.get(links[0], timeout=(10, 60))
     if r2.status_code != 200 or r2.content[:2] != b"PK":
         raise RuntimeError(f"LBMA: HTTP {r2.status_code}")
@@ -599,7 +621,7 @@ def fetch_lbma_vault() -> dict:
         if "gold" in cells and "silver" in cells:
             gold_col, silver_col = cells.index("gold"), cells.index("silver")
             break
-    if gold_col is None:
+    if gold_col is None or silver_col is None:  # set together
         raise RuntimeError("LBMA: Gold/Silver columns not found in header")
 
     months: list[dict] = []
@@ -615,7 +637,7 @@ def fetch_lbma_vault() -> dict:
         ts = ""
         if row[0] is not None:
             if hasattr(row[0], "strftime"):
-                ts = row[0].strftime("%Y-%m")
+                ts = row[0].strftime("%Y-%m")  # pyright: ignore[reportAttributeAccessIssue] -- hasattr-guarded
             else:
                 m = re.match(r"(\d{4}-\d{2})", str(row[0]).strip())
                 ts = m.group(1) if m else ""

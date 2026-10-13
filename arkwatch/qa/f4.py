@@ -16,12 +16,13 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import cast
 
 from .. import db
+from ..db import default_db_path
 from ..fetchers import fred
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 VINTAGE_TAG = "first"  # marker for first-print rows in raw_observations
 
 
@@ -261,12 +262,7 @@ def run_replay(conn, start: str = "2005-01", verbose: bool = True) -> list[dict]
     episodes. Returns [{month, score, label, recession, c_state,
     c_episode}] — the basis for threshold calibration and the honest backtest."""
     from ..fetchers.nber import fetch_recession_dates
-    from ..signals.pillars import (
-        REGIME_RISK_OFF,
-        REGIME_RISK_ON,
-        compute_pillars,
-        compute_regime_score,
-    )
+    from ..signals.pillars import compute_pillars, compute_regime_score, regime_label
 
     nber_na = False
     try:
@@ -274,7 +270,7 @@ def run_replay(conn, start: str = "2005-01", verbose: bool = True) -> list[dict]
     except Exception as ex:
         # A silent NBER failure would leave every recession label wrong with
         # no trace — warn and mark the state instead
-        print(f"  ⚠ NBER fetch failed — recession labels all NA: {str(ex)[:80]}")
+        print(f"  ⚠ NBER fetch failed, recession labels all NA: {str(ex)[:80]}")
         cycles = []
         nber_na = True
     recess = nber_recession_months(cycles)
@@ -293,11 +289,9 @@ def run_replay(conn, start: str = "2005-01", verbose: bool = True) -> list[dict]
         reader = AsOfReader(conn, as_of)
         pillars = compute_pillars(conn, reader=reader)
         score = compute_regime_score(pillars)
-        label = (
-            "RISK-ON"
-            if score > REGIME_RISK_ON
-            else ("RISK-OFF" if score < REGIME_RISK_OFF else "NEUTRAL")
-        )
+        # the live label: a month with fewer than 4 pillars is INSUFFICIENT DATA, not a call the
+        # replay's hit rate may count
+        label = regime_label(score, pillars)
         # Pillar composition varies by era (2005-09 may have a single pillar),
         # making scores non-comparable — record the active pillar count per
         # month as metadata
@@ -379,9 +373,9 @@ def episode_blok_c(
     if cpi and isinstance(cpi[0], tuple):
         from datetime import date
 
-        pts: list[tuple[int, float]] = []
+        pts: list[tuple[int, float] | None] = []
         prev_m: date | None = None
-        for ts, v in cpi:
+        for ts, v in cast(list[tuple[str, float]], cpi):
             try:
                 d = date.fromisoformat(str(ts)[:10])
             except ValueError:
@@ -411,7 +405,7 @@ def episode_blok_c(
         # semantics), not the longest (a pre-gap segment would be stale forever)
         cpi_vals = segs[-1] if segs else []
     else:
-        cpi_vals = list(cpi)  # type: ignore[assignment]
+        cpi_vals = list(cast(list[float], cpi))
 
     if len(cpi_vals) < 4:
         return "INSUFFICIENT", "none"

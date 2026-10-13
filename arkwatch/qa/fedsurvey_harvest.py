@@ -20,17 +20,20 @@ minutes dissent) still land, the tone row does NOT — so _latest_stored still
 sees the source as pending and the next day's run retries the analysis
 automatically. Any error → exit 1 → the daemon's dated alert pages the owner.
 """
+
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .. import db
+from ..db import default_db_path
 from ..fetchers import fedsurvey
+from . import fetch_log
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 
 
 def _latest_stored(conn, kind: str) -> str:
@@ -78,12 +81,34 @@ def _check_new(available_ts: str, stored_ts: str) -> bool:
 def _nlp_tone(text: str, source_type: str) -> dict:
     """analyze_tone, but an NLP outage degrades to {'score': None, ...} instead
     of raising — the caller keeps the structural data and retries tomorrow."""
+    from ..config import nlp_missing
+
+    if skip := nlp_missing():  # no key at all = SKIPPED, not an outage
+        return {"score": None, "summary": skip}
     try:
         from ..fetchers.nlp import analyze_tone
 
-        return analyze_tone(text, source_type=source_type)
+        tone = analyze_tone(text, source_type=source_type)
     except Exception as ex:
         return {"score": None, "summary": f"nlp unavailable: {str(ex)[:80]}"}
+    # LLM output: a "high" / null / 250 score must not land in computed_signals as-is
+    raw = tone.get("score") if isinstance(tone, dict) else None
+    try:
+        score = float(raw) if not isinstance(raw, bool) else math.nan  # pyright: ignore[reportArgumentType] -- None hits the except
+    except (TypeError, ValueError):
+        score = math.nan
+    if not math.isfinite(score):
+        return {"score": None, "summary": f"nlp invalid score: {str(raw)[:40]}"}
+    return {**tone, "score": max(-100.0, min(100.0, score))}  # analyze_tone's -100..+100 scale
+
+
+def _nlp_failed(ts: str, tone: dict, stored: str = "") -> str:
+    """Status line for a tone that did not land: 'skipped' when NLP is
+    unconfigured (exit 0), 'nlp-failed' otherwise (pages, retried next run)."""
+    why = tone.get("summary", "")
+    if why.startswith("unconfigured"):
+        return f"skipped @ {ts} ({why}{stored})"
+    return f"nlp-failed @ {ts} ({why[:60]}{stored}), retry next run"
 
 
 def _harvest_text_source(conn, kind: str, fetch_fn, source_type: str) -> tuple[str, bool]:
@@ -100,15 +125,26 @@ def _harvest_text_source(conn, kind: str, fetch_fn, source_type: str) -> tuple[s
     tone = _nlp_tone(data["text"], source_type)
     if tone.get("score") is None:
         if metrics:
-            _store_row(conn, f"fedsurvey_{kind}_bias", data["ts"], _bias_value(metrics),
-                       metrics.get("net_bias", ""))
-        return f"nlp-failed @ {data['ts']} ({tone.get('summary', '')[:60]}) — retry next run", False
+            _store_row(
+                conn,
+                f"fedsurvey_{kind}_bias",
+                data["ts"],
+                _bias_value(metrics),
+                metrics.get("net_bias", ""),
+            )
+        return _nlp_failed(data["ts"], tone), False
 
-    _store_row(conn, f"fedsurvey_{kind}_tone", data["ts"], tone.get("score"),
-               tone.get("summary", ""))
+    _store_row(
+        conn, f"fedsurvey_{kind}_tone", data["ts"], tone.get("score"), tone.get("summary", "")
+    )
     if metrics:
-        _store_row(conn, f"fedsurvey_{kind}_bias", data["ts"], _bias_value(metrics),
-                   metrics.get("net_bias", ""))
+        _store_row(
+            conn,
+            f"fedsurvey_{kind}_bias",
+            data["ts"],
+            _bias_value(metrics),
+            metrics.get("net_bias", ""),
+        )
     bias = f", bias={metrics.get('net_bias')}" if metrics else ""
     return f"new @ {data['ts']} (tone={tone.get('score')}{bias})", True
 
@@ -141,25 +177,42 @@ def harvest_all(conn) -> dict[str, str]:
 
     # --- FOMC Minutes (NLP) ---
     try:
-        from ..fetchers.minutes import minutes_dates, parse_minutes
+        from ..fetchers.minutes import minutes_dates, parse_minutes, policy_excerpt
 
         latest = minutes_dates()[0]  # newest available
         stored = _latest_stored(conn, "minutes")
         # minutes ts = meeting date (release is +3wk but URL uses meeting date)
         if _check_new(latest, stored):
             p = parse_minutes(latest)
-            tone = _nlp_tone(p["full_text"], "minutes")
+            tone = _nlp_tone(policy_excerpt(p["full_text"]), "minutes")
             dissent_metrics = {"net_bias": p["dissent_direction"] or "none"}
             if tone.get("score") is None:
-                _store_row(conn, "fedsurvey_minutes_bias", latest, _bias_value(dissent_metrics),
-                           f"dissent={p['dissent_count']} {p['dissent_direction'] or 'none'}")
-                out["minutes"] = f"nlp-failed @ {latest} (dissent={p['dissent_count']} stored) — retry next run"
+                _store_row(
+                    conn,
+                    "fedsurvey_minutes_bias",
+                    latest,
+                    _bias_value(dissent_metrics),
+                    f"dissent={p['dissent_count']} {p['dissent_direction'] or 'none'}",
+                )
+                out["minutes"] = _nlp_failed(latest, tone, f"; dissent={p['dissent_count']} stored")
             else:
-                _store_row(conn, "fedsurvey_minutes_tone", latest, tone.get("score"),
-                           tone.get("summary", ""))
-                _store_row(conn, "fedsurvey_minutes_bias", latest, _bias_value(dissent_metrics),
-                           f"dissent={p['dissent_count']} {p['dissent_direction'] or 'none'}")
-                out["minutes"] = f"new @ {latest} (tone={tone.get('score')}, dissent={p['dissent_count']})"
+                _store_row(
+                    conn,
+                    "fedsurvey_minutes_tone",
+                    latest,
+                    tone.get("score"),
+                    tone.get("summary", ""),
+                )
+                _store_row(
+                    conn,
+                    "fedsurvey_minutes_bias",
+                    latest,
+                    _bias_value(dissent_metrics),
+                    f"dissent={p['dissent_count']} {p['dissent_direction'] or 'none'}",
+                )
+                out["minutes"] = (
+                    f"new @ {latest} (tone={tone.get('score')}, dissent={p['dissent_count']})"
+                )
                 n_new += 1
         else:
             out["minutes"] = f"unchanged (stored {stored})"
@@ -176,10 +229,15 @@ def harvest_all(conn) -> dict[str, str]:
             text = fetch_transcript_text(latest_pc)
             tone = _nlp_tone(text, "press conference")
             if tone.get("score") is None:
-                out["pressconf"] = f"nlp-failed @ {latest_pc} ({tone.get('summary', '')[:60]}) — retry next run"
+                out["pressconf"] = _nlp_failed(latest_pc, tone)
             else:
-                _store_row(conn, "fedsurvey_pressconf_tone", latest_pc, tone.get("score"),
-                           tone.get("summary", ""))
+                _store_row(
+                    conn,
+                    "fedsurvey_pressconf_tone",
+                    latest_pc,
+                    tone.get("score"),
+                    tone.get("summary", ""),
+                )
                 out["pressconf"] = f"new @ {latest_pc} (tone={tone.get('score')})"
                 n_new += 1
         else:
@@ -189,7 +247,11 @@ def harvest_all(conn) -> dict[str, str]:
 
     n_err = sum(1 for v in out.values() if v.startswith(("error:", "nlp-failed")))
     log_collection(
-        conn, "fedsurvey", "FEDSURVEY:ALL", None, n_new,
+        conn,
+        "fedsurvey",
+        "FEDSURVEY:ALL",
+        None,
+        n_new,
         err=None if n_err == 0 else f"{n_err}/{len(out)} sources failed",
         # a checked-and-unchanged day is HEALTHY, not EMPTY (audit round-2:
         # the EMPTY badge belongs to fetches that returned zero observations)
@@ -210,15 +272,18 @@ def main(argv: list[str] | None = None) -> int:
     results = harvest_all(conn)
     # errors LAST: the daemon's success summary keeps the tail lines, so a sick
     # source must not be scrolled away by healthy ones
-    for source, status in sorted(results.items(), key=lambda kv: kv[1].startswith(("error:", "nlp-failed"))):
+    for source, status in sorted(
+        results.items(), key=lambda kv: kv[1].startswith(("error:", "nlp-failed"))
+    ):
         print(f"  {source:12s} {status}")
     n_new = sum(1 for v in results.values() if v.startswith("new"))
     n_err = sum(1 for v in results.values() if v.startswith(("error:", "nlp-failed")))
     print(f"=== done: {n_new} new, {len(results) - n_new - n_err} unchanged, {n_err} errors ===")
     conn.close()
-    # any failure (fetch or NLP) must page via the daemon's exit-code contract —
-    # 2026-09-19: 6/6 errors exited 0 and the missing key rotted silently
-    return 1 if n_err else 0
+    # a broad failure pages via the daemon's exit-code contract (2026-09-19: 6/6 errors
+    # exited 0 and the missing key rotted silently); one sick source of six is a degradation,
+    # visible in fetch_log and /v1/health/fetchers
+    return fetch_log.exit_code(len(results) - n_err, n_err)
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ def _identity_checks(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     dffii = _latest(conn, "FRED:DFII10")
     dgs10 = _latest(conn, "FRED:DGS10")
     t10yie = _latest(conn, "FRED:T10YIE")
-    if all([dffii, dgs10, t10yie]):
+    if dffii and dgs10 and t10yie:
         implied_ry = dgs10[1] - t10yie[1]
         diff = abs(dffii[1] - implied_ry)
         ok = "✓" if diff <= 0.25 else f"✗ Δ={diff:.3f}"
@@ -97,7 +97,7 @@ def _identity_checks(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     # 3. Net-liq identity: WALCL ≈ WRESBAL + RRP + TGA + other
     walcl = _latest(conn, "FRED:WALCL")
     wresbal = _latest(conn, "FRED:WRESBAL")
-    if all([walcl, wresbal]):
+    if walcl and wresbal:
         diff = walcl[1] - wresbal[1]
         results.append(
             (
@@ -211,6 +211,12 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         "label": "Inflation",
         "state": c_state,
         "detail": c_detail,
+        # SIGN (decided 2026-10-13, audit C6): kept POSITIVE, unlike B and F. Tested on the
+        # realtime monthly history 2006-2026 against NBER recessions: the YoY z averages -0.37
+        # inside recessions and +0.15 outside (disinflation comes with the downturn), so +z
+        # lowers the score in recessions (RISK-OFF in 9 of 22 recession months) while a negated
+        # C would raise it (3 of 22, mean score +0.135 in recession). Inflation here reads as
+        # a reflation/demand signal; the inflation REGIME is the quadrant's job (state above).
         # Use the YoY rate for the inflation z-score, not the index level.
         # Level z-scores of monotonically increasing series are pinned near
         # +sqrt(3) regardless of actual inflation, creating a permanent +0.26
@@ -321,7 +327,40 @@ def compute_pillars(conn: sqlite3.Connection, *, reader=None) -> dict[str, dict]
         "z": -_zf if _zf is not None else None,
     }
 
+    if isinstance(reader, _RealtimeReader):  # as-of replays are point-in-time already
+        _gate_stale(conn, out)
     return out
+
+
+# The series that carries each pillar's z, and the age past which it no longer describes
+# today: release cadence plus a publication lag (daily ~3 business days, weekly ~1-2 weeks,
+# monthly CPI ~6 weeks after the month). A stale z must not keep voting in the regime score
+# (a 3-week-old WALCL still read EXPANDING); it drops out and regime_label degrades to
+# INSUFFICIENT DATA when fewer than 4 pillars remain (2026-10-12 audit, C13).
+PILLAR_FRESHNESS = {
+    "A": ("FRED:T10Y3M", 10),
+    "B": ("FRED:DFII10", 10),
+    "C": ("FRED:CPIAUCSL", 100),  # obs dated the 1st, released ~6 weeks after the month
+    "D": ("FRED:ICSA", 21),
+    "E": ("FRED:WALCL", 21),
+    "F": ("FRED:BAMLH0A0HYM2", 10),
+}
+
+
+def _gate_stale(conn: sqlite3.Connection, out: dict[str, dict]) -> None:
+    from datetime import UTC, date, datetime
+
+    today = datetime.now(UTC).date()
+    for blk, (sid, max_age) in PILLAR_FRESHNESS.items():
+        p = out.get(blk)
+        if not p or p.get("z") is None:
+            continue
+        last = _latest(conn, sid)
+        age = (today - date.fromisoformat(str(last[0])[:10])).days if last else None
+        if age is None or age > max_age:
+            p["z"] = None
+            p["stale"] = True
+            p["detail"] = f"{p.get('detail', '')} [STALE: {sid} {age}d old]".strip()
 
 
 def compute_regime_score(pillars: dict[str, dict]) -> float:
@@ -337,6 +376,18 @@ def compute_regime_score(pillars: dict[str, dict]) -> float:
         return 0.0
     score = total_z / total_w
     return max(-2.0, min(2.0, score))
+
+
+MIN_REGIME_PILLARS = 4  # of 6: one or two surviving pillars would set the whole label
+
+
+def regime_label(score: float, pillars: dict[str, dict]) -> str:
+    """The one regime label the brief and the dashboard share."""
+    if sum(pillars.get(b, {}).get("z") is not None for b in PILLAR_WEIGHTS) < MIN_REGIME_PILLARS:
+        return "INSUFFICIENT DATA"
+    if score > REGIME_RISK_ON:
+        return "RISK-ON"
+    return "RISK-OFF" if score < REGIME_RISK_OFF else "NEUTRAL"
 
 
 def compute_quadrant(pillars: dict[str, dict]) -> str:

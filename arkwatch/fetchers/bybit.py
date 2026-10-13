@@ -48,7 +48,8 @@ def _norm(row: dict) -> tuple[str, float]:
     ts = str(row.get("date") or "")[:10]
     if len(ts) == 10 and ts.isdigit():
         ts = datetime.fromtimestamp(int(ts), tz=UTC).date().isoformat()
-    return ts, float(raw)
+    # a row with no total raises TypeError here and fails the fetch loudly, by design
+    return ts, float(raw)  # pyright: ignore[reportArgumentType]
 
 
 def fetch_stablecoin_total() -> dict:
@@ -61,7 +62,4 @@ def fetch_stablecoin_window(n: int = 7) -> list[dict]:
     """The last n chart points [{ts, total_usd}] — the harvest writes the
     window each run so outage-day holes heal (round-2: 09-09/14/15 stayed
     NULL for days because only the latest point was ever written)."""
-    return [
-        {"ts": ts, "total_usd": usd}
-        for ts, usd in (_norm(r) for r in _llama_rows()[-n:])
-    ]
+    return [{"ts": ts, "total_usd": usd} for ts, usd in (_norm(r) for r in _llama_rows()[-n:])]

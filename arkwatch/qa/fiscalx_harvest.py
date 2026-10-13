@@ -19,12 +19,12 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from pathlib import Path
 
 from .. import db
+from ..db import default_db_path
 from ..fetchers import fiscal
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 DATASET_PAUSE_S = 0.3  # [KEPUTUSAN: pacing antar dataset — konvensi soma/nyfed]
 AUCTIONS_WINDOW_DAYS = 120  # [KEPUTUSAN: jendela increment — menangkap announcement
 # (record_date = issue date bisa MASA DEPAN) + hasil lelang terbaru; koreksi lama
@@ -35,7 +35,9 @@ AUCTION_COLS = (
     " price_per100, avg_med_yield, bid_to_cover, allocation_pct, auction_format"
 )
 TX_COLS = "record_date, transaction_type, security_market, security_type, amount_today"
-EXP_COLS = "record_date, expense_catg_desc, expense_group_desc, expense_type_desc, month_amt, fytd_amt"
+EXP_COLS = (
+    "record_date, expense_catg_desc, expense_group_desc, expense_type_desc, month_amt, fytd_amt"
+)
 RATE_COLS = "record_date, security_desc, security_type_desc, avg_interest_rate"
 
 PUBLIC_ISSUES_CATG = "INTEREST EXPENSE ON PUBLIC ISSUES"  # headline FYTD filter —
@@ -64,7 +66,8 @@ def store_auctions(conn, rows: list[dict]) -> int:
     # (same lifecycle as fed_operations Announced→Results)
     parsed.sort(
         key=lambda p: sum(
-            v is not None for v in (p["price_per100"], p["avg_med_yield"], p["bid_to_cover"], p["allocation_pct"])
+            v is not None
+            for v in (p["price_per100"], p["avg_med_yield"], p["bid_to_cover"], p["allocation_pct"])
         )
     )
     cols = [c.strip() for c in AUCTION_COLS.split(",")]
@@ -74,13 +77,17 @@ def store_auctions(conn, rows: list[dict]) -> int:
 def store_debt_transactions(conn, rows: list[dict]) -> int:
     parsed = [p for p in (fiscal.parse_debt_tx_row(r) for r in rows) if p]
     cols = [c.strip() for c in TX_COLS.split(",")]
-    return _upsert(conn, "fd_debt_transactions", TX_COLS, [tuple(p[c] for c in cols) for p in parsed])
+    return _upsert(
+        conn, "fd_debt_transactions", TX_COLS, [tuple(p[c] for c in cols) for p in parsed]
+    )
 
 
 def store_interest_expense(conn, rows: list[dict]) -> int:
     parsed = [p for p in (fiscal.parse_interest_expense_row(r) for r in rows) if p]
     cols = [c.strip() for c in EXP_COLS.split(",")]
-    return _upsert(conn, "fd_interest_expense", EXP_COLS, [tuple(p[c] for c in cols) for p in parsed])
+    return _upsert(
+        conn, "fd_interest_expense", EXP_COLS, [tuple(p[c] for c in cols) for p in parsed]
+    )
 
 
 def store_avg_rates(conn, rows: list[dict]) -> int:
@@ -148,7 +155,7 @@ def harvest_auctions(conn, full: bool = False) -> int:
         ten = _latest_10y(conn)
         ten_s = f" · latest 10Y {ten[0]} btc {ten[1]:.2f}" if ten else ""
         print(
-            f"  auctions ({mode}): {n} rows upserted — table {span[2]:,} rows"
+            f"  auctions ({mode}): {n} rows upserted, table {span[2]:,} rows"
             f" {span[0]} → {span[1]}{ten_s}"
         )
     except Exception as ex:
@@ -168,9 +175,7 @@ def harvest_debt_transactions(conn) -> int:
         rows = fiscal.fetch_debt_transactions()
         first_raw = rows[0] if rows else None
         n = store_debt_transactions(conn, rows)
-        net = net_marketable_today(
-            [p for p in (fiscal.parse_debt_tx_row(r) for r in rows) if p]
-        )
+        net = net_marketable_today([p for p in (fiscal.parse_debt_tx_row(r) for r in rows) if p])
         if net:
             print(
                 f"  debt transactions (14d): {n} rows upserted @ {net[0]}"
@@ -199,7 +204,7 @@ def harvest_interest_expense(conn) -> int:
         if parsed:
             latest, total = fytd_public_issues(parsed)
             print(
-                f"  interest expense (6m): {n} rows upserted — FYTD public issues"
+                f"  interest expense (6m): {n} rows upserted, FYTD public issues"
                 f" ${total / 1e12:.3f}T @ {latest}"
             )
         else:

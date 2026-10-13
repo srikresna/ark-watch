@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-_DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "data" / "arkwatch.db")
+from .db import default_db_path
+
+_DEFAULT_DB = str(default_db_path())
 
 
 def print_help() -> int:
@@ -19,17 +20,20 @@ PENGGUNAAN:
   python -m arkwatch <perintah> [argumen] [opsi]
 
 [1. TRADING PLAYBOOK & EKSEKUSI LELANG (AMT)]
-  scanner [--min-rr FLOAT]       Memindai 31 aset & menyaring peluang (default: R:R >= 1.5)
+  scanner [--min-rr FLOAT]       Memindai 29 aset & menyaring peluang (default: R:R >= 1.5)
   playbook [SYMBOL]              Playbook Dual-Horizon (Intraday & Swing) per instrumen
   tracker [SYMBOL] [--detail]    Pelacak performa trading (Win Rate, PnL, R-Mult, Log)
   levels [SYMBOL]                Level lelang AMT (VAH, VAL, POC, TPO, CVA, Naked POC)
   sentiment [--limit INT]        Ekstraksi sentimen berita 7-dimensi via model AI
 
 [2. REAL-TIME MARKET & MIKROSTRUKTUR]
-  market [--interval 5m|1m]      Pemanenan bar harga real-time 31 aset portofolio
-  market-news                    Pemanenan berita breaking dari 14 sumber resmi
-  breadth                        S&P 500 Constituent Breadth (504 saham)
+  market [--interval 5m|1m]      Pemanenan bar harga real-time aset portofolio
+  market-news                    Pemanenan berita breaking (RSS resmi, Tree News, Argus)
+  breadth                        S&P 500 Constituent Breadth (konstituen dari FMP)
   crypto                         Sinyal derivatif & likuidasi kripto (OKX/Bybit)
+  polymarket                     Probabilitas crowd Polymarket untuk topik makro/geo
+  kalshi                         Probabilitas market Kalshi (Fed, resesi, CPI)
+  calibration [--history N]      Brier score probabilitas Polymarket & FedWatch (1d/7d/30d)
 
 [3. INSPEKSI SISTEM & RISET DATA]
   watch                          Pemeriksaan alert anomali makro & lelang
@@ -37,6 +41,18 @@ PENGGUNAAN:
   verify [--limit INT]           Verifikasi kelayakan endpoint seluruh provider data
   explore <target> [--trace]     Inspeksi interaktif data database & trace komponen
   backtest                       Uji statistik sinyal makro dengan Benjamini-Hochberg FDR
+  healthcheck [okxws] [--heal]   Cek heartbeat, lane, disk, umur backup (dipakai Docker)
+
+[4. JOB DAEMON & OPERASI] (dijadwalkan oleh `daemon`, bisa dijalankan manual)
+  daemon                         Scheduler + lane watch/market (satu instance, flock)
+  harvest | calendar | surprise  Data registry, kalender rilis, surprise index
+  cme | f2 | fiscalx | soma      CME, flows/COT/FedWatch, fiscal data, SOMA holdings
+  nyfed ops | energy | fedsurvey NY Fed operations, kurva energi, survei Fed + NLP
+  instruments sweep|backfill     Harga harian instrumen (--only SYMBOL)
+  brief | send                   Brief pagi + kirim outbox (ntfy/Telegram/Discord)
+  backup | alfred | coverage     Backup + retensi tabel, perawatan mingguan, audit registry
+  gdelt-retention [--apply]      Retensi GDELT + market_news (preview tanpa --apply)
+  calibrate | f4 | flows | export | backfill --source X | liquidations (okxws)
 
 ========================================================================================
 """
@@ -84,6 +100,18 @@ def main() -> int:
         from .qa.equity_breadth import main as breadth_main
 
         return breadth_main(sys.argv[2:])
+    if cmd == "polymarket":
+        from .fetchers import polymarket
+
+        return polymarket.main(sys.argv[2:])
+    if cmd == "kalshi":
+        from .fetchers import kalshi
+
+        return kalshi.main(sys.argv[2:])
+    if cmd == "calibration":
+        from .signals import calibration
+
+        return calibration.main(sys.argv[2:])
     if cmd == "liquidations":
         from .qa.okx_liquidations import main as liquidations_main
 
@@ -193,6 +221,7 @@ def main() -> int:
         p.add_argument(
             "--detail", action="store_true", help="show individual trade details and decision logs"
         )
+        p.add_argument("--report", action="store_true", help="human-readable tables, not JSON")
         p.add_argument(
             "--tz",
             type=str,
@@ -258,9 +287,12 @@ def main() -> int:
             if not a.detail and not outcome_filter:
                 res.pop("trades", None)
             print(json.dumps(res, indent=2))
+        elif a.report:
+            from .signals.playbook_tracker import format_report
+
+            print(format_report(res))
         else:
-            limit_val = getattr(a, "limit", 20)
-            print(format_tracker_detailed_report(res, display_tz=a.tz, limit_trades=limit_val))
+            print(format_tracker_detailed_report(res, display_tz=a.tz, limit_trades=a.limit))
         return 0
     if cmd == "scanner":
         import argparse
@@ -302,7 +334,7 @@ def main() -> int:
         res = compute_session_reference_levels(conn, a.symbol)
         conn.close()
         if not res:
-            print(f"No intraday bars found for {a.symbol}")
+            print(f"No closed 5m bars with a completed prior session for {a.symbol}")
             return 1
         print(json.dumps(res, indent=2))
         return 0
@@ -334,6 +366,11 @@ def main() -> int:
         from .daemon import main as daemon_main
 
         return daemon_main(sys.argv[2:])
+    if cmd == "healthcheck":
+        from .daemon import healthcheck, okx_healthcheck
+
+        heal = "--heal" in sys.argv[2:]
+        return okx_healthcheck(heal=heal) if "okxws" in sys.argv[2:] else healthcheck(heal=heal)
     if cmd == "cme":
         from .qa.cme_harvest import main as cme_main
 
@@ -406,7 +443,7 @@ def main() -> int:
         print(
             "\n=== brief saved + outbox pending ==="
             if gen
-            else "\n=== Sunday skip — stored brief served (no new generation) ==="
+            else "\n=== Sunday skip, stored brief served (no new generation) ==="
         )
         return 0
     if cmd == "send":
@@ -416,11 +453,14 @@ def main() -> int:
 
         load_dotenv()
         result = send_pending(_DEFAULT_DB if len(sys.argv) < 3 else sys.argv[2])
+        failed = result["failed"] + result.get("alerts", {}).get("failed", 0)
         print(
-            f"=== Telegram sender: {result['sent']} sent · {result['failed']} failed"
+            f"=== outbox sender: {result['sent']} sent · {result['failed']} failed"
             f" · alerts {result.get('alerts', {}).get('sent', 0)} ==="
         )
-        return 0
+        # exit 1 on a failed delivery: the daemon then pages (job_failed) and retries in
+        # 10 minutes; exit 0 here silently lost the day's brief (2026-10-12 audit)
+        return 1 if failed else 0
     if cmd == "export":
         import csv
         import sqlite3

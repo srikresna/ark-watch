@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+
+from .asof import parse_as_of
+from .horizons import LONDON_TZ, NY_TZ, cme_session_date, cme_session_start, local_open_utc
 
 TPO_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -37,38 +40,50 @@ ASSET_TICK_SIZES: dict[str, float] = {
     "USDJPY": 0.01,
     "DXY": 0.01,
 }
+CRYPTO_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
 
 
-def get_asset_ib_timing(symbol: str, is_dst: bool = True) -> tuple[time, str]:
-    """Determine asset-class-specific Initial Balance start time and institutional label.
+def get_asset_ib_timing(symbol: str, session_date: date) -> tuple[time, str]:
+    """Asset-class Initial Balance start (UTC time-of-day) for a CME session date.
 
-    Different markets have distinct pit/cash openings:
+    Each open is a local-clock time converted with that market's own DST (zoneinfo):
       - CME Equities & US ETFs: 09:30 ET (NYSE/Nasdaq Cash Open)
       - Oil (CL1, BZ1): 09:00 ET (NYMEX Energy Pit Open)
       - Gold/Silver/Copper (GC1, SI1, HG1): 08:20 ET (COMEX Metals Pit Open)
-      - Crypto (BTCUSD, ETHUSD): 18:00 ET (Globex/Session Open)
-      - FX & DXY (EURUSD, GBPUSD, USDJPY, DXY): 08:00 London (London Interbank Open)
+      - Crypto (BTCUSD, ETHUSD): the session open itself (18:00 ET the prior day), evaluated at
+        the session start so a session straddling a DST change is not split by an hour
+      - FX & DXY (EURUSD, GBPUSD, USDJPY, DXY): 08:00 Europe/London (UK DST, not US DST)
     """
     sym = symbol.strip().upper()
-    if sym in ("BTCUSD", "ETHUSD"):
-        # 18:00 ET = 22:00 UTC (EDT) or 23:00 UTC (EST)
-        t = time(22, 0) if is_dst else time(23, 0)
-        return t, "CRYPTO_SESSION_OPEN"
+    if sym in CRYPTO_SYMBOLS:
+        return cme_session_start(session_date).time(), "CRYPTO_SESSION_OPEN"
     if sym in ("CL1", "BZ1"):
-        # 09:00 ET = 13:00 UTC (EDT) or 14:00 UTC (EST)
-        t = time(13, 0) if is_dst else time(14, 0)
-        return t, "NYMEX_ENERGY_PIT_0900ET"
+        return local_open_utc(session_date, 9, 0, NY_TZ), "NYMEX_ENERGY_PIT_0900ET"
     if sym in ("GC1", "SI1", "HG1"):
-        # 08:20 ET = 12:20 UTC (EDT) or 13:20 UTC (EST)
-        t = time(12, 20) if is_dst else time(13, 20)
-        return t, "COMEX_METALS_PIT_0820ET"
+        return local_open_utc(session_date, 8, 20, NY_TZ), "COMEX_METALS_PIT_0820ET"
     if sym in ("EURUSD", "GBPUSD", "USDJPY", "DXY"):
-        # London Open: 08:00 London = 07:00 UTC (BST) or 08:00 UTC (GMT)
-        t = time(7, 0) if is_dst else time(8, 0)
-        return t, "LONDON_FX_OPEN"
-    # Default: US Equity Cash Open 09:30 ET = 13:30 UTC (EDT) or 14:30 UTC (EST)
-    t = time(13, 30) if is_dst else time(14, 30)
-    return t, "US_CASH_OPEN_0930ET"
+        return local_open_utc(session_date, 8, 0, LONDON_TZ), "LONDON_FX_OPEN"
+    return local_open_utc(session_date, 9, 30, NY_TZ), "US_CASH_OPEN_0930ET"
+
+
+def split_rth(
+    bars: list[tuple[str, float, float, float, float, float]],
+    open_utc: time,
+) -> tuple[list, list]:
+    """Split one CME Globex session (opens 18:00 ET prior day) into (pre-open, RTH) bars.
+
+    The open is anchored to the session start instant: comparing UTC time-of-day alone files
+    the 22:00-23:59 UTC Globex-open bars as RTH. An open equal to the session start (crypto)
+    makes the whole session RTH.
+    """
+    if not bars:
+        return [], []
+    start = cme_session_start(cme_session_date(bars[-1][0]))
+    rth_open = datetime.combine(start.date(), open_utc, UTC)
+    if rth_open < start:
+        rth_open += timedelta(days=1)
+    pre = [b for b in bars if parse_as_of(b[0]) < rth_open]
+    return pre, [b for b in bars if parse_as_of(b[0]) >= rth_open]
 
 
 def compute_value_area(
@@ -205,13 +220,13 @@ def compute_tpo_profile(
 
     bin_size = (max_p - min_p) / float(num_bins)
 
-    first_dt = datetime.fromisoformat(bars[0][0]).astimezone(UTC)
+    first_dt = parse_as_of(bars[0][0])
     tpo_counts_by_bin = [0] * num_bins
     bracket_letters_by_bin: dict[int, set[str]] = defaultdict(set)
     used_brackets = set()
 
     for ts_str, _o, h, l_val, _c, _v in bars:
-        b_dt = datetime.fromisoformat(ts_str).astimezone(UTC)
+        b_dt = parse_as_of(ts_str)
         mins_elapsed = max(0, int((b_dt - first_dt).total_seconds() // 60))
         bracket_idx = min(len(TPO_LETTERS) - 1, mins_elapsed // 30)
         letter = TPO_LETTERS[bracket_idx]
@@ -320,11 +335,7 @@ def analyze_initial_balance(
     cash_open_time: time,
 ) -> dict[str, Any]:
     """Calculate Initial Balance (IB: first 60m of cash open) and classify Day Type."""
-    rth_bars = []
-    for b in bars:
-        b_dt = datetime.fromisoformat(b[0]).astimezone(UTC)
-        if b_dt.time() >= cash_open_time:
-            rth_bars.append(b)
+    _, rth_bars = split_rth(bars, cash_open_time)
 
     if not rth_bars:
         return {
@@ -605,7 +616,7 @@ def classify_value_migration(
     prior_poc: float | None,
 ) -> dict[str, str]:
     """Classify the 6 classic day-to-day Value Area migration relationships."""
-    if None in (curr_vah, curr_val, prior_vah, prior_val):
+    if curr_vah is None or curr_val is None or prior_vah is None or prior_val is None:
         return {
             "relationship": "INSUFFICIENT_VALUE_DATA",
             "bias": "NEUTRAL",

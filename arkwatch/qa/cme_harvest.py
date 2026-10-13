@@ -11,12 +11,12 @@ import argparse
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from .. import db
+from ..db import default_db_path
 from ..fetchers import cme
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 
 OPTIONS_N_EXPIRATIONS = 6  # [KEPUTUSAN: expiry bulanan terdekat per produk/hari — est. 10-13k baris/hari utk 7 produk (PLAN-CME-OPTIONS §2.3); 2026-09-03]
 OPTIONS_PAUSE_S = 0.3  # [KEPUTUSAN: pacing antar kontrak — sama dgn backfill SOMA; 2026-09-03]
@@ -60,9 +60,7 @@ def harvest_settlements(conn, products: list[str] | None = None) -> dict[str, in
                     try:
                         retry = cme.fetch_settlements(
                             code,
-                            trade_date=datetime(
-                                probe.year, probe.month, probe.day, tzinfo=UTC
-                            ),
+                            trade_date=datetime(probe.year, probe.month, probe.day, tzinfo=UTC),
                         )
                         landed = [r for r in retry if r["trade_date"] == probe.isoformat()]
                         if landed:
@@ -143,9 +141,17 @@ def _save_settlements(conn, rows: list[dict]) -> int:
     ]
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # upsert, not first-print-wins: CME restates a preliminary settle hours later (ZQ,
+        # 2026-09-17) and OI finalizes the next day; FedWatch/ECBWatch/XCCY read these rows.
+        # rowcount = rows inserted or actually changed.
         cur = conn.executemany(
-            "INSERT OR IGNORE INTO cme_settlements(trade_date,product_id,month,settle,volume,open_interest,fetched_at)"
-            " VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO cme_settlements(trade_date,product_id,month,settle,volume,open_interest,fetched_at)"
+            " VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(trade_date, product_id, month) DO UPDATE SET settle=excluded.settle,"
+            " volume=excluded.volume, open_interest=excluded.open_interest,"
+            " fetched_at=excluded.fetched_at"
+            " WHERE settle IS NOT excluded.settle OR volume IS NOT excluded.volume"
+            " OR open_interest IS NOT excluded.open_interest",
             payload,
         )
         conn.execute("COMMIT")
@@ -153,10 +159,6 @@ def _save_settlements(conn, rows: list[dict]) -> int:
         conn.execute("ROLLBACK")
         raise
     return cur.rowcount
-
-
-def harvest_cvol(conn) -> int:
-    return harvest_cvol_from(conn, cme.fetch_cvol())
 
 
 def harvest_cvol_from(conn, rows: list[dict]) -> int:
@@ -207,9 +209,7 @@ def harvest_voi(conn, asset_classes: list[int] | None = None) -> tuple[int, str 
                 # IR/Energy/Metals) skipped forever. The PK's INSERT OR
                 # IGNORE is the dedup; entries are bounded (~10) by CME
                 # retention, so re-fetching a stored entry is one cheap POST.
-                rows = cme.fetch_voi(
-                    ac_id, td_raw=ent["td_raw"], report_type=ent["report_type"]
-                )
+                rows = cme.fetch_voi(ac_id, td_raw=ent["td_raw"], report_type=ent["report_type"])
                 payload = [
                     (
                         r["trade_date"],
@@ -393,16 +393,18 @@ def main(argv: list[str] | None = None) -> int:
         "SELECT MAX(trade_date) FROM cme_settlements WHERE product_id=305"
     ).fetchone()[0]
     if strip_td:
-        strip_age = (
-            datetime.now(UTC).date() - datetime.fromisoformat(strip_td).date()
-        ).days
+        strip_age = (datetime.now(UTC).date() - datetime.fromisoformat(strip_td).date()).days
         if strip_age > 7:
             s_err = (s_err or "") + f" |ZQ strip stale {strip_age}d ({strip_td})"
     # ROUND-2: rows = ACTUAL inserted/gap-filled rows (the old len(s) logged
     # '14' forever — a dead product was indistinguishable from a healthy one)
     log_collection(
-        conn, "cme", "CME:settlements", None,
-        sum(v for v in s.values() if v > 0), err=s_err or None,
+        conn,
+        "cme",
+        "CME:settlements",
+        None,
+        sum(v for v in s.values() if v > 0),
+        err=s_err or None,
     )
     if not a.skip_options:
         n_opt_fail = sum(1 for v in o.values() if v < 0)
@@ -424,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
     conn.close()
     # ROUND-7: propagate total vendor death to the daemon (job_failed alert)
     if all_dead:
-        print("✗ CME: ALL settlement products failed — vendor kill-switch")
+        print("✗ CME: ALL settlement products failed, vendor kill-switch")
         return 1
     return 0
 

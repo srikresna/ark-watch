@@ -1,0 +1,66 @@
+# Gate for production: a push to main reaches the VPS only after lint and the full offline test
+# suite pass. Deploy is one POST to the Easypanel deploy URL kept in the EASYPANEL_DEPLOY_URL
+# secret (it embeds a deploy token). The old GitHub push webhook must stay removed or every push
+# would deploy twice and bypass this gate.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # actions are pinned by commit SHA (tag in the comment)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install (locked)
+        run: uv sync --python 3.12 --extra dev --locked
+      - name: Lint
+        run: |
+          uv run ruff check arkwatch tests bench
+          uv run ruff format --check arkwatch tests bench
+      - name: Type check
+        # pinned for reproducible results; the wrapper's "newer version" notice is not a finding
+        env:
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+        run: uv run --with pyright==1.1.408 pyright
+      - name: Tests
+        run: uv run pytest -q -p no:cacheprovider
+
+  # Known-vulnerability scan of the locked runtime deps. Its own job: a fresh advisory must not
+  # block an urgent deploy, but it shows red on the commit and in the Actions tab.
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: pip-audit (uv.lock, runtime deps)
+        run: |
+          uv export --locked --no-dev --no-hashes --format requirements-txt -o req.txt
+          uvx --from pip-audit==2.10.0 pip-audit -r req.txt --progress-spinner off
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Easypanel deploy
+        env:
+          DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_URL }}
+        run: |
+          test -n "$DEPLOY_URL" || { echo "EASYPANEL_DEPLOY_URL secret is not set"; exit 1; }
+          curl -fsS -X POST --max-time 30 -o /dev/null -w "deploy trigger HTTP %{http_code}\n" "$DEPLOY_URL"

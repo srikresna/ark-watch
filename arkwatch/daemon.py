@@ -1,32 +1,48 @@
 """daemon.py — in-app scheduler: one process, jobs = isolated subprocesses.
 
-A 30-second loop checks the WIB clock and runs due jobs as subprocesses. Each
-job is a fresh Python process (crashes/leaks do not spread). The heartbeat
+A 30-second loop checks the WIB clock and runs due jobs as subprocesses; the
+alert watcher and the 5-minute market timeline run in two lane threads so a
+slow job never delays them. Each job is a fresh Python process (crashes/leaks do not spread). The heartbeat
 file is refreshed every loop; if it goes stale for more than 5 minutes, the
-daemon is dead or hung. A lockfile prevents a second instance (duplicate
-briefs).
+daemon is dead or hung (`python -m arkwatch healthcheck`). An OS advisory
+lock on daemon.lock prevents a second instance (duplicate briefs); the kernel
+drops it when the holder dies, so a restart never sees a phantom owner.
 Run: python -m arkwatch daemon
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import logging
+import os
+import signal
 import subprocess
 import sys
+import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from .qa.redact import _redact, job_env
 from .timezones import LONDON, NEW_YORK, WIB
 
 ROOT = Path(__file__).resolve().parent.parent
-HEARTBEAT = ROOT / "data" / "daemon_heartbeat"
-LOCKFILE = ROOT / "data" / "daemon.lock"
-LOG_DIR = ROOT / "logs"
+# Docker sets ARKWATCH_DATA_DIR=/data: DB, state, logs and backups on the volume
+_DATA_ENV = os.environ.get("ARKWATCH_DATA_DIR")
+DATA_DIR = Path(_DATA_ENV) if _DATA_ENV else ROOT / "data"
+DB_PATH = Path(os.environ.get("ARKWATCH_DB") or DATA_DIR / "arkwatch.db")  # = db.default_db_path()
+HEARTBEAT = DATA_DIR / "daemon_heartbeat"
+LOCKFILE = DATA_DIR / "daemon.lock"
+LOG_DIR = DATA_DIR / "logs" if _DATA_ENV else ROOT / "logs"
+LOG_RETENTION_DAYS = 14
+HEALTH_MAX_AGE_S = 300  # the 5-minute staleness contract (D-018c)
+HEARTBEAT_EVERY_S = 30.0  # heartbeat cadence while a job subprocess runs
 
 # Schedule entries: (hour, minute, day, job_cmd, description)
-# day: daily | monday..saturday | sunday — literal day tokens as used below;
+# day: daily | hourly | monday..saturday | sunday — literal day tokens as used below
+# (hourly: runs every hour at `minute`, the hour field is ignored);
 # weekday names accept both short and long forms (both must map to the same
 # weekday key)
 SCHEDULE = [
@@ -64,10 +80,21 @@ SCHEDULE = [
         "brief",
         "Generate brief + outbox (skip if Saturday edition already published)",
     ),
-    (7, 5, "daily", "send", "Send brief via Telegram (PAUSED holder — see _run_job guard)"),
+    (
+        7,
+        5,
+        "daily",
+        "send",
+        "Send brief to configured channels (paused when none, see _paused_jobs)",
+    ),
     (7, 15, "daily", "verify", "Truth gate"),
+    (9, 30, "daily", "calibration", "Brier calibration of stored probabilities"),
     (8, 15, "daily", "cme", "CME settlements + CVOL + VOI (gray harvester)"),
     (8, 30, "daily", "f2", "COT + flows (Bybit/Farside/PBoC/LBMA/TIC/LME) + FedWatch"),
+    # nightly local snapshot (VACUUM INTO + verify + rotation); offsite copies
+    # are Litestream's job. Listed before gdelt-retention: same-slot order =
+    # launch order, so Sunday's purge runs after the night's backup
+    (23, 30, "daily", "backup", "Nightly DB backup + verify + rotation"),
     (23, 45, "sunday", "gdelt-retention --apply", "Purge GDELT data outside the current UTC week"),
     (22, 0, "sunday", "alfred", "Weekly maintenance + vintage audit"),
     # ROUND-4: the blindness class that started this whole audit (calendar
@@ -107,6 +134,8 @@ SCHEDULE = [
         "fedsurvey",
         "Fed surveys + FOMC comms (SLOOS/BeigeBook/Minutes/PressConf NLP)",
     ),
+    (0, 20, "hourly", "polymarket", "Polymarket crowd probabilities (macro/geo topics)"),
+    (0, 25, "hourly", "kalshi", "Kalshi market probabilities (Fed, recession, CPI)"),
 ]
 # The watcher is a recurring 60-second task, not part of SCHEDULE — the daemon
 # runs it as its own subprocess each cycle
@@ -130,10 +159,16 @@ def _market_news_interval(now: datetime) -> int:
     return MARKET_ACTIVE_INTERVAL_MINUTES if active else MARKET_NEWS_INTERVAL_MINUTES
 
 
-# D-023 data-first phase (owner 2026-09-13): GENERATION must keep running
-# (the brief pipeline persists five audit-trail store_* families), only the
-# OUTBOUND delivery is held. Resume delivery by emptying this set.
-PAUSED_JOBS = {"send"}
+def _paused_jobs() -> set[str]:
+    """D-023 data-first hold (owner 2026-09-13): generation always runs, OUTBOUND
+    delivery (`send`) runs only once at least one channel (ntfy, Discord,
+    Telegram) is configured. Re-read every call: env changes need no code edit."""
+    from .senders.base import active_channels
+
+    return set() if active_channels() else {"send"}
+
+
+PING_EVERY_S = 300  # dead-man ping cadence (healthchecks.io-style HEALTHCHECK_PING_URL)
 
 DAY_MAP = {
     "mon": 0,
@@ -167,20 +202,245 @@ def _setup_logging():
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
     logger.setLevel(logging.INFO)
     logger.addHandler(fh)
-    # stderr mirror only for interactive runs — under systemd the unit's
-    # StandardError=append doubles EVERY line into logs/daemon-err.log which
-    # nothing rotates (audit round-2: 800KB duplicate log after ~2 months)
-    import sys as _sys
+    # stdout mirror always: `docker logs` is the primary view in the container
+    # (the old systemd StandardError=append duplication was on stderr)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
+    logger.addHandler(sh)
+    cutoff = time.time() - LOG_RETENTION_DAYS * 86400
+    for old in LOG_DIR.glob("daemon-*.log"):
+        with contextlib.suppress(OSError):
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
 
-    if _sys.stderr.isatty():
-        sh = logging.StreamHandler()
-        sh.setFormatter(logging.Formatter("daemon: %(message)s"))
-        logger.addHandler(sh)
+
+def _atomic_write(path: Path, text: str) -> None:
+    """tmp + os.replace: a crash mid-write never leaves a torn file behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # per-thread tmp name: the watch/market lanes and the main loop all write the heartbeat
+    tmp = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+LANES = ("watch_lane", "market_lane", "news_lane")
+LANE_MAX_AGE_S = 600  # both lanes cycle at least every 5 min; 10 = a missed cycle plus a slow job
+MIN_FREE_BYTES = 3 * 1024**3  # page (dead-man stops pinging) before SQLite hits SQLITE_FULL
+BACKUP_MAX_AGE_S = 36 * 3600  # nightly backup plus a failed night's slack
 
 
 def _heartbeat():
-    HEARTBEAT.parent.mkdir(exist_ok=True)
-    HEARTBEAT.write_text(datetime.now(UTC).isoformat(timespec="seconds"))
+    """Main loop -> daemon_heartbeat; a lane thread -> its own <lane>_heartbeat. Only the main
+    loop proves the scheduler is cycling: lanes used to refresh the shared file, so a wedged
+    main loop looked healthy (2026-10-12 audit)."""
+    t = threading.current_thread()
+    lane = t.name.strip("_")
+    path = HEARTBEAT if lane not in LANES else HEARTBEAT.with_name(f"{lane}_heartbeat")
+    _atomic_write(path, datetime.now(UTC).isoformat(timespec="seconds"))
+
+
+def _age_s(path: Path) -> float:
+    return (datetime.now(UTC) - datetime.fromisoformat(path.read_text().strip())).total_seconds()
+
+
+HEAL_AFTER_S = 900  # a heartbeat this stale is a wedge, not a slow job: restart the container
+OKX_MAX_AGE_S = 300
+CAN_SIGNAL_INIT = os.name != "nt"  # Windows dev runs have no container PID 1
+
+
+def _heal(age: float) -> None:
+    """Docker never acts on 'unhealthy' (restart policies watch exits only): a wedged process
+    stays wedged. SIGTERM to PID 1 (tini with init: true) exits the container cleanly and
+    `restart: unless-stopped` brings it back."""
+    if age > HEAL_AFTER_S and CAN_SIGNAL_INIT:
+        print(f"heal: {age:.0f}s stale, SIGTERM to PID 1")
+        os.kill(1, signal.SIGTERM)
+
+
+def okx_healthcheck(db_path: Path | None = None, heal: bool = False) -> int:
+    """okxws container: unhealthy when no OKX_WS trade batch landed for 5 min; with heal, a
+    collector silent for 15 min is restarted (its own reconnect loop did not recover)."""
+    import sqlite3
+
+    try:
+        uri = Path(db_path or DB_PATH).resolve().as_uri()
+        conn = sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=5)
+        try:
+            t = conn.execute(
+                "SELECT MAX(batch_ts_utc) FROM crypto_trade_raw_batches WHERE source='OKX_WS'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        age = (datetime.now(UTC) - datetime.fromisoformat(t)).total_seconds() if t else float("inf")
+    except Exception as ex:
+        print(f"unhealthy: {type(ex).__name__}: {ex}")
+        return 1
+    if age > OKX_MAX_AGE_S:
+        print(f"unhealthy: newest OKX_WS batch {age:.0f}s old")
+        if heal and t:  # no batch yet = first boot, leave it to start_period
+            _heal(age)
+        return 1
+    print(f"ok: newest OKX_WS batch {age:.0f}s old")
+    return 0
+
+
+def healthcheck(
+    heartbeat: Path | None = None, db_path: Path | None = None, heal: bool = False
+) -> int:
+    """Docker HEALTHCHECK and dead-man gate: 0 = main heartbeat fresh (<5 min), lane
+    heartbeats fresh (<10 min, when present), DB readable, >= 3 GB free on the data volume
+    and the newest nightly backup < 36 h old (when any exists)."""
+    import shutil
+    import sqlite3
+
+    heartbeat = heartbeat or HEARTBEAT
+    db_file = Path(db_path or DB_PATH)
+    problems = []
+    try:
+        age = _age_s(heartbeat)
+        # as_uri() percent-encodes '#', '?', '%' (a raw f"file:{path}" cut the path at '#')
+        conn = sqlite3.connect(f"{db_file.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        finally:
+            conn.close()
+        free = shutil.disk_usage(db_file.parent).free
+    except Exception as ex:
+        print(f"unhealthy: {type(ex).__name__}: {ex}")
+        return 1
+    if age > HEALTH_MAX_AGE_S:
+        problems.append(f"heartbeat {age:.0f}s old")
+    stalest = age
+    for lane in LANES:
+        f = heartbeat.with_name(f"{lane}_heartbeat")
+        if f.exists() and (lane_age := _age_s(f)) > LANE_MAX_AGE_S:
+            problems.append(f"{lane} {lane_age:.0f}s old")
+            stalest = max(stalest, lane_age)
+    if free < MIN_FREE_BYTES:
+        problems.append(f"disk free {free / 1024**3:.1f} GB")
+    backups = list((db_file.parent / "backups").glob("arkwatch-*.db"))
+    if backups:
+        newest = max(f.stat().st_mtime for f in backups)
+        if (b_age := time.time() - newest) > BACKUP_MAX_AGE_S:
+            problems.append(f"newest backup {b_age / 3600:.0f}h old")
+    if problems:
+        print("unhealthy: " + "; ".join(problems))
+        if heal:  # only a wedge restarts; low disk or a missing backup must not loop restarts
+            _heal(stalest)
+        return 1
+    print(f"ok: heartbeat {age:.0f}s old, disk free {free / 1024**3:.1f} GB")
+    return 0
+
+
+def _ping(suffix: str = ""):
+    """Fire-and-forget GET to HEALTHCHECK_PING_URL (+suffix, e.g. '/fail') in a daemon
+    thread: never raises, never blocks the loop. The URL is a secret: never logged.
+    Returns the thread (tests join it) or None when unset."""
+    import threading
+    import urllib.request
+
+    url = os.environ.get("HEALTHCHECK_PING_URL", "").strip()
+    if not url:
+        return None
+
+    def _get():
+        try:
+            urllib.request.urlopen(url.rstrip("/") + suffix, timeout=5).close()
+        except Exception as ex:
+            logger.warning(f"healthcheck ping failed: {type(ex).__name__}")
+
+    t = threading.Thread(target=_get, daemon=True)
+    t.start()
+    return t
+
+
+def _maybe_ping(last: float, now: float | None = None) -> float:
+    """Ping at most once per PING_EVERY_S, only while healthcheck() passes (same notion
+    as the Docker HEALTHCHECK); returns the new last-check time."""
+    now = time.monotonic() if now is None else now
+    if now - last < PING_EVERY_S:
+        return last
+    with contextlib.redirect_stdout(io.StringIO()):  # healthcheck() prints its verdict
+        healthy = healthcheck() == 0
+    if healthy:
+        _ping()
+    return now
+
+
+def _acquire_lock(path: Path | None = None):
+    """Non-blocking OS advisory lock; returns the open handle (hold it for the
+    process lifetime) or None when another live process holds it. The kernel
+    releases it on death: the old PID file + os.kill(pid, 0) check looked
+    alive forever in Docker (PID 1 after a restart) and crash-looped."""
+    path = path or LOCKFILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+")  # noqa: SIM115 - held until release/exit
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
+def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        if os.name == "nt":
+            proc.send_signal(sig)  # SIGTERM -> TerminateProcess
+        else:
+            os.killpg(proc.pid, sig)
+
+
+def _stop_child(proc: subprocess.Popen, grace_s: float = 20.0) -> None:
+    """SIGTERM the job's process group, SIGKILL after the grace period."""
+    if proc.poll() is not None:
+        return
+    _signal_group(proc, signal.SIGTERM)
+    try:
+        proc.wait(timeout=grace_s)
+    except subprocess.TimeoutExpired:
+        _signal_group(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+        proc.wait()
+
+
+def _spawn(argv: list[str], timeout_s: float) -> tuple[int, str, str]:
+    """Run one job subprocess in its own process group, refreshing the
+    heartbeat every HEARTBEAT_EVERY_S so a long job (harvest ~6 min) never
+    looks like a hung daemon. Raises TimeoutExpired past timeout_s. The
+    finally reaps the group on every exit path, including SIGTERM unwinding
+    through here as SystemExit."""
+    deadline = time.monotonic() + timeout_s
+    with subprocess.Popen(
+        argv,
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=os.name != "nt",
+        env=job_env(),
+    ) as proc:
+        try:
+            while True:
+                left = deadline - time.monotonic()
+                try:
+                    out, err = proc.communicate(timeout=max(min(HEARTBEAT_EVERY_S, left), 0.01))
+                    return proc.returncode, out, err
+                except subprocess.TimeoutExpired:
+                    _heartbeat()
+                    if left <= HEARTBEAT_EVERY_S:
+                        raise
+        finally:
+            _stop_child(proc)
 
 
 def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
@@ -194,7 +454,9 @@ def _due_jobs(now_wib, last_run: dict[str, str]) -> list[tuple[str, str, str]]:
     wd = now_wib.weekday()  # 0=Monday
     hhmm = now_wib.hour * 100 + now_wib.minute
     for h, m, day, cmd, desc in SCHEDULE:
-        if day == "daily" or DAY_MAP.get(day) == wd:
+        if day == "hourly":  # the hour field is ignored: this hour only, never a replay
+            h = now_wib.hour
+        if day in ("daily", "hourly") or DAY_MAP.get(day) == wd:
             target = h * 100 + m
             if hhmm >= target:
                 key = f"{h:02d}{m:02d}-{cmd}@{now_wib.date()}"
@@ -215,11 +477,12 @@ def _alert_job_failed(cmd: str, detail: str) -> None:
     transient 5xx pages crossed the spam tripwire falsely. Dated-per-job:
     retry echoes suppressed, next-day episodes re-page, jobs never mask
     each other, tripwire counts stay 1/key/day."""
+    _ping("/fail")
     try:
         from . import db as _db
         from .qa.watcher import _fire
 
-        conn = _db.get_conn(ROOT / "data" / "arkwatch.db")
+        conn = _db.get_conn(DB_PATH)
         _fire(
             conn,
             "job_failed",
@@ -237,33 +500,26 @@ def _alert_job_failed(cmd: str, detail: str) -> None:
 
 
 def _run_job(cmd: str, desc: str) -> bool:
-    if cmd in PAUSED_JOBS:
-        logger.info(f"⏸ {cmd} paused (D-023 data-first) — {desc}")
+    if cmd in _paused_jobs():
+        logger.info(f"⏸ {cmd} paused (no delivery channel configured), {desc}")
         return True
     t0 = time.monotonic()
-    logger.info(f"▶ {cmd} — {desc}")
+    logger.info(f"▶ {cmd}, {desc}")
     # heartbeat inside the wrapper too: a job >5 min (verify measured
-    # 221-269s, harvest 368s) leaves the loop-top heartbeat stale, one step
-    # from tripping the 5-min staleness contract (D-018c)
+    # 221-269s, harvest 368s) would leave the loop-top heartbeat stale (D-018c);
+    # _spawn keeps refreshing it while the job runs
     _heartbeat()
     try:
         cmd_timeout = 3600 if "gdelt-retention" in cmd else 1800
-        r = subprocess.run(
-            [sys.executable, "-m", "arkwatch"] + cmd.split(),
-            cwd=str(ROOT),
-            timeout=cmd_timeout,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        code, stdout, stderr = _spawn([sys.executable, "-m", "arkwatch"] + cmd.split(), cmd_timeout)
         dt = time.monotonic() - t0
-        if r.returncode == 0:
-            tail = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+        if code == 0:
+            tail = [ln.strip() for ln in (stdout or "").splitlines() if ln.strip()]
             if cmd == "gdelt-retention --apply":
                 result = next((ln for ln in reversed(tail) if ln.startswith("{")), None)
                 if result is None:
                     logger.error("gdelt-retention-result missing structured output")
+                    _alert_job_failed(cmd, "exit 0 without its structured result line")
                     return False
                 logger.info(f"gdelt-retention-result {result}")
                 return True
@@ -271,32 +527,101 @@ def _run_job(cmd: str, desc: str) -> bool:
             # ⚠ warnings mid-run (a 3-week Farside freeze was invisible
             # because the summary only kept f2's final LME line — D-021)
             summary = " | ".join(tail[-3:]) if tail else "OK"
-            logger.info(f"✓ {cmd} ({dt:.0f}s) — {summary[:240]}")
+            logger.info(f"✓ {cmd} ({dt:.0f}s), {summary[:240]}")
             return True
-        err = (r.stderr or r.stdout or "").strip().splitlines()
+        err = (stderr or stdout or "").strip().splitlines()
         # ROUND-9: pages must quote the FAILING line, not the last — a
         # verify failure blamed LME:CA_STOCKS (healthy, last row printed)
         # while the sick series hid mid-stream
         fail_lines = [
             ln for ln in err if any(m in ln for m in ("✗", "ERROR", "Error", "Traceback"))
         ]
-        tail = (" | ".join(fail_lines[-2:]) if fail_lines else (err[-1] if err else "no output"))[
-            :200
-        ]
-        logger.error(f"✗ {cmd} ({dt:.0f}s) exit={r.returncode} — {tail}")
+        tail = _redact(
+            (" | ".join(fail_lines[-2:]) if fail_lines else (err[-1] if err else "no output"))[:200]
+        )
+        logger.error(f"✗ {cmd} ({dt:.0f}s) exit={code}, {tail}")
         _alert_job_failed(cmd, tail)
         return False
     except subprocess.TimeoutExpired:
-        logger.error(f"✗ {cmd} TIMEOUT 30min — hard-kill")
+        logger.error(f"✗ {cmd} TIMEOUT 30min, hard-kill")
         _alert_job_failed(cmd, "TIMEOUT 30min")
         return False
     except Exception as ex:
-        logger.error(f"✗ {cmd} — daemon exception: {ex}")
+        logger.error(f"✗ {cmd}, daemon exception: {ex}")
         _alert_job_failed(cmd, str(ex))
         return False
 
 
-STATE_PATH = ROOT / "data" / "daemon_state.json"
+def _run_api_jobs(daemon_start: str) -> None:
+    """One API-queued job per loop cycle, through _spawn (heartbeat stays fresh). First
+    reap 'running' rows left by a previous daemon or older than timeout + grace: this
+    daemon runs jobs synchronously, so none of its own can be running right now."""
+    try:
+        from . import db as _db
+        from .qa import jobs_runner
+
+        cutoff = datetime.now(UTC) - timedelta(seconds=jobs_runner.JOB_TIMEOUT_S + 300)
+        conn = _db.get_conn(DB_PATH)
+        try:
+            # started before max(start, cutoff) == started before start OR before cutoff
+            stale = max(daemon_start, cutoff.isoformat(timespec="seconds"))
+            if n := jobs_runner.reap_running_jobs(conn, stale):
+                logger.warning(f"reaped {n} interrupted API job(s)")
+            jobs_runner.run_pending_jobs(conn, run=_spawn, limit=1)
+        finally:
+            conn.close()
+    except Exception as ex:  # the queue must never break the loop
+        logger.error(f"API job queue failed: {ex}")
+
+
+STATE_PATH = DATA_DIR / "daemon_state.json"
+# First boot on a brand-new volume would idle until the next scheduled slot:
+# run the data chain once, in dependency order (never `send`)
+BOOTSTRAP_MARKER = "bootstrapped"
+# set BEFORE the jobs run: an interrupted bootstrap (redeploy mid-run) must resume on the
+# next boot even though the half-filled DB no longer looks empty
+BOOTSTRAP_STARTED = "bootstrap_started"
+BOOTSTRAP_JOBS = (
+    "harvest",
+    "calendar",
+    "instruments sweep",
+    "fiscalx",
+    "nyfed ops",
+    "energy",
+    "surprise",
+    "cme",
+    "f2",
+    "fedsurvey",
+    "brief",
+)
+
+
+def _bootstrap(state: dict[str, str]) -> None:
+    """Run BOOTSTRAP_JOBS on a brand-new volume (no marker AND raw_observations empty),
+    or resume them when an earlier run was interrupted (BOOTSTRAP_STARTED set, marker
+    not: a redeploy mid-run leaves a half-filled DB that no longer looks empty). A
+    populated DB without markers is just marked done. Jobs go through _run_job
+    (logging/heartbeat/timeouts); a failed job does not abort the rest. SIGTERM unwinds
+    as SystemExit (_on_signal) and leaves the completion marker unset."""
+    if BOOTSTRAP_MARKER in state:
+        return
+    import sqlite3
+
+    try:  # read-only probe: never creates a file, never breaks the loop
+        uri = Path(DB_PATH).resolve().as_uri()
+        with contextlib.closing(sqlite3.connect(f"{uri}?mode=ro", uri=True)) as conn:
+            empty = conn.execute("SELECT 1 FROM raw_observations LIMIT 1").fetchone() is None
+    except sqlite3.Error as ex:
+        logger.error(f"bootstrap probe failed: {ex}")
+        return
+    if empty or BOOTSTRAP_STARTED in state:
+        state[BOOTSTRAP_STARTED] = "1"
+        _save_state(state)
+        logger.info(f"first boot: bootstrap {len(BOOTSTRAP_JOBS)} job(s)")
+        for cmd in BOOTSTRAP_JOBS:
+            _run_job(cmd, "first-boot bootstrap")
+    state[BOOTSTRAP_MARKER] = "1"
+    _save_state(state)
 
 
 def _load_state(path: Path | None = None) -> dict[str, str]:
@@ -315,54 +640,125 @@ def _load_state(path: Path | None = None) -> dict[str, str]:
     import json as _json
 
     try:
-        raw = _json.loads((path or STATE_PATH).read_text())
-        today = datetime.now(WIB).date().isoformat()
-        return {k: v for k, v in raw.items() if k.endswith(f"@{today}") and v == "1"}
+        return _today_successes(_json.loads((path or STATE_PATH).read_text()))
     except Exception:
         return {}
 
 
+def _today_successes(d: dict[str, str]) -> dict[str, str]:
+    today = datetime.now(WIB).date().isoformat()
+    return {
+        k: v
+        for k, v in d.items()
+        if (k.endswith(f"@{today}") or k in (BOOTSTRAP_MARKER, BOOTSTRAP_STARTED)) and v == "1"
+    }
+
+
 def _save_state(d: dict[str, str], path: Path | None = None) -> None:
-    """Persist the day-state — successes only, mirroring _load_state."""
+    """Persist the day-state — today's successes only, mirroring _load_state (the in-memory
+    last_run keeps every day since start: dumping it all made /v1/health list yesterday's
+    successes as today's, 2026-10-12 audit)."""
     import json as _json
 
     try:
-        succ = {k: v for k, v in d.items() if v == "1"}
-        (path or STATE_PATH).write_text(_json.dumps(succ))
+        succ = _today_successes(d)
+        _atomic_write(path or STATE_PATH, _json.dumps(succ))
     except Exception as ex:
         logger.warning(f"state persist failed: {ex}")
 
 
-def run_loop():
-    # Lockfile prevents duplicate instances
-    if LOCKFILE.exists():
-        try:
-            pid = int(LOCKFILE.read_text().strip())
-            import os
+MARKET_LANE_TICK_S = 5.0
+NEWS_LANE_TICK_S = 30.0
 
-            os.kill(pid, 0)  # raises if the process is gone
-            print(f"another daemon is alive (pid {pid}) — exit")
-            return
-        except (ValueError, OSError, ImportError):
-            pass  # stale lock → take over
-    LOCKFILE.parent.mkdir(exist_ok=True)
-    LOCKFILE.write_text(str(__import__("os").getpid()))
+
+def _watch_lane(stop: threading.Event) -> None:
+    """Alert watcher every WATCH_INTERVAL_S in its own thread. In the old serial loop a slow
+    job blocked it: the LLM sentiment job runs up to 15 min, verify ~4 min (2026-10-09:
+    watcher gap max 27 min, 170 late runs)."""
+    while not stop.is_set():
+        try:
+            _run_job("watch", "Alert watcher")
+        except Exception as ex:  # the lane must outlive any single failure
+            logger.error(f"watch lane: {ex}")
+        stop.wait(WATCH_INTERVAL_S)
+
+
+def _market_lane(stop: threading.Event) -> None:
+    """5-minute market timeline + scanner in their own thread (2026-10-09: only 87% of the
+    buckets ran behind slow jobs). Fires on a NEW bucket, not on minute % 5 == 0, so a run
+    that crosses the boundary minute no longer skips the whole bucket. Jobs are
+    subprocesses; SQLite WAL takes the concurrent writers (busy_timeout 10 s)."""
+    last_bucket = ""
+    while not stop.is_set():
+        try:
+            now_wib = datetime.now(WIB)
+            bucket = (
+                now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // MARKET_INTERVAL_MINUTES:02d}"
+            )
+            if bucket != last_bucket:
+                last_bucket = bucket
+                _run_job("market", "Five-minute cross-asset timeline")
+                _run_job("scanner", "Opportunity scanner and playbook tracker")
+        except Exception as ex:
+            logger.error(f"market lane: {ex}")
+        stop.wait(MARKET_LANE_TICK_S)
+
+
+def _news_lane(stop: threading.Event) -> None:
+    """News, sentiment, breadth and crypto every 15 min in the London/NY overlap, hourly
+    otherwise, in their own thread: the LLM sentiment job runs up to 15 min and used to hold
+    the main loop, delaying scheduled jobs (the 23:30 backup) by as much (2026-10-12 audit).
+    Fires on a NEW bucket, never at every deploy (the first bucket is the current one)."""
+    start = datetime.now(WIB)
+    last_bucket = start.strftime("%Y%m%d%H") + f"{start.minute // _market_news_interval(start):02d}"
+    while not stop.is_set():
+        try:
+            _heartbeat()  # idle between buckets (up to an hour) is not a wedge
+            now_wib = datetime.now(WIB)
+            interval = _market_news_interval(now_wib)
+            bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // interval:02d}"
+            if bucket != last_bucket:
+                last_bucket = bucket
+                _run_job("market-news", "Cross-source catalyst news")
+                _run_job("sentiment", "Multi-asset news intelligence radar")
+                _run_job("breadth", "S&P 500 constituent breadth")
+                _run_job("crypto", "Crypto liquidation analytics")
+        except Exception as ex:
+            logger.error(f"news lane: {ex}")
+        stop.wait(NEWS_LANE_TICK_S)
+
+
+def _on_signal(signum, _frame):
+    # unwind as SystemExit: _spawn's finally reaps the running job group,
+    # run_loop's finally releases the lock (an inline flag would wait out
+    # a 30-min job or the 30s sleep)
+    raise SystemExit(0)
+
+
+def run_loop():
+    lock = _acquire_lock()
+    if lock is None:
+        print(f"another daemon holds {LOCKFILE}, exit")
+        return
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
 
     _setup_logging()
     # ROUND-10: stamp the code revision at start + every log rotation — the
     # soak lens was misled by an assumed-HEAD daemon (the restart only
-    # landed the new code at 10:37 WIB while the 08:30 job ran pre-fix)
-    import subprocess as _sp
-
-    try:
-        _head = _sp.run(
-            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        ).stdout.strip()
-    except Exception:
-        _head = "?"
+    # landed the new code at 10:37 WIB while the 08:30 job ran pre-fix).
+    # The image has no git: the build stamps GIT_SHA instead.
+    _head = os.environ.get("GIT_SHA", "")
+    if not _head:
+        try:
+            _head = subprocess.run(
+                ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+        except Exception:
+            _head = "?"
     logger.info(f"=== daemon start @ {_head} ===")
     # ROUND-10 queue: last_run persists across restarts (a deploy-restart
     # used to replay every already-succeeded daily job and page the owner
@@ -371,21 +767,26 @@ def run_loop():
     # _load_state).
     last_run = _load_state()
     if last_run:
-        logger.info(f"state restored: {len(last_run)} job(s) already ran today — no replay")
+        logger.info(f"state restored: {len(last_run)} job(s) already ran today, no replay")
     next_retry: dict[str, float] = {}  # cmd → monotonic retry time (non-blocking)
     log_day = datetime.now(UTC).date()
-    last_watch = 0.0
-    last_market_bucket = ""
-    last_news_bucket = ""
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    from .senders.telegram_bot import start_bot_background_thread
-
-    start_bot_background_thread(ROOT / "data" / "arkwatch.db")
+    last_ping = float("-inf")
+    stop_lanes = threading.Event()
+    lanes = [
+        threading.Thread(target=fn, args=(stop_lanes,), name=fn.__name__, daemon=True)
+        for fn in (_watch_lane, _market_lane, _news_lane)
+    ]
+    daemon_start = datetime.now(UTC).isoformat(timespec="seconds")
     try:
+        _bootstrap(last_run)
+        for lane in lanes:
+            lane.start()
+        from .senders.telegram_bot import start_bot_background_thread
+
+        start_bot_background_thread(DB_PATH)  # no-op without TELEGRAM_BOT_TOKEN
         while True:
             _heartbeat()
+            last_ping = _maybe_ping(last_ping)
             now_wib = datetime.now(WIB)
 
             # Retry failed jobs (NON-BLOCKING: an inline sleep would freeze the
@@ -404,7 +805,7 @@ def run_loop():
                         _save_state(last_run)
                     else:
                         logger.error(
-                            f"{cmd}: retry failed — manual attention needed "
+                            f"{cmd}: retry failed, manual attention needed "
                             f"(the next SCHEDULED run of this job is the natural "
                             f"fallback: daily jobs tomorrow, weekly jobs next week)"
                         )
@@ -421,29 +822,7 @@ def run_loop():
                     next_retry[key] = time.monotonic() + RETRY_DELAY_S
                     logger.warning(f"  retry {cmd} in {RETRY_DELAY_S // 60} minutes")
 
-            # Watcher: run every ~60 seconds
-            if time.monotonic() - last_watch >= WATCH_INTERVAL_S:
-                last_watch = time.monotonic()
-                _run_job("watch", "Alert watcher")
-
-            market_bucket = (
-                now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // MARKET_INTERVAL_MINUTES:02d}"
-            )
-            if (
-                now_wib.minute % MARKET_INTERVAL_MINUTES == 0
-                and market_bucket != last_market_bucket
-            ):
-                last_market_bucket = market_bucket
-                _run_job("market", "Five-minute cross-asset timeline")
-                _run_job("scanner", "Opportunity scanner and playbook tracker")
-            news_interval = _market_news_interval(now_wib)
-            news_bucket = now_wib.strftime("%Y%m%d%H") + f"{now_wib.minute // news_interval:02d}"
-            if now_wib.minute % news_interval == 0 and news_bucket != last_news_bucket:
-                last_news_bucket = news_bucket
-                _run_job("market-news", "Cross-source catalyst news")
-                _run_job("sentiment", "Multi-asset news intelligence radar")
-                _run_job("breadth", "S&P 500 constituent breadth")
-                _run_job("crypto", "Crypto liquidation analytics")
+            _run_api_jobs(daemon_start)
             # Rotate logs at the UTC date change (the filename convention is
             # UTC). CYCLE-counting drifted: a daemon started at 20:18 rotated
             # at 20:18 daily, so yesterday's filename kept receiving today's
@@ -453,13 +832,28 @@ def run_loop():
                 _setup_logging()
             time.sleep(30)
     finally:
-        LOCKFILE.unlink(missing_ok=True)
+        stop_lanes.set()
+        for lane in lanes:
+            if lane.is_alive():
+                lane.join(timeout=25)  # a running market job may finish inside the 60 s grace
+        logger.info("=== daemon stop ===")
+        # closing releases the lock; the file stays (unlinking a locked path
+        # races a starting successor onto a different inode)
+        lock.close()
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="arkwatch daemon")
     p.add_argument("--once", action="store_true", help="run the loop once then exit (for testing)")
     a = p.parse_args(argv)
+    from . import db as _db
+    from .qa.backfill import sync_registry
+
+    # first boot on an empty volume: schema AND registry (the raw_observations
+    # FK target) exist before any job / api read; a deploy = restart = resync
+    conn = _db.get_conn(DB_PATH, allow_init=True)
+    sync_registry(conn)
+    conn.close()
     if a.once:
         _setup_logging()
         _heartbeat()

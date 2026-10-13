@@ -36,6 +36,9 @@ from .pillars import (
     compute_quadrant,
     compute_regime_score,
 )
+from .pillars import (
+    regime_label as _regime_label,
+)
 
 
 def overnight_changes(conn: sqlite3.Connection, n: int = 6) -> list[str]:
@@ -201,19 +204,13 @@ _STALE_DAYS = {"D": 5, "W": 14, "M": 95, "Q": 190, "A": 550}
 # 2026-09-20 while Q1 is 262d old), which false-flagged all 12 FRB series
 # STALE on their first day wired. Longest prefix wins (sorted below).
 _STALE_OVERRIDE = {
-    "FRB:": 300,       # charge-off/delinquency release lags
+    "FRB:": 300,  # charge-off/delinquency release lags
     "EODHD:CMDI": 45,  # weekly cadence; OBSERVED lag 2-4wk (2026-09-20: newest
-                       # 30d old, feed alive) — 35d had only ~5d headroom and
-                       # would have false-flagged all 3 series on 2026-09-26
-    "GEO:GPRD": 14,    # daily file but refreshed Mondays only
+    # 30d old, feed alive) — 35d had only ~5d headroom and
+    # would have false-flagged all 3 series on 2026-09-26
+    "GEO:GPRD": 14,  # daily file but refreshed Mondays only
     "GEO:HARPEX": 14,  # weekly stamps
 }
-
-
-def _brief_health_check(conn: sqlite3.Connection) -> tuple[int, int, int, int]:
-    """Active series health → (n_ok, n_warn, n_fail, n_total)."""
-    ok, warn, fail, total, _detail = _health_detail(conn)
-    return ok, warn, fail, total
 
 
 def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[tuple]]:
@@ -227,7 +224,8 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
     # canonical 07:00 WIB slot = 00:00 UTC — a UTC-day anchor saw 0 of the
     # morning's 69 ERRORs, a false-clean Quality line)
     wib_day_start = (
-        datetime.now(WIB).replace(hour=0, minute=0, second=0, microsecond=0)
+        datetime.now(WIB)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
         .astimezone(UTC)
         .isoformat(timespec="seconds")
     )
@@ -252,8 +250,11 @@ def _health_detail(conn: sqlite3.Connection) -> tuple[int, int, int, int, list[t
             try:
                 age = (now_d - datetime.fromisoformat(str(last_obs)[:10]).date()).days
                 _limit = next(
-                    (v for k, v in sorted(_STALE_OVERRIDE.items(), key=lambda kv: -len(kv[0]))
-                     if sid.startswith(k)),
+                    (
+                        v
+                        for k, v in sorted(_STALE_OVERRIDE.items(), key=lambda kv: -len(kv[0]))
+                        if sid.startswith(k)
+                    ),
                     None,
                 ) or _STALE_DAYS.get((freq or "D").upper(), 5)
                 stale = age > _limit
@@ -351,8 +352,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     is_saturday = now_wib.weekday() == 5  # Sunday is handled in run(): skip + return
     is_monday = now_wib.weekday() == 0
 
-    risk_on = score > REGIME_RISK_ON
-    regime_label = "RISK-ON" if risk_on else ("RISK-OFF" if score < REGIME_RISK_OFF else "NEUTRAL")
+    regime_label = _regime_label(score, pillars)
 
     # header — quality from the health check (fetch_log ERRORs today + stale data)
     n_ok, n_warn, n_fail, n_total, detail = _health_detail(conn)
@@ -381,7 +381,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         datetime.fromisoformat(freshest).strftime("%d-%b") if freshest else now_et.strftime("%d-%b")
     )
     lines = [
-        f"=== US MACRO BRIEF — {now_wib.strftime('%a, %d %b %Y')} ===",
+        f"=== US MACRO BRIEF: {now_wib.strftime('%a, %d %b %Y')} ===",
         f"WIB {now_wib.strftime('%H:%M')} · data as of {data_per} ET",
         f"REGIME : {regime_label} (score {score:+.1f})",
         f"QUADRANT: {quadrant}",
@@ -389,9 +389,9 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         f"Quality: {k_icon} {n_ok}/{n_total} healthy · {n_warn} watch · {n_fail} issues",
     ]
     if pct_bad > 25:
-        lines.append(f"⚠ {n_fail} series with issues — attachment data/health.csv")
+        lines.append(f"⚠ {n_fail} series with issues, attachment data/health.csv")
     if pct_bad > 40:
-        lines.append("✗ BRIEF DEGRADED — see health section")
+        lines.append("✗ BRIEF DEGRADED, see health section")
     lines.append("")
 
     # SOMA granularity — decomposes the Fed BS (WALCL) row: buckets, TIPS,
@@ -527,11 +527,11 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                     # labeled 'risk context', not a direction predictor
                     if net > 20000:
                         lines.append(
-                            f"  {name:<10} Retl  net {net:+8,}  (retail long — risk context)"
+                            f"  {name:<10} Retl  net {net:+8,}  (retail long, risk context)"
                         )
                     elif net < -20000:
                         lines.append(
-                            f"  {name:<10} Retl  net {net:+8,}  (retail short — risk context)"
+                            f"  {name:<10} Retl  net {net:+8,}  (retail short, risk context)"
                         )
             # squeeze risk from concentration (mm row — see note above)
             if mm_row:
@@ -548,8 +548,15 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         # AUD/DXY/ETH positioning invisible (live: AUD CROWDED_LONG 3 weeks
         # running never surfaced while the harvest paid for it).
         for code in (
-            "099741", "097741", "096742", "232741", "098662",
-            "133741", "146021", "13874+", "209742",
+            "099741",
+            "097741",
+            "096742",
+            "232741",
+            "098662",
+            "133741",
+            "146021",
+            "13874+",
+            "209742",
         ):
             rows = conn.execute(
                 "SELECT category, long, short, change_long, change_short "
@@ -633,7 +640,10 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             etf_parts = []
             # per-issuer structural pair (GBTC vs IBIT / ETHE vs ETHA): the
             # aggregate net hides the bleed-vs-accumulation divergence
-            for etf, agg, pair in (("BTC", etf_row[1], ("GBTC", "IBIT")), ("ETH", etf_row[2], ("ETHE", "ETHA"))):
+            for etf, agg, pair in (
+                ("BTC", etf_row[1], ("GBTC", "IBIT")),
+                ("ETH", etf_row[2], ("ETHE", "ETHA")),
+            ):
                 if agg is None:
                     continue
                 txt = f"{etf} {agg:+.0f}M$"
@@ -749,7 +759,8 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             # fires, so the renderer must flag staleness itself (D-021 class)
             fg_age = (
                 (datetime.now(UTC).date() - datetime.fromisoformat(fg_row[0]).date()).days
-                if fg_row[0] else 999
+                if fg_row[0]
+                else 999
             )
             fg_stale = f" ⚠stale {fg_age}d" if fg_age > 4 else ""
             txt = f"  Fear&Greed: {sc:.0f} ({lbl}){fg_stale}"
@@ -763,8 +774,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             # cross-asset split: the composite averages away divergence —
             # equity "extreme fear" while credit reads "greed" IS the signal
             comp = conn.execute(
-                "SELECT kind, value FROM flows_periodic WHERE kind LIKE 'cnn_comp_%'"
-                " AND period=?",
+                "SELECT kind, value FROM flows_periodic WHERE kind LIKE 'cnn_comp_%' AND period=?",
                 (fg_row[0],),
             ).fetchall()
             if len(comp) >= 2:
@@ -773,9 +783,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                 )
                 lo, hi = scores[0], scores[-1]
                 if hi[0] - lo[0] >= 40:
-                    lines.append(
-                        f"  F&G split: {lo[1]} {lo[0]:.0f} vs {hi[1]} {hi[0]:.0f}"
-                    )
+                    lines.append(f"  F&G split: {lo[1]} {lo[0]:.0f} vs {hi[1]} {hi[0]:.0f}")
         # Crypto news sentiment (EODHD) — side-by-side with F&G per owner
         # decision 2026-09-13: DIFFERENT gauges (equity risk appetite vs
         # BTC/ETH news tone), never cross-calibrated; sparse (few points a
@@ -811,7 +819,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             f"Policy: FedWatch {
                 fmt_fedwatch(
                     [
-                        type(
+                        type(  # pyright: ignore[reportArgumentType] -- duck-typed MeetingProb
                             'P',
                             (),
                             {
@@ -857,9 +865,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
                 from ..transforms.ecbwatch import implementation_date as _impl_date
 
                 meet_iso = eb_rows[0]
-                impl_sel = _impl_date(
-                    datetime.fromisoformat(meet_iso).date()
-                ).isoformat()
+                impl_sel = _impl_date(datetime.fromisoformat(meet_iso).date()).isoformat()
                 rows_meta = meta.get("rows") or [{}]
                 first = next(
                     (r for r in rows_meta if (r.get("impl") or "")[:10] == impl_sel),
@@ -871,9 +877,14 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             p = ECBMeetingProb(
                 meeting_date=datetime.fromisoformat(eb_rows[0]).date(),
                 impl_date=datetime.fromisoformat(eb_rows[0]).date(),
-                prob_ease=eb_rows[1], prob_hold=eb_rows[2], prob_hike=eb_rows[3],
-                implied_rate=eb_rows[4], expected_moves=0.0, delta_bp=delta_bp,
-                exact=bool(exact), noise_amp=None,
+                prob_ease=eb_rows[1],
+                prob_hold=eb_rows[2],
+                prob_hike=eb_rows[3],
+                implied_rate=eb_rows[4],
+                expected_moves=0.0,
+                delta_bp=delta_bp,
+                exact=bool(exact),
+                noise_amp=None,
             )
             lines.append(f"Policy: {fmt_ecb([p], diag, asof=eb_rows[6])}")
     except Exception as ex:
@@ -889,25 +900,10 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             # ROUND-10 outage-sim: mark a stale spot/futures pairing (the
             # basis freezes unmarked during a multi-day data outage)
             _xv = xccy_rows[0]
-            _stale = (
-                " ⚠stale" if getattr(_xv, "stale_days", 0) > 7 else ""
-            )
-            lines.append(
-                f"XCCY: {_xv.contract} {_xv.basis_bps:+.1f}bp{_stale}"
-            )
-    except Exception:
-        pass
-
-    # ECB implied path — the FedWatch counterpart; degradable
-    try:
-        from ..transforms.ecb_path import compute_ecb_path
-        from ..transforms.ecb_path import format_brief as fmt_ecb
-
-        ecb_rows = compute_ecb_path(conn)
-        if ecb_rows:
-            lines.append(fmt_ecb(ecb_rows))
-    except Exception:
-        pass
+            _stale = " ⚠stale" if getattr(_xv, "stale_days", 0) > 7 else ""
+            lines.append(f"XCCY: {_xv.contract} {_xv.basis_bps:+.1f}bp{_stale}")
+    except Exception as ex:  # degradable, but never silent: a dead section must show in the log
+        print(f"⚠ xccy brief line failed: {str(ex)[:100]}")
 
     # CVOL — CME implied vol; consumed here so the daily harvest is not a
     # dead write. ROUND-2 fix: symbols publish on different trade dates —
@@ -1031,7 +1027,8 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     # print a DRAIN flag off a frozen (>45d) feed
     cu_age = (
         (datetime.now(UTC).date() - datetime.fromisoformat(cu[0][1][:10]).date()).days
-        if cu else 9999
+        if cu
+        else 9999
     )
     if len(cu) >= 21 and cu_age <= 45:
         lvl = cu[0][0]
@@ -1045,7 +1042,11 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
             " AND period=(SELECT MAX(period) FROM flows_periodic WHERE kind='lme_owsr_cu')"
         ).fetchone()
         ow_txt = ""
-        if ow and ow[1] and (datetime.now(UTC).date() - datetime.fromisoformat(ow[0]).date()).days <= 7:
+        if (
+            ow
+            and ow[1]
+            and (datetime.now(UTC).date() - datetime.fromisoformat(ow[0]).date()).days <= 7
+        ):
             share = ow[1] / lvl * 100 if lvl else None
             pct_txt = f" ({share:.0f}% of LME)" if share is not None else ""
             ow_txt = f" · off-warrant {ow[1]:,.0f}t{pct_txt}"
@@ -1054,9 +1055,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         # frozen channel: show the level + age with a stale suffix rather
         # than vanishing (review ronde-2 — a silent gap reads as 'no data',
         # which is a different claim than 'stale data')
-        lines.append(
-            f"Cu physical: LME {cu[0][0]:,.0f}t ⚠stale {cu_age}d (monthly channel)"
-        )
+        lines.append(f"Cu physical: LME {cu[0][0]:,.0f}t ⚠stale {cu_age}d (monthly channel)")
 
     # events (7 days — dedup by normalized name + date)
     events = conn.execute(
@@ -1166,7 +1165,7 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     # Spread-share conviction (Gold — spread dominance = downweight)
     gold_ss = _spread_share_filter(conn, "088691")
     if gold_ss is not None and gold_ss > 0.25:
-        lines.append(f"  Gold     ⚠ spread share {gold_ss:.0%} — positioning quality reduced")
+        lines.append(f"  Gold     ⚠ spread share {gold_ss:.0%}, positioning quality reduced")
 
     # Silver 52wk gate
     if _silver_52wk_gate(conn):
@@ -1177,12 +1176,14 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
         from ..transforms.synthetic import compute_all_synthetic
 
         synth = compute_all_synthetic(conn)
-        if synth.get("XAGGBP"):
-            lines.append(f"  XAGGBP  : {synth['XAGGBP']['value']:.2f} (synthetic)")
-        if synth.get("XAUGBP"):
-            lines.append(f"  XAUGBP  : {synth['XAUGBP']['value']:.0f} (synthetic)")
-    except Exception:
-        pass
+        for cross, fmt in (("XAGGBP", ".2f"), ("XAUGBP", ".0f")):
+            x = synth.get(cross)
+            if x:
+                leg = x.get("metal_leg", "")
+                how = "synthetic" if leg.endswith("USD") else f"synthetic, COMEX {leg} / GBPUSD"
+                lines.append(f"  {cross}  : {format(x['value'], fmt)} ({how})")
+    except Exception as ex:
+        print(f"⚠ synthetic crosses brief line failed: {str(ex)[:100]}")
 
     # XAUUSD
     gold_biases = []
@@ -1227,7 +1228,9 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
 
     # Index
     idx_bias = (
-        "risk-on" if score > REGIME_RISK_ON else ("risk-off" if score < REGIME_RISK_OFF else "neutral")
+        "risk-on"
+        if score > REGIME_RISK_ON
+        else ("risk-off" if score < REGIME_RISK_OFF else "neutral")
     )
     vix_row = _latest(conn, "FRED:VIXCLS")
     if vix_row and vix_row[1] and vix_row[1] > 20:
@@ -1280,7 +1283,8 @@ def generate_brief(conn: sqlite3.Connection, db_path: str) -> str:
     # is 07:00 WIB = 00:00 UTC — a UTC-day bound reads ~'1/1' fake-perfect
     # because only send/verify have run since UTC midnight).
     wib_day_start = (
-        datetime.now(WIB).replace(hour=0, minute=0, second=0, microsecond=0)
+        datetime.now(WIB)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
         .astimezone(UTC)
         .isoformat(timespec="seconds")
     )
@@ -1315,10 +1319,11 @@ def save_brief(db_path: str, markdown: str, score: float) -> str:
         " VALUES (?,?,?,?)",
         (today, markdown, score, now),
     )
-    conn.execute(
+    # one row per known channel; an unconfigured one ends 'skipped' at send time
+    conn.executemany(
         "INSERT OR IGNORE INTO brief_deliveries(brief_date, channel, status, created_at)"
         " VALUES (?,?, 'pending', ?)",
-        (today, "telegram", now),
+        [(today, ch, now) for ch in ("telegram", "ntfy")],
     )
     conn.execute("COMMIT")
     conn.close()
@@ -1340,11 +1345,11 @@ def run(db_path: str) -> str:
         prev = conn.execute("SELECT markdown FROM brief_log ORDER BY date DESC LIMIT 1").fetchone()
         conn.close()
         if prev:
-            print("Sunday — brief not generated")
+            print("Sunday, brief not generated")
             return prev[0]
     elif now_wib.weekday() == 5 and today_row:  # Saturday — keep the 04:15 brief
         conn.close()
-        print("Saturday — positioning brief already published (04:15), not overwritten")
+        print("Saturday, positioning brief already published (04:15), not overwritten")
         return today_row[0]
     markdown = generate_brief(conn, db_path)
     pillars = compute_pillars(conn)

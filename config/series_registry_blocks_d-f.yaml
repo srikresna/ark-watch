@@ -105,6 +105,7 @@ series:
   secondary_source: null
   tolerance: null
   calendar_family: "CONTINUING JOBLESS CLAIMS"
+  max_age_days: 21  # continuing claims refer to the week about 12 days before the Thursday release
   active: 1
 
 - series_id: FRED:IC4WSA
@@ -544,18 +545,22 @@ series:
   calendar_family: "NEW HOME SALES"
   active: 1
 
+# FRED API verified 2026-10-09: units "Number of Units" (raw, SAAR; latest
+# 2026-08 = 3,980,000, not thousands) and a ROLLING ~13-month window
+# (observation_start 2025-08-01, NAR licence): no fixed expected_start holds,
+# so the depth gate is off for this series.
 - series_id: FRED:EXHOSLUSM495S
-  name: "Existing Home Sales (SAAR, thousands of units)"
+  name: "Existing Home Sales (SAAR, units)"
   block: D
   tier: 1
-  unit: "thousand units (SAAR)"
+  unit: "units (SAAR)"
   value_format: fraction
   freq: M
   ts_convention: report_month
   release_schedule: "monthly; ~20th of following month 10:00 ET"
-  expected_start: "1968-01-01"
-  sanity_min: 1500
-  sanity_max: 9000
+  expected_start: null
+  sanity_min: 1500000
+  sanity_max: 9000000
   primary_source: "FRED:EXHOSLUSM495S"
   secondary_source: null
   tolerance: null
@@ -680,7 +685,7 @@ series:
   expected_start: "2022-01-01"      # 5y module starts later (live: 202201 first row)
   sanity_min: 0.0
   sanity_max: 30.0
-  primary_source: "NYFED:frbny-sce-data.xlsx 'Five-year ahead Infl Exp'"
+  primary_source: "NYFED:frbny-sce-data.xlsx 'Inflation expectations' (5y col; own sheet until 2026-09)"
   secondary_source: null
   tolerance: null
   active: 1
@@ -1373,7 +1378,7 @@ series:
   secondary_source: "SYN:RECPROBIT (internal 3M10Y curve probit, T4)"
   tolerance: 15.0                    # differently-specified models — use as a DIRECTION
                                     # cross-check, not a level
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # ROUTED 2026-09-04 (audit sumber): was registered-active with NO fetcher route
   # (0 obs). Fetcher = misc.fetch_recession_prob; key live-verified (HTTP 200,
   # {2026-07-01, 0.76}). Old '401 during verification' note obsolete — key works.
@@ -1413,6 +1418,7 @@ series:
   primary_source: "PHILLY:ADS_Index_Most_Current_Vintage.xlsx"
   secondary_source: null             # unique to the Philly Fed — official single-source + freshness
   tolerance: null
+  max_age_days: 14  # Philly Fed refreshes ~weekly when new inputs land
   active: 1
   # Fetch via curl_cffi chrome impersonation. Longest surrogate backtest in
   # growth (1960→).
@@ -2240,7 +2246,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=EFFR_SOFR)"
   secondary_source: "SYN:FS_EFFR_SOFR (EFFR−SOFR from FRED legs, T4)"
   tolerance: 2.0                     # both rate legs rounded to 2dp = ±1bp per leg
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # The response carries the formula + both legs (leg_a_rate/leg_b_rate) — store the raw
   # alongside the value.
   # One registry entry per spread code — per-spread alert granularity & quarantine.
@@ -2261,7 +2267,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=OBFR_EFFR)"
   secondary_source: "SYN:FS_OBFR_EFFR (FRED legs / NY Fed OBFR, T4)"
   tolerance: 2.0                     # leg rounding ±1bp
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # OBFR−EFFR spread — unsecured overnight dislocation (funding-stress family member).
 
 - series_id: EODHD:FS_TGCR_BGCR
@@ -2279,7 +2285,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=TGCR_BGCR)"
   secondary_source: "SYN:FS_TGCR_BGCR (NY Fed rates API legs, T4)"
   tolerance: 2.0                     # leg rounding ±1bp
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # TGCR−BGCR spread — collateral-rate microstructure; earliest repo-market friction gauge.
 
 - series_id: EODHD:FS_SOFR_TARGET_LOWER
@@ -2299,7 +2305,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=SOFR_TARGET_LOWER)"
   secondary_source: "SYN:FS_SOFR_TARGET_LOWER (SOFR−DFEDTARL FRED, T4)"
   tolerance: 2.0                     # leg rounding ±1bp
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # Early scarcity signal: SOFR pressing against the top of the range.
 
 - series_id: EODHD:FS_EFFR_TARGET_MID
@@ -2318,7 +2324,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=EFFR_TARGET_MID)"
   secondary_source: "SYN:FS_EFFR_TARGET_MID (EFFR−(DFEDTARL+DFEDTARU)/2 from FRED, T4)"
   tolerance: 2.0                     # leg rounding ±1bp
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # EFFR vs target mid — policy-control check: EFFR leaving the corridor = major anomaly.
 
 - series_id: EODHD:FS_TARGET_UPPER_SOFR
@@ -2337,7 +2343,7 @@ series:
   primary_source: "EODHD:/spreads/funding-stress (code=TARGET_UPPER_SOFR)"
   secondary_source: "SYN:FS_TARGET_UPPER_SOFR (DFEDTARU−SOFR FRED, T4)"
   tolerance: 2.0                     # leg rounding ±1bp
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # The docs example 'SOFR_OIS' = 422 is INVALID — only the 6 codes above exist.
 
 - series_id: FRED:FYFSGDA188S
@@ -2355,6 +2361,7 @@ series:
   primary_source: "FRED:FYFSGDA188S"
   secondary_source: null
   tolerance: null
+  max_age_days: 850  # fiscal-year value lands ~15 months after its Jan-1 stamp
   active: 1
   # Fiscal gold channel — companion to the term premium (policy-rates).
 
@@ -2767,6 +2774,7 @@ series:
   primary_source: "GEO:matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls (GPRD col)"
   secondary_source: null
   tolerance: null
+  max_age_days: 14  # weekly Monday file with up to 7 days of tail lag by design
   active: 1
   # live 2026-09-14 = 189.5 (ACT 246) vs monthly 117.9 — daily is the early-warning leg
 
@@ -2802,7 +2810,7 @@ series:
   primary_source: "EODHD:/api/eod/BDIY.INDX"
   secondary_source: null
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
 
 - series_id: "GEO:FAO_FFPI"
   name: "FAO Food Price Index (headline)"
@@ -2900,7 +2908,7 @@ series:
   secondary_source: null            # CNN F&G is a DIFFERENT gauge (equity risk
   tolerance: null                   # appetite) — displayed side-by-side, never
                                     # cross-calibrated (owner decision 2026-09-13)
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # Vendor-api audit #3: crypto-book sentiment leg. CNN F&G covers equity
   # appetite; this covers BTC news tone. Brief shows both side by side with
   # the sparse date label.
@@ -2920,7 +2928,7 @@ series:
   primary_source: "EODHD:/api/sentiments eth-usd.cc"
   secondary_source: null
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
 
 - series_id: FRED:NFCI
   name: "Chicago Fed National Financial Conditions Index"
@@ -3140,7 +3148,7 @@ series:
   secondary_source: null             # unique EODHD/Damodaran source — single-source +
                                     # annual freshness check
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # This endpoint is ANNUAL Damodaran data, not daily: fiscal tail-risk LEVEL only,
   # no daily Δ — do not promise a daily change in the brief. Row stays active as an
   # annual level.
@@ -3163,7 +3171,7 @@ series:
   secondary_source: null             # NY Fed CMDI is not on FRED — EODHD is the only
                                     # automated route
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # REACTIVATED 2026-09-20 (owner GO): pagination walk implemented
   # (page[limit]=100 until short page — probe-verified walking back to
   # 2005-01-07, 1,129 weeks live-fetched). The 2026-09-17 deactivation was
@@ -3190,7 +3198,7 @@ series:
   primary_source: "EODHD:/credit-risk/corporate/cmdi (ig_cmdi column)"
   secondary_source: null
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # Big-safe-company leg of the distress pair — HY rising faster than IG is
   # the market selectively repricing risk (early warning).
 
@@ -3209,7 +3217,7 @@ series:
   primary_source: "EODHD:/credit-risk/corporate/cmdi (hy_cmdi column)"
   secondary_source: null
   tolerance: null
-  active: 1
+  active: 0  # owner decision 2026-10-10: no paid/keyed provider for this series
   # Risky-company leg (live 0.08 vs IG 0.27): HY tends to lag in calm and
   # explode in stress — the IG−HY spread itself is a gauge.
 
@@ -3243,6 +3251,7 @@ series:
   primary_source: "LME:XLSX (cdn lme.com /-/media/files/data/reports-and-data/warehouse-and-stock-reports/stocks-summary/)"
   secondary_source: null
   tolerance: null
+  max_age_days: 40  # monthly file, newest point ages up to ~5 weeks
   active: 1
   # Two format eras: <=2024 sheet 'ClosingStock' with 'Stock Date' header and
   # every-other-column layout; 2026 sheet 'Closing Stock' with 'BusinessDate' and packed

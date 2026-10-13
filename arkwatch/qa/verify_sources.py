@@ -17,7 +17,10 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from ..config import load_anchors, load_registry
+import requests
+
+from ..config import PROVIDER_ENV, PlanLimited, load_anchors, load_registry, missing_env
+from ..db import default_db_path
 from ..fetchers import (
     atl,
     caldist,
@@ -50,7 +53,7 @@ ROUTES = {
     "NYFED:": nyfed,
     "ECB:": ecb,
     "FRB:": fedsurvey,  # Fed Board quantitative releases (charge-off/delinquency SDMX)
-    "GEO:": geo,        # free geopolitics/food indices (GPR, FAO, HARPEX)
+    "GEO:": geo,  # free geopolitics/food indices (GPR, FAO, HARPEX)
     "CAL:FOMC_DOT": sep,  # longer prefix FIRST — startswith routing is order-sensitive
     "CAL:": caldist,  # calendar-derived series (events.actual → series; DB read)
 }
@@ -72,8 +75,9 @@ EODHD_UST_XVAL = {
 }
 
 
-def _crossval_eodhd_ust(series_id: str, fred_value: float, fred_ts: str,
-                        tolerance: float | None) -> str:
+def _crossval_eodhd_ust(
+    series_id: str, fred_value: float, fred_ts: str, tolerance: float | None
+) -> str:
     """Same-date |FRED − EODHD| ≤ tol. EODHD unreachable → '·' (degradable:
     the vendor leg may never block the gate), mismatch → ✗ with the delta."""
     kind, tenor = EODHD_UST_XVAL[series_id]
@@ -119,6 +123,8 @@ def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: fl
             timeout=(10, 30),
         )
         rows = r.json()
+        if not isinstance(rows, list):  # quota/plan error body: {"Error Message": "Limit Reach"}
+            return "· FMP unavailable (plan/quota)"
         if not rows:
             return "✗ FMP response empty (14-day window)"
         by_date = {str(x["date"])[:10]: x for x in rows}
@@ -129,8 +135,8 @@ def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: fl
         diff = abs(float(row[col]) - fred_value)
         tol = tolerance if tolerance is not None else 0.05  # default 5bp
         return "✓" if diff <= tol else f"✗ Δ{diff:.3f} @{fred_ts}"
-    except Exception as ex:
-        return f"✗ {str(ex)[:60]}"
+    except Exception as ex:  # the vendor leg may never block the gate (same rule as EODHD)
+        return f"· {str(ex)[:40]}"
 
 
 # Gate-4c (vendor-api audit #5): FMP economic-indicators crossval for the
@@ -140,8 +146,8 @@ def _crossval_fmp(series_id: str, fred_value: float, fred_ts: str, tolerance: fl
 # DFF deliberately ABSENT: FMP updates federalFunds monthly-only (verified
 # live 2026-09-13: last 2026-08-01 vs FRED daily) — no same-date leg exists.
 FMP_IND_XVAL = {
-    "FRED:ICSA": ("initialClaims", 21),      # weekly
-    "FRED:UNRATE": ("unemploymentRate", 75), # monthly
+    "FRED:ICSA": ("initialClaims", 21),  # weekly
+    "FRED:UNRATE": ("unemploymentRate", 75),  # monthly
     "FRED:PAYEMS": ("totalNonfarmPayroll", 75),
     "FRED:INDPRO": ("industrialProductionTotalIndex", 75),
     # RSAFS deliberately ABSENT: live-wired 2026-09-13 and immediately caught
@@ -151,8 +157,9 @@ FMP_IND_XVAL = {
 }
 
 
-def _crossval_fmp_indicator(series_id: str, fred_value: float, fred_ts: str,
-                            tolerance: float | None) -> str:
+def _crossval_fmp_indicator(
+    series_id: str, fred_value: float, fred_ts: str, tolerance: float | None
+) -> str:
     """Same-observation |FRED − FMP economic-indicator| ≤ tol. FMP mirrors the
     official initial print; same-date lookup, monthly series matched on the
     month (ts is month-start)."""
@@ -267,6 +274,7 @@ def verify(
 
     rep = Report(checked=len(targets))
     _db_conn = None  # lazily opened ONCE for the routeless fallback below
+    skipped: set[str] = set()
     for e in targets:
         prefix = next((p for p in ROUTES if e["series_id"].startswith(p)), None)
         if prefix is None:
@@ -276,14 +284,10 @@ def verify(
             # bounded series is checked by SOMEONE. Depth/anchor stay '·'.
             smin, smax = e.get("sanity_min"), e.get("sanity_max")
             if smin is not None and smax is not None:
-                from pathlib import Path
-
                 from .. import db as _db
 
                 if _db_conn is None:
-                    _db_conn = _db.get_conn(
-                        str(Path(__file__).resolve().parents[2] / "data" / "arkwatch.db")
-                    )
+                    _db_conn = _db.get_conn(str(default_db_path()))
                 row = _db_conn.execute(
                     "SELECT ts, value FROM raw_observations WHERE series_id=?"
                     " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1",
@@ -291,8 +295,10 @@ def verify(
                 ).fetchone()
                 r = Row(series_id=e["series_id"])
                 if row and row[1] is not None:
-                    r.sanity = "✓" if smin <= row[1] <= smax else (
-                        f"✗ {_fmt(row[1], e.get('value_format'))}"
+                    r.sanity = (
+                        "✓"
+                        if smin <= row[1] <= smax
+                        else (f"✗ {_fmt(row[1], e.get('value_format'))}")
                     )
                     if not (smin <= row[1] <= smax):
                         r.note = f"db-fallback sanity[{smin},{smax}] @ {row[0]}"
@@ -300,6 +306,13 @@ def verify(
                     r.sanity = "✗"
                     r.note = "db-fallback: no stored realtime obs"
                 rep.rows.append(r)
+            continue
+        reason = missing_env(*PROVIDER_ENV.get(prefix, ()))
+        if reason:
+            # unconfigured optional provider: one '·' row per run, not a ✗ per series
+            if prefix not in skipped:
+                skipped.add(prefix)
+                rep.rows.append(Row(series_id=prefix + "*", note=f"SKIPPED {reason}"))
             continue
         mod = ROUTES[prefix]
         # Fetch-id resolution: native_id > primary_source (mnemonic) > series_id
@@ -393,6 +406,14 @@ def verify(
                 r.crossval = _crossval_eodhd_ust(
                     e["series_id"], cur["value"], cur["ts"], e.get("tolerance")
                 )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as ex:
+            # an unreachable/slow upstream says nothing about the data: degrade, never page
+            r.anchor = r.sanity = r.depth = r.crossval = "·"
+            r.note = f"source unreachable: {type(ex).__name__}"
+        except caldist.NoDataYet:  # empty events table (first boot): not a violation
+            r.note = "no data yet"
+        except PlanLimited as ex:  # plan/quota (HTTP 402/429): skipped, not a violation
+            r.note = str(ex)[:120]
         except Exception as ex:  # a fetch error is recorded; it must not crash the gate
             r.anchor = r.sanity = r.depth = r.crossval = "✗"
             r.note = (r.note + str(ex))[:120]

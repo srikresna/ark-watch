@@ -3,7 +3,19 @@
 from datetime import UTC, datetime, timedelta
 
 from arkwatch import api, db
-from arkwatch.signals import levels, sentiment
+from arkwatch.signals import levels, playbook, sentiment
+
+
+def _seed_two_sessions(conn, symbol, now, o, h, lo, c):
+    """One closed bar in the current session and one in the prior (Friday) session."""
+    conn.executemany(
+        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close,"
+        " volume, fetched_at) VALUES (?, ?, '5m', 'YAHOO', ?, ?, ?, ?, 100.0, 'now')",
+        [
+            (symbol, (now - dt).isoformat(timespec="seconds"), o, h, lo, c)
+            for dt in (timedelta(days=3), timedelta(minutes=5))
+        ],
+    )
 
 
 def test_compute_value_area_discrete_bins():
@@ -177,7 +189,8 @@ def test_fast_intraday_catalyst_radar(tmp_path):
     radar = sentiment.compute_intraday_catalyst_radar(conn, "NQ1", window_hours=4, as_of=now)
     assert radar["sample_count"] == 1
     assert radar["stance"] == "BULLISH"
-    assert radar["net_stance_score"] > 0.5
+    # a single article is shrunk toward neutral (raw 0.72, weight 0.51 vs prior 0.5)
+    assert 0.3 < radar["net_stance_score"] < 0.72
     assert len(radar["top_intraday_quotes"]) == 1
     assert radar["provenance"]["window_hours"] == 4
 
@@ -279,7 +292,9 @@ def test_generate_trading_playbook_scenarios_and_api(tmp_path):
     assert "invalidation_level" in scenario
     assert "empirical_support" in scenario
     assert "source" in scenario["empirical_support"]
-    assert "open_type_gate" in scenario["empirical_support"]
+    # this seed's expansion long had its stop (VWAP 20390) above its trigger (VAH 20370); it
+    # used to be emitted as scenario[0], now validate_geometry rejects it
+    assert "SCENARIO_INTRADAY_EXPANSION_LONG" in pb["rejected_scenarios"]
     # Verify levels API
     lev = api.get_session_levels("NQ1", db_path=db_file, as_of=now)
     assert lev is not None
@@ -292,13 +307,9 @@ def test_playbook_macro_quadrant_and_net_liquidity(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
     # Seed intraday bars and observations
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('NQ1', ?, '5m', 'YAHOO', 31000.0, 31100.0, 30900.0, 31050.0, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "NQ1", now, 31000.0, 31100.0, 30900.0, 31050.0)
     conn.execute(
         "INSERT INTO series_registry (series_id, name, block, tier, unit, value_format, freq, primary_source) VALUES ('FRED:DFII10', '10Y Real TIPS', 'B', 1, 'pct', 'pct', 'D', 'FRED')"
     )
@@ -326,12 +337,8 @@ def test_playbook_rich_cot_and_positioning_integration(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('GC1', ?, '5m', 'YAHOO', 4180.0, 4190.0, 4175.0, 4185.0, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "GC1", now, 4180.0, 4190.0, 4175.0, 4185.0)
     conn.commit()
     conn.close()
 
@@ -346,12 +353,8 @@ def test_playbook_broad_dollar_and_smile_integration(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('DXY', ?, '5m', 'YAHOO', 102.0, 102.3, 101.9, 102.2, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "DXY", now, 102.0, 102.3, 101.9, 102.2)
     conn.execute(
         "INSERT INTO series_registry (series_id, name, block, tier, unit, value_format, freq, primary_source) VALUES ('FRED:DTWEXBGS', 'Broad Dollar Index', 'A', 1, 'index', 'index', 'D', 'FRED')"
     )
@@ -371,12 +374,8 @@ def test_playbook_news_velocity_and_event_gates(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('CL1', ?, '5m', 'YAHOO', 90.0, 91.0, 89.5, 90.5, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "CL1", now, 90.0, 91.0, 89.5, 90.5)
     # High-impact event scheduled in 1.5 hours
     event_time = (now + timedelta(hours=1, minutes=30)).isoformat(timespec="seconds")
     conn.execute(
@@ -397,12 +396,8 @@ def test_playbook_single_print_repair_scenario(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('NQ1', ?, '5m', 'YAHOO', 31200.0, 31250.0, 31180.0, 31210.0, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "NQ1", now, 31200.0, 31250.0, 31180.0, 31210.0)
     conn.commit()
     conn.close()
 
@@ -416,12 +411,8 @@ def test_playbook_full_power_signals_integration(tmp_path):
     db_file = tmp_path / "arkwatch.db"
     conn = db.get_conn(db_file, allow_init=True)
     now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
-    now_iso = now.isoformat(timespec="seconds")
 
-    conn.execute(
-        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close, volume, fetched_at) VALUES ('NQ1', ?, '5m', 'YAHOO', 31200.0, 31250.0, 31180.0, 31210.0, 100.0, ?)",
-        (now_iso, now_iso),
-    )
+    _seed_two_sessions(conn, "NQ1", now, 31200.0, 31250.0, 31180.0, 31210.0)
     conn.commit()
     conn.close()
 
@@ -439,3 +430,154 @@ def test_playbook_full_power_signals_integration(tmp_path):
 
     assert "futures_oi_flow" in d2
     assert "crypto_liquidation_flow" in d2
+
+
+def _seed_breakout(db_file, now, symbol="NQ1"):
+    """Bars + one fresh bullish catalyst: produces at least the expansion-long scenario."""
+    conn = db.get_conn(db_file, allow_init=True)
+    rows = [
+        (timedelta(days=1, hours=2), 20000.0, 20300.0, 19900.0, 20200.0),
+        (timedelta(days=1, hours=1), 20200.0, 20400.0, 20100.0, 20350.0),
+        (timedelta(minutes=10), 20350.0, 20450.0, 20000.0, 20420.0),
+    ]
+    conn.executemany(
+        "INSERT INTO intraday_bars (symbol, bar_ts_utc, interval, source, open, high, low, close,"
+        " volume, fetched_at) VALUES (?, ?, '5m', 'YAHOO', ?, ?, ?, ?, 500.0, 'now')",
+        [
+            (symbol, (now - dt).isoformat(timespec="seconds"), o, h, lo, c)
+            for dt, o, h, lo, c in rows
+        ],
+    )
+    t_1h = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT INTO market_news (news_id, source, title, url, summary, symbols_json, cluster_id,"
+        " relevance, novelty, fetched_at, published_at_utc) VALUES ('pb', 'RSS_FED', 't', 'u',"
+        " 's', '[]', 'c', 1.0, 1.0, ?, ?)",
+        (t_1h, t_1h),
+    )
+    conn.execute(
+        "INSERT INTO news_intelligence (news_id, asset, stance, magnitude, confidence,"
+        " macro_channel, impact_horizon, evidence_level, evidence_quote, transmission_rationale,"
+        " created_at, published_at_utc) VALUES ('pb', ?, 'BULLISH', 0.8, 0.9, 'RATES_POLICY',"
+        " 'INTRADAY_VOLATILITY', 'OBSERVED', 'q', 'r', ?, ?)",
+        (symbol, t_1h, t_1h),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_validate_geometry():
+    assert playbook.validate_geometry("LONG", 100.0, 95.0, 110.0)
+    assert not playbook.validate_geometry("LONG", 100.0, 101.0, 110.0)  # stop above entry
+    assert not playbook.validate_geometry("LONG", 100.0, 95.0, 99.0)  # target below entry
+    assert playbook.validate_geometry("SHORT", 100.0, 105.0, 90.0)
+    assert not playbook.validate_geometry("SHORT", 100.0, 95.0, 90.0)
+    assert not playbook.validate_geometry("LONG", None, 95.0, 110.0)
+
+
+def test_playbook_scenarios_valid_geometry_evidence_and_as_of_echo(tmp_path):
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    _seed_breakout(tmp_path / "a.db", now)
+    # naive string -> interpreted as UTC and echoed back as the requested instant
+    pb = api.get_trading_playbook("NQ1", db_path=tmp_path / "a.db", as_of="2026-10-05T14:00:00")
+    assert pb["as_of"] == "2026-10-05T14:00:00+00:00"
+    assert pb["scenarios"]
+    for sc in pb["scenarios"]:
+        assert playbook.validate_geometry(
+            sc["direction"], sc["trigger_price"], sc["invalidation_level"], sc["target_profit"]
+        ), sc["id"]
+        assert sc["evidence"] in ("empirical", "unvalidated")
+
+
+def test_playbook_cfd_offset_applied_exactly_once(tmp_path):
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    _seed_breakout(tmp_path / "raw.db", now)
+    _seed_breakout(tmp_path / "cfd.db", now)
+    raw = api.get_trading_playbook("NQ1", db_path=tmp_path / "raw.db", as_of=now, record=True)
+    cfd = api.get_trading_playbook(
+        "NQ1", db_path=tmp_path / "cfd.db", as_of=now, cfd_basis_offset=10.0, record=True
+    )
+    for a, b in zip(raw["scenarios"], cfd["scenarios"], strict=True):
+        for k in ("trigger_price", "target_profit", "invalidation_level"):
+            assert round(b[k] - a[k], 2) == 10.0, k
+    conn = db.get_conn(tmp_path / "cfd.db")
+    stored = conn.execute(
+        "SELECT target_profit, cfd_basis_offset FROM playbook_scenarios WHERE scenario_id = ?",
+        (raw["scenarios"][0]["id"],),
+    ).fetchone()
+    conn.close()
+    assert stored == (raw["scenarios"][0]["target_profit"], 10.0)  # bar space + reference offset
+
+
+def test_playbook_missing_inputs_are_none_and_no_borrowed_stats(tmp_path):
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    _seed_breakout(tmp_path / "a.db", now, symbol="CL1")  # CL1 has no breakout study
+    pb = api.get_trading_playbook("CL1", db_path=tmp_path / "a.db", as_of=now)
+    d1, d4 = (
+        pb["multi_domain"]["domain_1_macro"],
+        pb["multi_domain"]["domain_4_intermarket_breadth"],
+    )
+    assert d1["sahm_rule_recession_indicator"] is None
+    assert d1["systemic_net_liquidity_b"] is None
+    assert d4["sp500_advancing_breadth_pct"] is None
+    assert d4["us_10y_yield_1h_chg_pct"] is None
+    assert "sp500_advancing_breadth_pct" in d4["missing_inputs"]
+    assert pb["provenance"]["empirical_dataset"] is None
+    sc = next(s for s in pb["scenarios"] if s["id"] == "SCENARIO_INTRADAY_EXPANSION_LONG")
+    assert sc["empirical_support"] == "unavailable"  # no silent fallback to NQ1 stats
+    assert sc["evidence"] == "unvalidated"
+
+
+def test_playbook_session_id_is_the_cme_session_not_the_utc_date(tmp_path):
+    # Mon 22:30 UTC = 18:30 EDT: the CME session is already Tuesday's (2026-10-06).
+    # The old UTC-date fallback stored 2026-10-05, whose close was already past, so the
+    # same generate call resolved every fresh scenario as NO_TRIGGER.
+    for now, want in (
+        (datetime(2026, 10, 5, 22, 30, tzinfo=UTC), "2026-10-06"),
+        (datetime(2026, 10, 5, 14, 0, tzinfo=UTC), "2026-10-05"),
+    ):
+        f = tmp_path / f"{want}.db"
+        _seed_breakout(f, now)
+        pb = api.get_trading_playbook("NQ1", db_path=f, as_of=now, record=True)
+        assert pb["session_id"] == want
+        conn = db.get_conn(f)
+        rows = conn.execute(
+            "SELECT scenario_uid, session_id, state FROM playbook_scenarios"
+        ).fetchall()
+        conn.close()
+        assert rows
+        for uid, sess, state in rows:
+            assert sess == want and f"-{want}-" in uid
+            assert state == "PENDING_TRIGGER", uid
+
+
+def test_a_historical_replay_does_not_write_the_track_record(tmp_path):
+    """C8: a replay reads today's macro context with old bars; its scenarios must not enter
+    the scored book unless the caller asks (record=True)."""
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    f = tmp_path / "replay.db"
+    _seed_breakout(f, now)
+    assert api.get_trading_playbook("NQ1", db_path=f, as_of=now)["scenarios"]
+    conn = db.get_conn(f)
+    assert conn.execute("SELECT COUNT(*) FROM playbook_scenarios").fetchone()[0] == 0
+    conn.close()
+
+
+def test_recorded_scenarios_carry_the_params_version(tmp_path):
+    import json as _json
+
+    from arkwatch.config import params_version
+    from arkwatch.signals import playbook
+
+    assert params_version("params_playbook.yaml") == playbook.PARAMS_VERSION
+    assert playbook.RR_FLOOR == 1.5 and playbook.MIN_STOP_RANGE_UNITS == 0.25  # values unchanged
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    f = tmp_path / "pv.db"
+    _seed_breakout(f, now)
+    api.get_trading_playbook("NQ1", db_path=f, as_of=now, record=True)
+    conn = db.get_conn(f)
+    payloads = [
+        _json.loads(r[0]) for r in conn.execute("SELECT payload_json FROM playbook_scenarios")
+    ]
+    conn.close()
+    assert payloads and {p["params_version"] for p in payloads} == {playbook.PARAMS_VERSION}

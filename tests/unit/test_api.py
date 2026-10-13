@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
+import pytest
+
 from arkwatch import api, db
 
 
@@ -17,7 +19,7 @@ def test_get_regime_snapshot():
     snap = api.get_regime_snapshot(conn)
     assert "regime_score" in snap
     assert "label" in snap
-    assert snap["label"] in ("RISK-ON", "RISK-OFF", "NEUTRAL")
+    assert snap["label"] in ("RISK-ON", "RISK-OFF", "NEUTRAL", "INSUFFICIENT DATA")
     assert "quadrant" in snap
     assert "dollar_smile" in snap
     assert "pillars" in snap
@@ -46,9 +48,24 @@ def test_get_options_intelligence():
 
 def test_get_energy_intelligence():
     conn = _setup_test_db()
+    intel = api.get_energy_intelligence(conn)  # the energy job has not run yet
+    assert set(intel["signals"]) == {"error"}
+    assert intel["crack_321_history"] == []
+    conn.executemany(
+        "INSERT INTO computed_signals(signal_id, ts, run_id, computed_at, value)"
+        " VALUES (?, ?, ?, '2026-10-09T06:25:00+00:00', ?)",
+        [
+            ("energy_crack_321", "2026-10-08", "energy", 30.0),
+            ("energy_crack_321", "2026-10-09", "energy", 31.5),
+            ("energy_wti_bwd", "2026-10-09", "energy", 0.4),
+            ("energy_x", "2026-10-09", "other", 1.0),  # another job's row stays out
+        ],
+    )
     intel = api.get_energy_intelligence(conn)
-    assert "signals" in intel
-    assert "crack_321_history" in intel
+    assert intel["signals"] == {
+        "energy_crack_321": {"ts": "2026-10-09", "value": 31.5},
+        "energy_wti_bwd": {"ts": "2026-10-09", "value": 0.4},
+    }
 
 
 def test_get_market_news_and_calendar():
@@ -122,3 +139,34 @@ def test_on_demand_refresh_targets(tmp_path):
 
     r5 = api.on_demand_refresh("news-velocity", db_path=db_file)
     assert r5["status"] == "OK"
+
+
+def test_writer_paths_refuse_a_missing_db_file(tmp_path):
+
+    missing = tmp_path / "typo.db"
+    with pytest.raises(FileNotFoundError):
+        api.get_trading_playbook("NQ1", db_path=missing)
+    with pytest.raises(FileNotFoundError):
+        api.scan_opportunities(["NQ1"], db_path=missing)
+    assert not missing.exists()  # no parallel DB silently initialized
+
+
+def test_freshness_honors_the_per_series_ceiling():
+    from datetime import date
+
+    from arkwatch.api import _freshness
+
+    today = date(2026, 10, 10)
+    assert _freshness("2026-10-02", "D", today)["status"] == "late"  # 8 d > daily default 5
+    weekly_release = _freshness("2026-10-02", "D", today, max_age_days=12)
+    assert weekly_release["status"] == "fresh" and weekly_release["expected_lag_days"] == 12
+
+
+def test_regime_label_needs_four_pillars():
+    from arkwatch.signals.pillars import regime_label
+
+    full = {b: {"z": 1.0} for b in "ABCDEF"}
+    assert regime_label(1.0, full) == "RISK-ON"
+    assert regime_label(0.0, full) == "NEUTRAL"
+    thin = {"A": {"z": 2.0}, "B": {"z": None}}  # one stale pillar used to set the label alone
+    assert regime_label(2.0, thin) == "INSUFFICIENT DATA"

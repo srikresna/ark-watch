@@ -25,6 +25,7 @@ import os
 
 import requests
 
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited
 from .fetch_log import log_collection
 
 # our contract_code -> FMP v4 symbol (fallback when cftc code differs in
@@ -32,13 +33,19 @@ from .fetch_log import log_collection
 # dump (verified 2026-09-13, skipped by design): 146021 Ether (FMP carries
 # BT bitcoin only) and 085691 legacy copper (supplementary legacy dataset).
 _CODE_TO_SYM = {
-    "088691": "GC", "084691": "SI", "085692": "HG", "076651": "PL",
-    "099741": "E6", "097741": "J6", "096742": "B6", "232741": "A6",
-    "098662": "DX", "133741": "BT", "13874+": "ES", "209742": "NQ",
+    "088691": "GC",
+    "084691": "SI",
+    "085692": "HG",
+    "076651": "PL",
+    "099741": "E6",
+    "097741": "J6",
+    "096742": "B6",
+    "232741": "A6",
+    "098662": "DX",
+    "133741": "BT",
+    "13874+": "ES",
+    "209742": "NQ",
 }
-
-# our disagg reportable categories that must sum to FMP tot_rept
-_REPORTABLE = ("mm", "prod", "swap", "other")
 
 
 def fetch_fmp_cot_dump() -> list[dict]:
@@ -51,6 +58,8 @@ def fetch_fmp_cot_dump() -> list[dict]:
         params={"apikey": key},
         timeout=(30, 180),
     )
+    if r.status_code in PLAN_LIMIT_STATUSES:
+        raise PlanLimited(f"plan-limited: FMP COT (HTTP {r.status_code})")
     if r.status_code != 200:
         raise RuntimeError(f"FMP COT: HTTP {r.status_code}")
     j = r.json()
@@ -97,7 +106,7 @@ def run_cot_gate(conn) -> tuple[int, int]:
         if rows_by_date is None and sym and sym in by_sym:
             rows_by_date = by_sym[sym]
         if rows_by_date is None:
-            print(f"  cot-gate: {code} ({sym}) not in FMP dump — skipped")
+            print(f"  cot-gate: {code} ({sym}) not in FMP dump, skipped")
             continue
         fmp = rows_by_date.get(report_date)
         if fmp is None:
@@ -131,7 +140,9 @@ def run_cot_gate(conn) -> tuple[int, int]:
                 # 2,483,362 vs FMP ES 2,446,519 — the 36,843 gap IS the big
                 # contract's OI, not a parse error). Skip the fallback only;
                 # the disagg path above (when rows exist) is unaffected.
-                print(f"  cot-gate: {code} consolidated handle — TFF OI fallback skipped (FMP maps single contracts)")
+                print(
+                    f"  cot-gate: {code} consolidated handle, TFF OI fallback skipped (FMP maps single contracts)"
+                )
                 continue
             oi_ours = conn.execute(
                 "SELECT open_interest_all FROM cot_raw WHERE contract_code=?"
@@ -159,5 +170,7 @@ def run_cot_gate(conn) -> tuple[int, int]:
     if mismatches:
         err = f"{mismatches} field mismatches across {len(latest)} contracts"
     log_collection(conn, "f2", "FMP:COT-GATE", None, checked, err=err)
-    print(f"  cot-gate: {checked} checks, {mismatches} mismatches @{latest[0][1] if latest else '?'}")
+    print(
+        f"  cot-gate: {checked} checks, {mismatches} mismatches @{latest[0][1] if latest else '?'}"
+    )
     return checked, mismatches

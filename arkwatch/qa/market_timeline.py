@@ -8,19 +8,20 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from pathlib import Path
 
 import exchange_calendars as xcals
 import pandas as pd
 import requests
 
 from .. import db as _db
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited
+from ..db import default_db_path
 from ..fetchers import yahoo
-from ..timezones import CHICAGO, LONDON, NEW_YORK
+from ..timezones import CHICAGO, NEW_YORK
 from .fetch_log import log_collection
 from .okx_market import collect as collect_okx_market
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 INTERVAL = "5m"
 TRACKED = {
     "NQ1": "NQ=F",
@@ -76,11 +77,15 @@ FMP.update(
     }
 )
 SECTORS = ("XLK", "XLY", "XLC", "XLF", "XLV", "XLI", "XLB", "XLE", "XLP", "XLRE", "XLU")
-EQUITY_SYMBOLS = frozenset({"SPY", "RSP", *SECTORS})
+# SMH/SOXX print full extended hours like SPY: regular-hours expectations flagged every
+# post-market bar FUTURE (prod 2026-10-09: ~250 DEGRADED rows/day)
+EQUITY_SYMBOLS = frozenset({"SPY", "RSP", "SMH", "SOXX", *SECTORS})
+# spot FX on Yahoo trades through the CME daily break: Sun 17:00 -> Fri 17:00 New York
+FX_SYMBOLS = frozenset({"EURUSD", "GBPUSD", "USDJPY"})
 CALENDAR_BY_SYMBOL = {
     **dict.fromkeys(("NQ1", "ES1", "YM1", "CL1", "GC1", "SI1", "HG1"), "CMES"),
-    **dict.fromkeys(("EURUSD", "GBPUSD", "USDJPY"), "CMES"),
-    "BZ1": "XLON",
+    # Yahoo BZ=F is the NYMEX Brent contract: Globex hours, not ICE London (bars follow CL1)
+    "BZ1": "CMES",
     "DXY": "IEPA",
     "TNX": "XNYS",
     **dict.fromkeys(EQUITY_SYMBOLS, "XNYS"),
@@ -106,9 +111,9 @@ class ProviderAttempt:
 
 @dataclass(frozen=True)
 class ProviderSelection:
-    source: str | None
+    source: str
     rows: list[dict]
-    freshness: Freshness | None
+    freshness: Freshness
     attempts: tuple[ProviderAttempt, ...]
 
 
@@ -174,31 +179,18 @@ def _equity_open_minute(calendar, value: datetime, *, regular_only: bool = False
     return local.replace(hour=4, minute=0, second=0, microsecond=0) <= local < extended_close
 
 
-def _brent_open_minute(calendar, value: datetime) -> bool:
-    local = value.astimezone(LONDON)
-    day = local.date()
-    minute_of_day = local.hour * 60 + local.minute
-    if local.weekday() == 6:
-        next_day = day + timedelta(days=1)
-        return minute_of_day >= 23 * 60 and bool(calendar.is_session(next_day.isoformat()))
-    return bool(calendar.is_session(day.isoformat())) and 60 <= minute_of_day < 23 * 60
-
-
 def _valid_bar_slot(
     calendar,
     start: datetime,
     *,
     equity_extended: bool = False,
     equity_regular_only: bool = False,
-    brent: bool = False,
 ) -> bool:
-    is_open = (
-        _brent_open_minute
-        if brent
-        else lambda cal, stamp: _equity_open_minute(cal, stamp, regular_only=equity_regular_only)
-        if equity_extended or equity_regular_only
-        else _open_minute
-    )
+    def is_open(cal, stamp):
+        if equity_extended or equity_regular_only:
+            return _equity_open_minute(cal, stamp, regular_only=equity_regular_only)
+        return _open_minute(cal, stamp)
+
     return is_open(calendar, start) and is_open(calendar, start + timedelta(minutes=4))
 
 
@@ -208,7 +200,6 @@ def _previous_market_minute(
     *,
     equity_extended: bool = False,
     equity_regular_only: bool = False,
-    brent: bool = False,
 ) -> datetime | None:
     if equity_extended or equity_regular_only:
         local_now = now.astimezone(NEW_YORK)
@@ -229,19 +220,6 @@ def _previous_market_minute(
                 calendar, candidate, regular_only=equity_regular_only
             ):
                 return candidate
-        return None
-    if brent:
-        local_now = now.astimezone(LONDON)
-        for offset in range(8):
-            day = local_now.date() - timedelta(days=offset)
-            if day.weekday() == 6 and calendar.is_session((day + timedelta(days=1)).isoformat()):
-                candidate = datetime(day.year, day.month, day.day, 23, 59, tzinfo=LONDON)
-                if candidate <= local_now:
-                    return candidate
-            if calendar.is_session(day.isoformat()):
-                candidate = datetime(day.year, day.month, day.day, 22, 59, tzinfo=LONDON)
-                if candidate <= local_now:
-                    return candidate
         return None
     previous = calendar.previous_minute(pd.Timestamp(now).floor("min"))
     stamp = previous.to_pydatetime()
@@ -296,6 +274,37 @@ def _vix_expected_bar(now: datetime) -> tuple[bool, datetime | None]:
     return False, None
 
 
+def _fx_open(value: datetime) -> bool:
+    local = value.astimezone(NEW_YORK)
+    minute, weekday = local.hour * 60 + local.minute, local.weekday()
+    return not (
+        weekday == 5 or (weekday == 4 and minute >= 17 * 60) or (weekday == 6 and minute < 17 * 60)
+    )
+
+
+def _tnx_open(value: datetime) -> bool:
+    """^TNX is calculated 08:30-15:00 New York on NYSE days (bars observed 2026-10, not the
+    09:30-16:00 equity session)."""
+    local = value.astimezone(NEW_YORK)
+    minute = local.hour * 60 + local.minute
+    return 8 * 60 + 30 <= minute < 15 * 60 and bool(
+        _calendar("XNYS").is_session(local.date().isoformat())
+    )
+
+
+def _window_expected(now: datetime, is_open) -> tuple[bool, datetime | None]:
+    """(market_open, expected last complete 5m slot) for a session given as a predicate."""
+    candidate = _floor_interval(now) - timedelta(minutes=5)
+    if is_open(now):
+        full = is_open(candidate) and is_open(candidate + timedelta(minutes=4))
+        return True, candidate if full else None
+    for _ in range(8 * 288):  # back to the last fully open slot, at most 8 days
+        if is_open(candidate) and is_open(candidate + timedelta(minutes=4)):
+            return False, candidate
+        candidate -= timedelta(minutes=5)
+    return False, None
+
+
 def assess_freshness(
     symbol: str,
     rows: list[dict],
@@ -317,6 +326,10 @@ def assess_freshness(
             market_open = True
         elif symbol == "VIX":
             market_open, expected = _vix_expected_bar(now)
+        elif symbol in FX_SYMBOLS:
+            market_open, expected = _window_expected(now, _fx_open)
+        elif symbol == "TNX":
+            market_open, expected = _window_expected(now, _tnx_open)
         elif symbol in EQUITY_SYMBOLS:
             calendar = _calendar("XNYS")
             market_open = _equity_open_minute(calendar, now, regular_only=regular_only)
@@ -340,15 +353,6 @@ def assess_freshness(
                     equity_regular_only=regular_only,
                 )
                 expected = _floor_interval(previous) if previous is not None else None
-        elif symbol == "BZ1":
-            calendar = _calendar("XLON")
-            market_open = _brent_open_minute(calendar, now)
-            candidate = _floor_interval(now) - timedelta(minutes=5)
-            if market_open:
-                expected = candidate if _valid_bar_slot(calendar, candidate, brent=True) else None
-            else:
-                previous = _previous_market_minute(calendar, now, brent=True)
-                expected = _floor_interval(previous) if previous is not None else None
         else:
             calendar = _calendar(CALENDAR_BY_SYMBOL.get(symbol, "XNYS"))
             market_open = _open_minute(calendar, now)
@@ -369,9 +373,20 @@ def assess_freshness(
     latest_slot = _floor_interval(latest)
     lag = (expected - latest_slot).total_seconds() / 60
     if lag < 0:
-        status = "OUT_OF_SESSION" if regular_only and symbol in EQUITY_SYMBOLS else "FUTURE"
-        return Freshness(status, latest_iso, expected_iso, lag)
+        if regular_only and symbol in EQUITY_SYMBOLS:
+            return Freshness("OUT_OF_SESSION", latest_iso, expected_iso, lag)
+        # FUTURE only when the bar is really ahead of the clock (a mis-zoned feed); a bar the
+        # session model did not expect yet still arrived in the past and is just fresh
+        if latest_slot > _floor_interval(now):
+            return Freshness("FUTURE", latest_iso, expected_iso, lag)
+        return Freshness("FRESH" if market_open else "CLOSED", latest_iso, expected_iso, lag)
     status = "FRESH" if lag <= FRESHNESS_GRACE.total_seconds() / 60 else "STALE"
+    if status == "STALE" and symbol in EQUITY_SYMBOLS and not regular_only:
+        # thin ETFs (XLY, XLRE, ...) print few or no extended-hours bars: outside the regular
+        # session a bar that covers the regular close is complete
+        regular = assess_freshness(symbol, rows, now, regular_only=True)
+        if regular.status in ("CLOSED", "OUT_OF_SESSION"):
+            return Freshness("CLOSED", latest_iso, expected_iso, lag)
     if not market_open and status == "FRESH":
         status = "CLOSED"
     return Freshness(status, latest_iso, expected_iso, lag)
@@ -496,10 +511,38 @@ def _eodhd_bars(symbol: str) -> list[dict]:
     )
 
 
+# one FMP plan-limit/quota hit blocks FMP for the rest of the run and, via fetch_log, for
+# FMP_COOLDOWN across runs: the 5-minute fallback burned the free daily quota that the
+# recession, earnings, news and COT-gate calls also need (prod 2026-10-09)
+FMP_COOLDOWN = timedelta(hours=3)
+_fmp_blocked = False
+
+
+def _fallback_ready(symbol: str) -> bool:
+    eodhd = symbol in EODHD and bool(os.environ.get("EODHD_API_TOKEN"))
+    fmp = symbol in FMP and bool(os.environ.get("FMP_API_KEY")) and not _fmp_blocked
+    return eodhd or fmp
+
+
+def _fmp_cooling(conn, now: datetime) -> bool:
+    since = (now - FMP_COOLDOWN).isoformat(timespec="seconds")
+    return (
+        conn.execute(
+            "SELECT 1 FROM fetch_log WHERE ts >= ? AND fetcher = 'market' AND status = 'SKIPPED'"
+            " AND target LIKE '%:FMP:5m' AND error LIKE 'plan-limited%' LIMIT 1",
+            (since,),
+        ).fetchone()
+        is not None
+    )
+
+
 def _fmp_bars(symbol: str) -> list[dict]:
+    global _fmp_blocked
     key = os.environ.get("FMP_API_KEY", "")
     if not key or symbol not in FMP:
         return []
+    if _fmp_blocked:
+        raise PlanLimited("plan-limited: FMP cooling down after a quota/plan limit")
     now = datetime.now(UTC)
     ticker = FMP[symbol]
     response = requests.get(
@@ -512,6 +555,9 @@ def _fmp_bars(symbol: str) -> list[dict]:
         },
         timeout=(10, 45),
     )
+    if response.status_code in PLAN_LIMIT_STATUSES:
+        _fmp_blocked = True
+        raise PlanLimited("plan-limited: FMP historical-chart/5min")
     response.raise_for_status()
     payload = response.json()
     return _normalized_rows(
@@ -531,6 +577,9 @@ def _provider_bars(symbol: str, now: datetime | None = None) -> ProviderSelectio
     for source, fetch in providers:
         try:
             rows = fetch(symbol)
+        except PlanLimited as ex:  # next provider; not a failure by itself
+            attempts.append(ProviderAttempt(source, [], None, str(ex)))
+            continue
         except requests.RequestException as ex:
             attempts.append(ProviderAttempt(source, [], None, _safe_error(ex)))
             continue
@@ -553,8 +602,10 @@ def _provider_bars(symbol: str, now: datetime | None = None) -> ProviderSelectio
             stale, key=lambda item: max(row["bar_ts_utc"] for row in item[1])
         )
         raise UnusableBarsError(source, rows, freshness, tuple(attempts))
-    errors = ", ".join(f"{item.source}={item.error}" for item in attempts if item.error)
-    raise NoFallbackDataError(errors)
+    errors = [item.error for item in attempts if item.error]
+    if errors and all(e.startswith("plan-limited") for e in errors):
+        raise PlanLimited("; ".join(errors))
+    raise NoFallbackDataError(", ".join(f"{a.source}={a.error}" for a in attempts if a.error))
 
 
 class NoFallbackDataError(RuntimeError):
@@ -622,7 +673,7 @@ def _record_provider_attempts(
                 None,
                 0,
                 err=attempt.error,
-                status="ERROR",
+                status="SKIPPED" if attempt.error.startswith("plan-limited") else "ERROR",
             )
         elif attempt.freshness and attempt.freshness.status not in (
             "FRESH",
@@ -634,14 +685,15 @@ def _record_provider_attempts(
 
 
 def _breadth(conn, now: datetime | None = None) -> int:
-    marks = ",".join("?" * len(SECTORS))
-    rows = conn.execute(
-        f"SELECT symbol,bar_ts_utc,open,close FROM intraday_bars WHERE source='YAHOO' AND interval=? AND symbol IN ({marks}) ORDER BY bar_ts_utc DESC",
-        (INTERVAL, *SECTORS),
-    ).fetchall()
     latest = {}
-    for row in rows:
-        latest.setdefault(row[0], row)
+    for sector in SECTORS:  # one index seek each; the old IN (...) loaded every bar ever stored
+        row = conn.execute(
+            "SELECT symbol,bar_ts_utc,open,close FROM intraday_bars WHERE symbol=? AND"
+            " interval=? AND source='YAHOO' ORDER BY bar_ts_utc DESC LIMIT 1",
+            (sector, INTERVAL),
+        ).fetchone()
+        if row:
+            latest[sector] = row
     if any(s not in latest or not latest[s][2] or not latest[s][3] for s in SECTORS):
         return 0
     stamps = {row[1] for row in latest.values()}
@@ -682,19 +734,37 @@ def _breadth(conn, now: datetime | None = None) -> int:
     return 1
 
 
+def _closed_with_final_bar(conn, symbol: str, now: datetime) -> bool:
+    """Market closed and the stored bar already covers the session close: a fetch would only
+    return the same bars (weekends: 29 of 31 symbols; nights: the equity ETFs)."""
+    latest = conn.execute(
+        "SELECT MAX(bar_ts_utc) FROM intraday_bars WHERE symbol=? AND interval=? AND source='YAHOO'",
+        (symbol, INTERVAL),
+    ).fetchone()[0]
+    return bool(latest) and assess_freshness(symbol, [{"bar_ts_utc": latest}], now).status == (
+        "CLOSED"
+    )
+
+
 def run(
     db_path: str = str(DEFAULT_DB),
     *,
     only: str | None = None,
     force_fallback: bool = False,
-    interval: str = "5m",
-    collect_1m: bool = True,
+    collect_1m: bool = False,
 ) -> dict[str, int]:
+    global _fmp_blocked
     conn = _db.get_conn(db_path, allow_init=True)
     result = {}
     now = datetime.now(UTC)
+    _fmp_blocked = _fmp_cooling(conn, now)
+    skipped_closed = 0
     for symbol, ticker in TRACKED.items():
         if only and symbol != only:
+            continue
+        if not force_fallback and _closed_with_final_bar(conn, symbol, now):
+            result[symbol] = 0
+            skipped_closed += 1
             continue
         try:
             if force_fallback:
@@ -719,15 +789,18 @@ def run(
                 except Exception:
                     pass
             continue
+        if not rows:  # keep the cause: a Yahoo 429 or proxy outage is not an empty market
+            status = "ERROR" if primary_error else "EMPTY"
             log_collection(
-                conn, "market", f"{symbol}:YAHOO:5m", None, 0, err=primary_error, status="ERROR"
+                conn, "market", f"{symbol}:YAHOO:5m", None, 0, err=primary_error, status=status
             )
-        if not rows:
-            log_collection(conn, "market", f"{symbol}:YAHOO:5m", None, 0, status="EMPTY")
         else:
             _record_bars(conn, symbol, "YAHOO", rows, primary_freshness)
         if primary_freshness.status == "WAITING":
             result[symbol] = 0
+            continue
+        if not _fallback_ready(symbol):  # no keyed provider maps it: nothing to try or log
+            result[symbol] = -1  # degraded (stale or no bars), nothing better to try
             continue
 
         try:
@@ -735,6 +808,11 @@ def run(
             _record_provider_attempts(conn, symbol, selection.attempts, selection.source)
             result[symbol] = _record_bars(
                 conn, symbol, selection.source, selection.rows, selection.freshness
+            )
+        except PlanLimited as ex:
+            result[symbol] = 0
+            log_collection(
+                conn, "market", f"{symbol}:FMP:5m", None, 0, err=str(ex), status="SKIPPED"
             )
         except UnusableBarsError as ex:
             _record_provider_attempts(conn, symbol, ex.attempts, ex.source)
@@ -749,6 +827,8 @@ def run(
             )
     result["breadth"] = _breadth(conn, now)
     conn.close()
+    if skipped_closed:
+        print(f"{skipped_closed} closed market(s) already complete: not refetched")
     try:
         result.update({f"okx:{name}": count for name, count in collect_okx_market(db_path).items()})
     except Exception as ex:
@@ -765,16 +845,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--only", choices=sorted(TRACKED))
     parser.add_argument("--force-fallback", action="store_true")
-    parser.add_argument("--interval", choices=["5m", "1m"], default="5m")
-    parser.add_argument("--no-1m", action="store_true", help="skip 1m collection")
+    # 1m bars have no reader (signals use 5m, Zonelab never asks /v1/prices): opt-in only
+    parser.add_argument("--with-1m", action="store_true", help="also store 1m bars")
+    parser.add_argument("--no-1m", action="store_true", help="default; kept for old callers")
     args = parser.parse_args(argv)
     result = run(
         args.db,
         only=args.only,
         force_fallback=args.force_fallback,
-        interval=args.interval,
-        collect_1m=not args.no_1m,
+        collect_1m=args.with_1m and not args.no_1m,
     )
-    failed = [name for name, value in result.items() if value < 0]
-    print(f"=== market timeline: {len(result) - len(failed)} completed, {len(failed)} failed ===")
-    return 1 if failed else 0
+    bad = [name for name, value in result.items() if value < 0]
+    hard = [name for name in bad if name.startswith("okx:")]
+    degraded = [name for name in bad if not name.startswith("okx:")]
+    assets = [name for name in result if not name.startswith("okx:")]
+    print(
+        f"=== market timeline: {len(result) - len(bad)} completed, "
+        f"{len(degraded)} degraded, {len(hard)} failed ==="
+    )
+    # Stale/future after-hours bars degrade a few ETFs every night: that is data quality, not a job
+    # failure (a failure pages the owner). Fail on a collector error or a broad outage (> half).
+    return 1 if hard or (assets and len(degraded) > len(assets) / 2) else 0

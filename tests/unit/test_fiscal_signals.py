@@ -20,9 +20,8 @@ fd_interest_expense + fd_avg_rates, landed by fd-build). Fixture DDL is
 CREATE IF NOT EXISTS, so these tests run both before and after the migration
 lands in db.py. Money in the tables is raw USD; signals render $B/$T.
 
-Telegram safety: _fire attempts a real send when the host env carries
-TELEGRAM_* vars — the conn fixture blanks them so fired alerts only ever
-land in alert_deliveries (pending) [nyfed-signals convention].
+Telegram safety: _fire only queues (no fast-path send since 2026-10-10); the conn
+fixture still blanks TELEGRAM_* so fired alerts only ever land in alert_deliveries (pending) [nyfed-signals convention].
 """
 
 from __future__ import annotations
@@ -80,9 +79,8 @@ def _day(n: int = 0) -> str:
 
 @pytest.fixture()
 def conn(tmp_path, monkeypatch):
-    # Blank the Telegram env even on hosts that carry the production values:
-    # _fire's fast-path send must raise (caught → stays 'pending') instead of
-    # delivering test alerts to the real channel.
+    # Blank the Telegram env even on hosts that carry the production values: belt and
+    # braces now that _fire only queues 'pending' rows for the outbox.
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
     from arkwatch import db
@@ -666,3 +664,15 @@ def test_fiscal_layer_degrades_without_v10_tables(conn):
     assert auction_demand_weak_alert(conn, weak_pct=10) is None
     assert store_fiscal_signals(conn) == 0
     assert fiscal_brief_line(conn) is None
+
+
+def test_auction_percentile_uses_the_trailing_window(conn):
+    """A b/c of 2.40: weak against the last 10 years (2.5-2.7), unremarkable against a 1990s
+    history of 1.8-2.2. The window rank drives the alert; the full rank rides along."""
+    old = [1.8 + (i % 5) * 0.1 for i in range(60)]  # ~13-14 years ago, weekly spacing
+    for i, btc in enumerate(old):
+        _seed_auction(conn, _day(5000 + i * 7), f"OLD{i:04d}", "Note", "10-Year", btc)
+    _seed_term_history(conn, "10-Year", "Note", [2.5 + (i % 3) * 0.1 for i in range(40)] + [2.4])
+    t = auction_demand(conn)["terms"]["10-Year"]
+    assert t["n_history"] == 41 and t["n_history_full"] == 101
+    assert t["percentile"] < 5 < 50 < t["percentile_full"]

@@ -9,8 +9,10 @@ gaps longer than ~3 trading days mean permanently lost data.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, cast
 
-from curl_cffi import requests as creq
+if TYPE_CHECKING:  # lazy at runtime: watcher imports this every 60 s, only sessions need it
+    from curl_cffi import requests as creq
 
 BASE = "https://www.cmegroup.com"
 
@@ -113,6 +115,8 @@ def _session() -> creq.Session:
     first)."""
     global _SESSION
     if _SESSION is None:
+        from curl_cffi import requests as creq
+
         _SESSION = creq.Session(impersonate="chrome")
     return _SESSION
 
@@ -142,8 +146,8 @@ def fetch_settlements(product_code: str, trade_date: datetime | None = None) -> 
         # walk back only on other non-200s (404 = non-trading day).
         if r.status_code in (403, 429) or r.status_code >= 500:
             raise CmeError(
-                f"CME {product_code}: HTTP {r.status_code} (blocked?) "
-                f"— a stale settlement is better than no data on the wrong date"
+                f"CME {product_code}: HTTP {r.status_code} (blocked?), "
+                f"a stale settlement is better than no data on the wrong date"
             )
         if r.status_code != 200:
             td -= timedelta(days=1)
@@ -182,7 +186,9 @@ def fetch_settlements(product_code: str, trade_date: datetime | None = None) -> 
             if out:
                 return out
         td -= timedelta(days=1)
-    raise CmeError(f"CME {product_code}: empty for the last 6 days (5-day retention — possibly lost)")
+    raise CmeError(
+        f"CME {product_code}: empty for the last 6 days (5-day retention, possibly lost)"
+    )
 
 
 def fetch_cvol() -> list[dict]:
@@ -226,22 +232,28 @@ def fetch_voi_dates() -> list[dict]:
         if not td_raw:
             continue
         td_iso = f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
-        out.append({"trade_date": td_iso, "td_raw": td_raw,
-                    "report_type": e.get("reportType", "Preliminary")})
+        out.append(
+            {
+                "trade_date": td_iso,
+                "td_raw": td_raw,
+                "report_type": e.get("reportType", "Preliminary"),
+            }
+        )
     if not out:
         raise CmeError("VOI: no dates available")
     return out
 
 
-def fetch_voi(asset_class_id: int = 8, td_raw: str | None = None,
-              report_type: str | None = None) -> list[dict]:
+def fetch_voi(
+    asset_class_id: int = 8, td_raw: str | None = None, report_type: str | None = None
+) -> list[dict]:
     """Volume/OI per product for one asset class, for the LATEST date entry
     (or an explicit one from fetch_voi_dates). Products live in the nested
     voiProductsTOList key."""
     s = _session()
     if td_raw is None:
         latest = fetch_voi_dates()[0]
-        td_raw = latest["td_raw"]
+        td_raw = cast(str, latest["td_raw"])  # fetch_voi_dates skips empty dates
         report_type = latest["report_type"]
     if report_type is None:
         report_type = "Preliminary"
@@ -253,9 +265,7 @@ def fetch_voi(asset_class_id: int = 8, td_raw: str | None = None,
     )
     if r.status_code != 200:
         raise CmeError(f"VOI assetClass {asset_class_id}: HTTP {r.status_code}")
-    td_iso = (
-        f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
-    )
+    td_iso = f"{td_raw[:4]}-{td_raw[4:6]}-{td_raw[6:8]}" if len(td_raw) == 8 else td_raw
     products = r.json().get("voiProductsTOList", [])
     out = []
     for row in products:
@@ -372,7 +382,7 @@ def futures_month_from_contract(contract_id: str) -> str | None:
 
 
 def parse_option_row(
-    row: dict, trade_date: str, product_id: int, product_code: str, contract_id: str
+    row: dict, trade_date: str | None, product_id: int, product_code: str, contract_id: str
 ) -> dict | None:
     """Normalize one OOF settlement row → option dict.
 

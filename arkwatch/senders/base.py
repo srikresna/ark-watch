@@ -1,9 +1,8 @@
 """base.py — the Channel contract.
 
 The outbox is channel-agnostic (the `channel` column); a gateway is a
-per-channel adapter implementing this contract. Telegram is the first
-adapter; a Discord webhook follows (active only when DISCORD_WEBHOOK_URL is
-set). Thin purpose-built adapters (Apprise's idea, without its dependency
+per-channel adapter implementing this contract: ntfy (the live phone push),
+Telegram and a Discord webhook, each active only when its env is set. Thin purpose-built adapters (Apprise's idea, without its dependency
 weight): fine-grained per-channel control of parse-mode/split/rate-limit
 matters more than support for 100+ services.
 """
@@ -43,5 +42,10 @@ def active_channels() -> dict[str, Channel]:
         from .discord_webhook import DiscordWebhookChannel
 
         ch = DiscordWebhookChannel()
+        channels[ch.name] = ch
+    if os.environ.get("NTFY_URL"):
+        from .ntfy import NtfyChannel
+
+        ch = NtfyChannel()
         channels[ch.name] = ch
     return channels

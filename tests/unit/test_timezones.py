@@ -54,6 +54,8 @@ def test_format_ts_display_default_and_dynamic():
     assert "UTC+07:00" in wib_fmt
 
     # Dynamic conversion to UTC
+
+
 def test_to_display_time():
     dt_utc = datetime(2026, 10, 9, 1, 30, tzinfo=UTC)
     ny_dt = to_display_time(dt_utc)

@@ -127,3 +127,41 @@ def test_gate_breach_writes_fetch_log_row(tmp_path, frozen, monkeypatch):
     assert n_ok == 0, "an in-tolerance gate must not write a row"
     assert len(rows) == 1 and rows[0][0] == "ERROR"
     assert "Δ48.0pp" in rows[0][1] and "official 10%" in rows[0][1]
+
+
+def test_official_fetch_runs_outside_the_write_transaction(tmp_path, frozen, monkeypatch):
+    """The QuikStrike GET+POST can take ~80s; holding BEGIN IMMEDIATE across it stalls every
+    other writer (watcher alerts, the market lane) for that long."""
+    import arkwatch.fetchers.quikstrike as qs
+
+    conn = _build_db(tmp_path)
+    seen = []
+    monkeypatch.setattr(qs, "fetch_fedwatch_official", lambda: seen.append(conn.in_transaction))
+    f2.compute_fedwatch(conn)
+    conn.close()
+    assert seen == [False]
+
+
+def test_silent_quikstrike_failure_leaves_an_error_row(tmp_path, frozen, monkeypatch):
+    """fetch_fedwatch_official returns None (blocked page, layout change): that used to leave
+    no fetch_log row at all, so the DIY-vs-official gate died unseen."""
+    import arkwatch.fetchers.quikstrike as qs
+
+    monkeypatch.setattr(qs, "fetch_fedwatch_official", lambda: None)
+    conn = _build_db(tmp_path)
+    f2.compute_fedwatch(conn)
+    row = conn.execute("SELECT status, error FROM fetch_log WHERE target='QS:FEDWATCH'").fetchone()
+    conn.close()
+    assert row[0] == "ERROR" and "no rows" in row[1]
+
+
+def test_tic_without_a_period_is_an_error(monkeypatch):
+    from arkwatch.fetchers import flows_extra
+
+    class R:
+        status_code = 200
+        text = "<td>China, Mainland</td><td>760.1</td>"
+
+    monkeypatch.setattr(flows_extra.creq.Session, "get", lambda *a, **k: R())
+    with pytest.raises(RuntimeError, match="no YYYY-mm period"):
+        flows_extra.fetch_tic_slt5()

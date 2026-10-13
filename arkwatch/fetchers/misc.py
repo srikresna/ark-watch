@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 import requests
 
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited
+
 UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
 }
@@ -44,6 +46,8 @@ def fetch_recession_prob(lookback_days: int = 200) -> dict:
         timeout=(10, 30),
     )
     if r.status_code != 200:
+        if r.status_code in PLAN_LIMIT_STATUSES:
+            raise PlanLimited("plan-limited: FMP economic-indicators")
         raise RuntimeError(f"FMP recession-prob: HTTP {r.status_code}")
     rows = [x for x in r.json() if x.get("date") and x.get("value") is not None]
     if not rows:
@@ -73,6 +77,8 @@ def fetch_earnings_calendar(from_d: str, to_d: str, page: int = 0) -> list[dict]
             params={"from": from_d, "to": to_d, "page": page, "apikey": key},
             timeout=(10, 60),
         )
+        if r.status_code in PLAN_LIMIT_STATUSES:
+            raise PlanLimited(f"plan-limited: FMP earnings-calendar (HTTP {r.status_code})")
         if r.status_code != 200:
             raise RuntimeError(f"FMP earnings-calendar: HTTP {r.status_code}")
         rows = r.json()
@@ -101,6 +107,7 @@ def fetch_earnings_calendar(from_d: str, to_d: str, page: int = 0) -> list[dict]
         page += 1  # full page → the window has more pages (cap truncation)
         if page > 10:  # ronde-5: bound the walk — a server that ignores the
             return out  # page param (always-full pages) must not loop forever
+
 
 # fetch_fmp_holidays DELETED 2026-09-13 (vendor-api audit #5): zero callers
 # since it landed — the CME harvest walk-back already treats empty days as

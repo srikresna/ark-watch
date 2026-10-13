@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from .. import db
+from ..db import default_db_path
 from ..fetchers import nyfed
+from . import fetch_log
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 OPS_COLUMNS = (
     "operation_id, family, operation_date, settlement_date, operation_type, direction,"
     " maturity_start, maturity_end, status, amount, details_json"
@@ -120,7 +121,7 @@ def harvest_ops(conn) -> int:
         ]
         if fxs_rows:
             n_fxs_ops = store_fed_operations(conn, fxs_rows)
-            print(f"  ⚠ fxs operations NON-EMPTY ({n_fxs_ops}) — dollar-funding event")
+            print(f"  ⚠ fxs operations NON-EMPTY ({n_fxs_ops}), dollar-funding event")
         n_cp = len(fxs["counterparties"])
     except Exception as ex:
         cp_err = str(ex)[:140]
@@ -180,7 +181,7 @@ def harvest_rates(conn) -> int:
         except Exception as ex:
             fail += 1
             print(f"  ✗ {sid}: {str(ex)[:120]}")
-    return 1 if fail else 0
+    return fetch_log.exit_code(len(sids) - fail, fail)
 
 
 def main(argv: list[str] | None = None) -> int:

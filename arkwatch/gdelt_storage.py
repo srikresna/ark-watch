@@ -10,6 +10,7 @@ import zlib
 from pathlib import Path
 
 from . import db as _db
+from .db import default_db_path
 
 TABLE_KEYS = {
     "gdelt_events": "event_id",
@@ -48,8 +49,7 @@ def _require_arkwatch_database(path: str | Path) -> int:
     conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
     try:
         names = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         if "schema_migrations" not in names:
             raise ValueError("refusing to modify a database without ARK Watch schema_migrations")
@@ -202,13 +202,15 @@ def compact_database(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arkwatch gdelt-storage")
-    parser.add_argument("--db", default="data/arkwatch.db")
+    parser.add_argument("--db", default=str(default_db_path()))
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument(
         "--apply", action="store_true", help="compress existing raw payloads in place"
     )
     parser.add_argument("--backup", help="new SQLite backup path required with --apply")
-    parser.add_argument("--verify-only", action="store_true", help="audit stored GDELT raw payloads")
+    parser.add_argument(
+        "--verify-only", action="store_true", help="audit stored GDELT raw payloads"
+    )
     parser.add_argument(
         "--vacuum",
         action="store_true",

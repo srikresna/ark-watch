@@ -40,17 +40,13 @@ def test_eodhd_lookback_uses_from(monkeypatch):
 
 def test_xccy_spot_falls_back_to_yahoo_on_same_date():
     conn = _conn()
-    conn.execute(
-        "INSERT INTO instrument_prices VALUES ('EURUSD','2026-09-18','YAHOO',1.15)"
-    )
+    conn.execute("INSERT INTO instrument_prices VALUES ('EURUSD','2026-09-18','YAHOO',1.15)")
     assert _get_spot(conn, "2026-09-18") == 1.15
 
 
 def test_xccy_spot_rejects_old_data():
     conn = _conn()
-    conn.execute(
-        "INSERT INTO instrument_prices VALUES ('EURUSD','2026-09-10','EODHD',1.14)"
-    )
+    conn.execute("INSERT INTO instrument_prices VALUES ('EURUSD','2026-09-10','EODHD',1.14)")
     assert _get_spot(conn, "2026-09-18") is None
 
 
@@ -64,4 +60,14 @@ def test_synthetic_prefers_eodhd_fx_then_yahoo():
             ("GBPUSD", today, "YAHOO", 1.25),
         ],
     )
-    assert compute_xaugbp(conn) == {"ts": today, "value": 3440.0}
+    assert compute_xaugbp(conn) == {"ts": today, "value": 3440.0, "metal_leg": "XAUUSD"}
+
+
+def test_synthetic_falls_back_to_the_comex_future_when_eodhd_is_off():
+    conn = _conn()
+    today = datetime.now(UTC).date().isoformat()
+    conn.executemany(
+        "INSERT INTO instrument_prices VALUES (?,?,?,?)",
+        [("GC1", today, "YAHOO", 4000.0), ("GBPUSD", today, "YAHOO", 1.25)],
+    )
+    assert compute_xaugbp(conn) == {"ts": today, "value": 3200.0, "metal_leg": "GC1"}

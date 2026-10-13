@@ -21,27 +21,42 @@ Key APIs:
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "arkwatch.db"
+from .db import default_db_path
+
+DEFAULT_DB = default_db_path()
 
 
 @contextmanager
 def _get_connection(
-    conn: sqlite3.Connection | None = None, db_path: str | Path | None = None
+    conn: sqlite3.Connection | None = None,
+    db_path: str | Path | None = None,
+    *,
+    write: bool = False,
 ) -> Generator[sqlite3.Connection, None, None]:
+    """Readers get a read-only connection (never creates/migrates the DB);
+    only the explicit write paths (on_demand_refresh, counterfactual audit)
+    open a writer."""
     if conn is not None:
         yield conn
     else:
         from . import db
 
         path = db_path or DEFAULT_DB
-        connection = db.get_conn(path, allow_init=True)
+        if write and not Path(path).exists():
+            # a typo'd db_path must not silently initialize a parallel DB (CLI jobs init)
+            raise FileNotFoundError(f"{path} does not exist (API writers never create the DB)")
+        connection = (
+            db.get_conn(path, allow_init=True) if write else db.get_conn(path, read_only=True)
+        )
         try:
             yield connection
         finally:
@@ -57,12 +72,13 @@ def get_regime_snapshot(
         compute_pillars,
         compute_quadrant,
         compute_regime_score,
+        regime_label,
     )
 
     with _get_connection(conn, db_path) as c:
         pillars = compute_pillars(c)
         score = compute_regime_score(pillars)
-        label = "RISK-ON" if score > 0.3 else ("RISK-OFF" if score < -0.3 else "NEUTRAL")
+        label = regime_label(score, pillars)
         quadrant = compute_quadrant(pillars)
         dollar_smile = compute_dollar_smile(c)
 
@@ -111,13 +127,20 @@ def get_energy_intelligence(
     conn: sqlite3.Connection | None = None, db_path: str | Path | None = None
 ) -> dict:
     """Retrieve energy curve intelligence: 3:2:1 crack spread, gasoline crack, heating oil crack, WTI backwardation."""
-    from .qa.energy import compute, compute_crack_321_history
+    from .qa.energy import compute_crack_321_history
 
     with _get_connection(conn, db_path) as c:
-        try:
-            current_signals = compute(c)
-        except Exception as ex:
-            current_signals = {"error": str(ex)}
+        # what the daily `energy` job stored (energy_* rows, run_id 'energy'),
+        # latest per signal: a GET never fetches upstream nor writes. The
+        # range ('`' follows '_') seeks the PK where LIKE 'energy\_%' scans.
+        rows = c.execute(
+            "SELECT signal_id, MAX(ts), value FROM computed_signals"
+            " WHERE signal_id >= 'energy_' AND signal_id < 'energy`' AND run_id = 'energy'"
+            " GROUP BY signal_id"
+        ).fetchall()
+        current_signals: dict = {sid: {"ts": ts, "value": v} for sid, ts, v in rows} or {
+            "error": "no energy signals stored yet (the daily energy job has not run)"
+        }
 
         history_321 = compute_crack_321_history(c, limit=30)
 
@@ -213,45 +236,7 @@ def get_market_news(
 ) -> list[dict]:
     """Retrieve clustered, curated market news from FMP and EODHD ordered by recency and relevance."""
     with _get_connection(conn, db_path) as c:
-        query = (
-            "SELECT news_id, published_at_utc, source, title, url, summary, symbols_json, "
-            "       cluster_id, relevance, novelty "
-            "FROM market_news WHERE 1=1 "
-        )
-        params: list = []
-        if source:
-            query += "AND source = ? "
-            params.append(source.upper())
-        if symbol:
-            query += "AND symbols_json LIKE ? "
-            params.append(f"%{symbol}%")
-
-        query += "ORDER BY published_at_utc DESC LIMIT ?"
-        params.append(limit)
-
-        rows = c.execute(query, params).fetchall()
-
-        out = []
-        for r in rows:
-            try:
-                syms = json.loads(r[6])
-            except Exception:
-                syms = []
-            out.append(
-                {
-                    "news_id": r[0],
-                    "published_at_utc": r[1],
-                    "source": r[2],
-                    "title": r[3],
-                    "url": r[4],
-                    "summary": r[5],
-                    "symbols": syms,
-                    "cluster_id": r[7],
-                    "relevance": round(float(r[8]), 2),
-                    "novelty": round(float(r[9]), 2),
-                }
-            )
-        return out
+        return list_news(c, source=source, symbol=symbol, limit=limit)["items"]
 
 
 def get_news_intelligence(
@@ -367,12 +352,17 @@ def get_trading_playbook(
     db_path: str | Path | None = None,
     as_of: datetime | str | None = None,
     cfd_basis_offset: float = 0.0,
+    record: bool | None = None,
 ) -> dict | None:
     """Retrieve actionable if-then trading playbook with target profits and invalidation levels."""
     from .signals.playbook import generate_trading_playbook
 
-    with _get_connection(conn, db_path) as c:
-        return generate_trading_playbook(c, symbol, as_of=as_of, cfd_basis_offset=cfd_basis_offset)
+    # generation records scenarios and evaluates trackers, so it needs a writer
+    # (the HTTP server never calls this; it serves stored scenarios read-only)
+    with _get_connection(conn, db_path, write=True) as c:
+        return generate_trading_playbook(
+            c, symbol, as_of=as_of, cfd_basis_offset=cfd_basis_offset, record=record
+        )
 
 
 def get_playbook_performance(
@@ -398,21 +388,8 @@ def scan_opportunities(
     """Continuous Opportunity Scanner: Scans the tracked book and returns active/imminent trade opportunities."""
     from .signals.playbook_tracker import scan_market_opportunities
 
-    with _get_connection(conn, db_path) as c:
+    with _get_connection(conn, db_path, write=True) as c:  # scanning records + evaluates
         return scan_market_opportunities(c, symbols=symbols, as_of=as_of, min_rr=min_rr)
-
-
-def evaluate_counterfactuals(
-    as_of: datetime | str | None = None,
-    forward_hours: int = 2,
-    conn: sqlite3.Connection | None = None,
-    db_path: str | Path | None = None,
-) -> dict:
-    """Audit whether past stop-losses and early exits were justified (Saved Capital vs Whipsaw Stop)."""
-    from .signals.playbook_tracker import evaluate_counterfactual_outcomes
-
-    with _get_connection(conn, db_path) as c:
-        return evaluate_counterfactual_outcomes(c, as_of=as_of, forward_hours=forward_hours)
 
 
 def get_economic_calendar(
@@ -422,33 +399,8 @@ def get_economic_calendar(
     days_backward: int = 3,
 ) -> list[dict]:
     """Retrieve recent and upcoming economic calendar events with consensus, actual, and surprise z-scores."""
-    now = datetime.now(UTC)
-    start = (now - timedelta(days=days_backward)).date().isoformat()
-    end = (now + timedelta(days=days_forward)).date().isoformat()
-
     with _get_connection(conn, db_path) as c:
-        rows = c.execute(
-            "SELECT event_uid, ts_utc, country, name, importance, actual, consensus, previous, surprise_z "
-            "FROM events "
-            "WHERE substr(ts_utc, 1, 10) >= ? AND substr(ts_utc, 1, 10) <= ? "
-            "ORDER BY ts_utc ASC",
-            (start, end),
-        ).fetchall()
-
-        return [
-            {
-                "event_uid": r[0],
-                "ts_utc": r[1],
-                "country": r[2],
-                "name": r[3],
-                "importance": r[4],
-                "actual": r[5],
-                "consensus": r[6],
-                "previous": r[7],
-                "surprise_z": r[8],
-            }
-            for r in rows
-        ]
+        return list_calendar(c, days_forward, days_backward, limit=100_000)["items"]
 
 
 def on_demand_refresh(target: str, db_path: str | Path | None = None) -> dict:
@@ -461,14 +413,14 @@ def on_demand_refresh(target: str, db_path: str | Path | None = None) -> dict:
     if target == "crypto":
         from .signals.crypto import store_crypto_signals
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = store_crypto_signals(c)
         return {"target": target, "status": "OK", "signals_updated": n}
 
     if target == "energy":
         from .qa.energy import compute
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             out = compute(c)
         return {"target": target, "status": "OK", "signals": out}
 
@@ -487,7 +439,7 @@ def on_demand_refresh(target: str, db_path: str | Path | None = None) -> dict:
     if target == "calibrate":
         from .qa.calibrate import audit_anchors
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             audits = audit_anchors(c)
         return {
             "target": target,
@@ -500,35 +452,35 @@ def on_demand_refresh(target: str, db_path: str | Path | None = None) -> dict:
     if target == "futures-flow":
         from .signals.futures_flow import store_futures_flow_signals
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = store_futures_flow_signals(c)
         return {"target": target, "status": "OK", "signals_updated": n}
 
     if target == "intraday":
         from .signals.intraday import store_intraday_signals
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = store_intraday_signals(c)
         return {"target": target, "status": "OK", "signals_updated": n}
 
     if target == "etf-flows":
         from .signals.etf_flows import store_etf_flow_signals
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = store_etf_flow_signals(c)
         return {"target": target, "status": "OK", "signals_updated": n}
 
     if target == "news-velocity":
         from .signals.news import store_news_signals
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = store_news_signals(c)
         return {"target": target, "status": "OK", "signals_updated": n}
 
     if target == "sentiment":
         from .signals.sentiment import extract_news_intelligence, store_asset_radars
 
-        with _get_connection(None, path) as c:
+        with _get_connection(None, path, write=True) as c:
             n = extract_news_intelligence(c, limit=15)
             radars = store_asset_radars(c)
         return {
@@ -539,3 +491,930 @@ def on_demand_refresh(target: str, db_path: str | Path | None = None) -> dict:
         }
 
     return {"target": target, "status": "ERROR", "error": f"unknown refresh target '{target}'"}
+
+
+# ---------------------------------------------------------------------------
+# Generic read layer (REST server). Every function takes an open connection
+# and returns JSON-friendly dicts; list endpoints use keyset pagination
+# {items, next_cursor} where the cursor is the opaque last sort key.
+# ---------------------------------------------------------------------------
+
+# Expected max age (days) of the newest observation per registry freq —
+# generous on purpose (period-start ts + publication lag + weekends/holidays).
+FRESHNESS_LAG_DAYS = {"D": 5, "W": 14, "M": 75, "Q": 200, "A": 550, "E": 550}
+CANCELLABLE_STATES = ("PENDING_TRIGGER", "ACTIVE")
+
+
+class ApiConflict(Exception):
+    """The target exists but its current state forbids the requested change."""
+
+
+class ApiNotFound(Exception):
+    """The addressed row does not exist."""
+
+
+class ApiBadRequest(Exception):
+    """Malformed client input the HTTP layer could not validate (e.g. cursor)."""
+
+
+def _rows(c: sqlite3.Connection, sql: str, params: list | tuple = ()) -> list[dict]:
+    cur = c.cursor()
+    cur.row_factory = sqlite3.Row  # dict-by-name regardless of the caller's factory
+    return [dict(r) for r in cur.execute(sql, params).fetchall()]
+
+
+def _encode_cursor(values: list) -> str:
+    return base64.urlsafe_b64encode(json.dumps(values).encode()).decode()
+
+
+def _decode_cursor(cursor: str, n: int) -> list:
+    try:
+        values = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except Exception:
+        raise ApiBadRequest("invalid cursor") from None
+    if not (isinstance(values, list) and len(values) == n):
+        raise ApiBadRequest("invalid cursor")
+    if not all(v is None or isinstance(v, (str, int, float)) for v in values):
+        raise ApiBadRequest("invalid cursor")
+    return values
+
+
+def _page(
+    c: sqlite3.Connection,
+    inner_sql: str,
+    params: list,
+    keys: list[str],
+    *,
+    cursor: str | None,
+    limit: int,
+    desc: bool = False,
+) -> dict:
+    """Keyset page over `inner_sql` ordered by `keys` (unique together).
+    The subquery wrapper lets keys be output aliases; SQLite flattens it, so
+    the inner WHERE keeps its index."""
+    sql = f"SELECT * FROM ({inner_sql}) WHERE 1=1"
+    params = list(params)
+    if cursor:
+        op = "<" if desc else ">"
+        sql += f" AND ({', '.join(keys)}) {op} ({', '.join('?' * len(keys))})"
+        params += _decode_cursor(cursor, len(keys))
+    sql += " ORDER BY " + ", ".join(f"{k} DESC" if desc else k for k in keys) + " LIMIT ?"
+    rows = _rows(c, sql, [*params, limit + 1])
+    items = rows[:limit]
+    more = len(rows) > limit
+    return {
+        "items": items,
+        "next_cursor": _encode_cursor([items[-1][k] for k in keys]) if more else None,
+    }
+
+
+def _like_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _freshness(
+    last_ts: str | None, freq: str | None, today: date, max_age_days: int | None = None
+) -> dict:
+    lag = max_age_days or FRESHNESS_LAG_DAYS.get((freq or "").upper(), 30)
+    if not last_ts:
+        return {"expected_lag_days": lag, "age_days": None, "status": "never"}
+    try:
+        age = (today - date.fromisoformat(last_ts[:10])).days
+    except ValueError:
+        return {"expected_lag_days": lag, "age_days": None, "status": "stale"}
+    status = "fresh" if age <= lag else ("late" if age <= 2 * lag else "stale")
+    return {"expected_lag_days": lag, "age_days": age, "status": status}
+
+
+def _parse_json(text: str | None):
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+_SERIES_COLS = (
+    "series_id, name, block, tier, unit, value_format, freq, primary_source, "
+    "secondary_source, active, calendar_family, locked_by_ui"
+)
+
+
+def list_series(
+    c: sqlite3.Connection,
+    *,
+    block: str | None = None,
+    active: bool | None = None,
+    freq: str | None = None,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> dict:
+    where, params = "", []
+    if block:
+        where += " AND block = ?"
+        params.append(block)
+    if active is not None:
+        where += " AND active = ?"
+        params.append(int(active))
+    if freq:
+        where += " AND freq = ?"
+        params.append(freq.upper())
+    inner = f"SELECT {_SERIES_COLS} FROM series_registry WHERE 1=1{where}"
+    return _page(c, inner, params, ["series_id"], cursor=cursor, limit=limit)
+
+
+def series_detail(c: sqlite3.Connection, series_id: str) -> dict | None:
+    rows = _rows(
+        c,
+        "SELECT r.*, (SELECT MAX(ts) FROM raw_observations o WHERE o.series_id = r.series_id)"
+        " AS last_ts, (SELECT COUNT(*) FROM raw_observations o WHERE o.series_id = r.series_id"
+        " AND o.vintage_ts = 'realtime') AS n_obs FROM series_registry r WHERE r.series_id = ?",
+        (series_id,),
+    )
+    if not rows:
+        return None
+    out = rows[0]
+    out["freshness"] = _freshness(
+        out["last_ts"], out["freq"], datetime.now(UTC).date(), out.get("max_age_days")
+    )
+    return out
+
+
+def get_observations(
+    c: sqlite3.Connection,
+    series_id: str,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    vintage: str = "realtime",
+    cursor: str | None = None,
+    limit: int = 500,
+) -> dict:
+    """release_ts 'na' (the column's 'unknown' sentinel) is surfaced as null —
+    never compare it as a date: 'na' sorts AFTER every ISO timestamp."""
+    where, params = "", [series_id, vintage]
+    if start:
+        where += " AND ts >= ?"
+        params.append(start)
+    if end:
+        clause, bound = _until("ts", end)
+        where += clause
+        params.append(bound)
+    inner = (
+        "SELECT ts, source, value, NULLIF(release_ts, 'na') AS release_ts, vintage_ts"
+        f" FROM raw_observations WHERE series_id = ? AND vintage_ts = ?{where}"
+    )
+    return _page(c, inner, params, ["ts", "source"], cursor=cursor, limit=limit)
+
+
+def list_signals(
+    c: sqlite3.Connection, *, prefix: str | None = None, cursor: str | None = None, limit: int = 200
+) -> dict:
+    where, params = "", []
+    if prefix:
+        # PK range seek (LIKE cannot use the BINARY-collated PK) and no
+        # wildcard escaping; U+10FFFF sorts after any char a prefix extends with
+        where = " WHERE signal_id >= ? AND signal_id < ?"
+        params += [prefix, prefix + "\U0010ffff"]
+    # bare columns next to MAX() come from the max row (SQLite guarantee)
+    inner = (
+        "SELECT signal_id, MAX(ts) AS last_ts, value, state, computed_at"
+        f" FROM computed_signals{where} GROUP BY signal_id"
+    )
+    return _page(c, inner, params, ["signal_id"], cursor=cursor, limit=limit)
+
+
+def list_odds(c: sqlite3.Connection, *, max_age_days: int = 3) -> dict:
+    """Latest prediction-market probabilities (Polymarket and Kalshi) for a dashboard.
+
+    Stored as computed_signals rows `polymarket:<slug>` / `kalshi:<ticker>` (value = probability
+    of the first outcome, inputs_json = question/outcomes/volume/end_date/venue). Markets not
+    refreshed for `max_age_days` have left the top list and are dropped; sorted by volume."""
+    floor = (datetime.now(UTC).date() - timedelta(days=max_age_days)).isoformat()
+    rows = c.execute(
+        "SELECT signal_id, MAX(ts), value, state, inputs_json, computed_at FROM computed_signals"
+        # ranges, not LIKE 'x:%': the PK is searched (';' follows ':')
+        " WHERE (signal_id >= 'polymarket:' AND signal_id < 'polymarket;')"
+        " OR (signal_id >= 'kalshi:' AND signal_id < 'kalshi;')"
+        " GROUP BY signal_id HAVING MAX(ts) >= ?",
+        (floor,),
+    ).fetchall()
+    items = []
+    for sid, ts, value, topic, inputs, computed_at in rows:
+        try:
+            d = json.loads(inputs or "{}")
+        except ValueError:
+            d = {}
+        items.append(
+            {
+                "signal_id": sid,
+                "slug": d.get("slug") or sid.split(":", 1)[1],
+                "topic": topic,
+                "question": d.get("question"),
+                "probability": value,
+                "outcomes": d.get("outcomes") or [],
+                "volume": d.get("volume"),
+                "volume_unit": "contracts" if d.get("volume_unit") == "contracts" else "usd",
+                "venue": "kalshi" if d.get("venue") == "kalshi" else "polymarket",
+                "url": d.get("url"),
+                "end_date": d.get("end_date"),
+                "as_of": ts,
+                "computed_at": computed_at,
+            }
+        )
+    # Polymarket first, then Kalshi: USD volume and contract counts are not one ranking
+    items.sort(key=lambda m: (m["venue"] != "polymarket", -(m["volume"] or 0)))
+    return {"generated_at": datetime.now(UTC).isoformat(timespec="seconds"), "items": items}
+
+
+def signal_history(
+    c: sqlite3.Connection,
+    signal_id: str,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    cursor: str | None = None,
+    limit: int = 500,
+) -> dict:
+    where, params = "", [signal_id]
+    if start:
+        where += " AND ts >= ?"
+        params.append(start)
+    if end:
+        clause, bound = _until("ts", end)
+        where += clause
+        params.append(bound)
+    inner = (
+        "SELECT ts, value, state, run_id, computed_at FROM computed_signals"
+        f" WHERE signal_id = ?{where}"
+    )
+    return _page(c, inner, params, ["ts"], cursor=cursor, limit=limit)
+
+
+def get_cot(c: sqlite3.Connection, contract: str, *, window: int = 52) -> list[dict]:
+    """All cot_raw rows of the latest `window` report dates for a contract (ascending)."""
+    dates = c.execute(
+        "SELECT DISTINCT report_date FROM cot_raw WHERE contract_code = ?"
+        " ORDER BY report_date DESC LIMIT ?",
+        (contract, window),
+    ).fetchall()
+    if not dates:
+        return []
+    return _rows(
+        c,
+        "SELECT report_date, report_type, category, release_ts, long, short, spread,"
+        " open_interest_all, pct_of_oi, change_long, change_short, traders_long,"
+        " traders_short, conc_top4_long, conc_top4_short FROM cot_raw"
+        " WHERE contract_code = ? AND report_date >= ?"
+        " ORDER BY report_date, report_type, category",
+        (contract, dates[-1][0]),
+    )
+
+
+def get_prices(
+    c: sqlite3.Connection,
+    symbol: str,
+    *,
+    interval: str = "1d",
+    start: str | None = None,
+    end: str | None = None,
+    cursor: str | None = None,
+    limit: int = 500,
+) -> dict:
+    """interval '1d' = instrument_prices (daily); anything else = intraday_bars."""
+    if interval == "1d":
+        inner = (
+            "SELECT ts, source, open, high, low, close, volume FROM instrument_prices"
+            " WHERE symbol = ?"
+        )
+        params: list = [symbol]
+        col = "ts"
+    else:
+        inner = (
+            "SELECT bar_ts_utc AS ts, source, open, high, low, close, volume FROM intraday_bars"
+            " WHERE symbol = ? AND interval = ?"
+        )
+        params = [symbol, interval]
+        col = "bar_ts_utc"
+    if start:
+        inner += f" AND {col} >= ?"
+        params.append(start)
+    if end:
+        clause, bound = _until(col, end)
+        inner += clause
+        params.append(bound)
+    return _page(c, inner, params, ["ts", "source"], cursor=cursor, limit=limit)
+
+
+def _until(col: str, end: str) -> tuple[str, str]:
+    """`to=` is inclusive. A bare date must cover the whole day: compared as `<= 'YYYY-MM-DD'`
+    it dropped every intraday stamp of that day ('2026-10-02T14:35' sorts after '2026-10-02')."""
+    try:
+        if len(end) == 10:
+            return f" AND {col} < ?", (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+    except ValueError:
+        pass
+    return f" AND {col} <= ?", end
+
+
+_PLAYBOOK_COLS = (
+    "scenario_uid, symbol, horizon, direction, scenario_id, title, trigger_condition,"
+    " trigger_price, target_profit, invalidation_level, risk_reward_ratio, created_at_utc,"
+    " session_id, state, triggered_at_utc, resolved_at_utc, entry_price, exit_price,"
+    " mfe_points, mae_points, pnl_points, r_multiple, cfd_basis_offset, note"
+)
+
+
+def list_playbooks(
+    c: sqlite3.Connection,
+    *,
+    state: str | None = None,
+    symbol: str | None = None,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """STORED scenarios only — generation stays in the daemon."""
+    where, params = "", []
+    if state:
+        where += " AND state = ?"
+        params.append(state.upper())
+    if symbol:
+        where += " AND symbol = ?"
+        params.append(symbol.upper())
+    inner = f"SELECT {_PLAYBOOK_COLS} FROM playbook_scenarios WHERE 1=1{where}"
+    return _page(
+        c, inner, params, ["created_at_utc", "scenario_uid"], cursor=cursor, limit=limit, desc=True
+    )
+
+
+def playbook_detail(c: sqlite3.Connection, uid: str) -> dict | None:
+    rows = _rows(
+        c,
+        f"SELECT {_PLAYBOOK_COLS}, payload_json FROM playbook_scenarios WHERE scenario_uid = ?",
+        (uid,),
+    )
+    if not rows:
+        return None
+    out = rows[0]
+    out["payload"] = _parse_json(out.pop("payload_json"))
+    return out
+
+
+_OUTBOX_SQL = (
+    "SELECT id, brief_date, channel, status, attempts, last_error, sent_at, created_at,"
+    " claimed_at FROM brief_deliveries"
+)
+
+
+def list_outbox(
+    c: sqlite3.Connection, *, status: str | None = None, cursor: str | None = None, limit: int = 100
+) -> dict:
+    """The brief outbox (brief_deliveries); alerts retry on their own cadence."""
+    if status:
+        return _page(
+            c,
+            _OUTBOX_SQL + " WHERE status = ?",
+            [status],
+            ["id"],
+            cursor=cursor,
+            limit=limit,
+            desc=True,
+        )
+    return _page(c, _OUTBOX_SQL, [], ["id"], cursor=cursor, limit=limit, desc=True)
+
+
+def outbox_item(c: sqlite3.Connection, outbox_id: int) -> dict | None:
+    rows = _rows(c, _OUTBOX_SQL + " WHERE id = ?", (outbox_id,))
+    return rows[0] if rows else None
+
+
+def list_calendar(
+    c: sqlite3.Connection,
+    days_forward: int = 7,
+    days_backward: int = 3,
+    *,
+    cursor: str | None = None,
+    limit: int = 500,
+) -> dict:
+    """Range on ts_utc itself (idx_events_ts usable): [start-day, end-day + 1)."""
+    today = datetime.now(UTC).date()
+    start = (today - timedelta(days=days_backward)).isoformat()
+    end = (today + timedelta(days=days_forward + 1)).isoformat()
+    inner = (
+        "SELECT event_uid, ts_utc, country, name, importance, actual, consensus, previous,"
+        " surprise_z FROM events WHERE ts_utc >= ? AND ts_utc < ?"
+    )
+    return _page(c, inner, [start, end], ["ts_utc", "event_uid"], cursor=cursor, limit=limit)
+
+
+def list_news(
+    c: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    symbol: str | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> dict:
+    where, params = "", []
+    if source:
+        where += " AND source = ?"
+        params.append(source.upper())
+    if symbol:  # substring match with LIKE wildcards escaped
+        where += " AND symbols_json LIKE ? ESCAPE '\\'"
+        params.append(f"%{_like_escape(symbol)}%")
+    inner = (
+        "SELECT news_id, published_at_utc, source, title, url, summary, symbols_json,"
+        f" cluster_id, relevance, novelty FROM market_news WHERE 1=1{where}"
+    )
+    page = _page(
+        c, inner, params, ["published_at_utc", "news_id"], cursor=cursor, limit=limit, desc=True
+    )
+    for r in page["items"]:
+        syms = _parse_json(r.pop("symbols_json"))
+        r["symbols"] = syms if isinstance(syms, list) else []
+        r["relevance"] = round(float(r["relevance"]), 2)
+        r["novelty"] = round(float(r["novelty"]), 2)
+    return page
+
+
+FETCHER_FAIL_STATUSES = ("ERROR", "DEGRADED")
+
+
+def fetcher_health(c: sqlite3.Connection, *, days: int = 8) -> list[dict]:
+    """Per fetcher: its latest fetch_log row ever (a fetcher dead for weeks still shows, with
+    runs 0), plus run and failure counts over the last `days`. Errors are redacted at write."""
+    since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+    fail = ",".join("?" * len(FETCHER_FAIL_STATUSES))
+    rows = c.execute(
+        f"""
+        SELECT f.fetcher, f.ts, f.status, f.target, f.error, s.n, s.failed
+        FROM fetch_log f JOIN (
+            SELECT fetcher, MAX(id) AS mid, SUM(ts >= ?) AS n,
+                   SUM(ts >= ? AND status IN ({fail})) AS failed
+            FROM fetch_log GROUP BY fetcher
+        ) s ON f.id = s.mid
+        ORDER BY f.fetcher
+        """,
+        (since, since, *FETCHER_FAIL_STATUSES),
+    ).fetchall()
+    return [
+        {
+            "fetcher": r[0],
+            "last_ts": r[1],
+            "last_status": r[2],
+            "last_target": r[3],
+            "last_error": (r[4] or "")[:200] or None,
+            "runs": r[5] or 0,
+            "failed": r[6] or 0,
+        }
+        for r in rows
+    ]
+
+
+def data_freshness(c: sqlite3.Connection) -> list[dict]:
+    """Freshness SLA per ACTIVE series: newest ts vs the registry-freq lag."""
+    today = datetime.now(UTC).date()
+    rows = _rows(
+        c,
+        "SELECT r.series_id, r.freq, r.max_age_days, (SELECT MAX(o.ts) FROM raw_observations o"
+        " WHERE o.series_id = r.series_id) AS last_ts FROM series_registry r"
+        " WHERE r.active = 1 ORDER BY r.series_id",
+    )
+    # latest fetch_log row per target that can matter: each active series and
+    # its provider prefix ('EODHD:'), one idx_fetch_log_target_id seek each
+    # instead of a GROUP BY over the whole log. A harvest SKIPPED row on the
+    # prefix newer than the series' own last fetch = unconfigured provider,
+    # not a stale series.
+    sql = (
+        "WITH t(target) AS (SELECT series_id FROM series_registry WHERE active = 1"
+        " UNION SELECT substr(series_id || ':', 1, instr(series_id || ':', ':'))"
+        " FROM series_registry WHERE active = 1)"
+        " SELECT f.target, f.id, f.status, f.error FROM t JOIN fetch_log f"
+        " ON f.id = (SELECT MAX(id) FROM fetch_log WHERE target = t.target)"
+    )
+    last = {t: (i, st, e or "") for t, i, st, e in c.execute(sql)}
+    out = []
+    for r in rows:
+        sid = r["series_id"]
+        f = _freshness(r["last_ts"], r["freq"], today, r.pop("max_age_days"))
+        none = (0, "", "")
+        latest = max(last.get(sid, none), last.get(sid.split(":", 1)[0] + ":", none))
+        if latest[1] == "SKIPPED":  # 402 from the provider vs. no credentials
+            plan = latest[2].startswith("plan-limited")
+            f["status"] = "plan_limited" if plan else "unconfigured"
+        out.append({**r, **f})
+    return out
+
+
+def _job_out(r: dict) -> dict:
+    r["params"] = _parse_json(r.pop("params_json")) or {}
+    r["result"] = _parse_json(r.pop("result_json"))
+    return r
+
+
+def jobs_status(c: sqlite3.Connection, *, cursor: str | None = None, limit: int = 100) -> dict:
+    page = _page(c, "SELECT * FROM jobs", [], ["id"], cursor=cursor, limit=limit, desc=True)
+    page["items"] = [_job_out(r) for r in page["items"]]
+    return page
+
+
+def job_detail(c: sqlite3.Connection, job_id: int) -> dict | None:
+    rows = _rows(c, "SELECT * FROM jobs WHERE id = ?", (job_id,))
+    return _job_out(rows[0]) if rows else None
+
+
+def list_alerts(
+    c: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    alert_type: str | None = None,
+    since: str | None = None,
+    cursor: str | None = None,
+    limit: int = 50,
+) -> dict:
+    """Every alert_deliveries row (skipped/failed included: the dashboard is
+    the delivery channel). `message` is stored plain text, returned as is."""
+    where, params = "", []
+    for col, op, v in (("status", "=", status), ("alert_type", "=", alert_type)) + (
+        ("triggered_at", ">=", since),
+    ):
+        if v:
+            where += f" AND {col} {op} ?"
+            params.append(v)
+    inner = (
+        "SELECT id, alert_type, priority, status, triggered_at, message, last_error"
+        f" FROM alert_deliveries WHERE 1=1{where}"
+    )
+    return _page(c, inner, params, ["triggered_at", "id"], cursor=cursor, limit=limit, desc=True)
+
+
+def alerts_summary(c: sqlite3.Connection) -> dict:
+    """Counts by status/priority over the last 24h and 7d + newest triggered_at.
+    triggered_at is ISO UTC with offset, so string comparison orders it."""
+    now = datetime.now(UTC)
+    cut = {
+        w: (now - timedelta(hours=h)).isoformat(timespec="seconds")
+        for w, h in (("last_24h", 24), ("last_7d", 24 * 7))
+    }
+    out: dict = {w: {"total": 0, "by_status": {}, "by_priority": {}} for w in cut}
+    rows = c.execute(
+        "SELECT triggered_at, status, priority FROM alert_deliveries WHERE triggered_at >= ?",
+        (cut["last_7d"],),
+    ).fetchall()
+    for ts, status, priority in rows:
+        for w, cutoff in cut.items():
+            if ts >= cutoff:
+                agg = out[w]
+                agg["total"] += 1
+                agg["by_status"][status] = agg["by_status"].get(status, 0) + 1
+                agg["by_priority"][priority] = agg["by_priority"].get(priority, 0) + 1
+    newest = c.execute("SELECT MAX(triggered_at) FROM alert_deliveries").fetchone()[0]
+    return {**out, "newest_triggered_at": newest}
+
+
+def list_briefs(c: sqlite3.Connection, *, cursor: str | None = None, limit: int = 30) -> dict:
+    inner = "SELECT date, regime_score, generated_at, LENGTH(markdown) AS chars FROM brief_log"
+    return _page(c, inner, [], ["date"], cursor=cursor, limit=limit, desc=True)
+
+
+def brief_get(c: sqlite3.Connection, day: str | None = None) -> dict | None:
+    """One brief (raw markdown); day=None = the latest."""
+    sql = "SELECT date, regime_score, generated_at, markdown FROM brief_log"
+    rows = (
+        _rows(c, sql + " WHERE date = ?", (day,))
+        if day
+        else _rows(c, sql + " ORDER BY date DESC LIMIT 1")
+    )
+    return rows[0] if rows else None
+
+
+# Graph caps (documented in the README): 1 regime + 6 pillars + every
+# instruments.yaml entry (29) + these maxima = 446 <= 450 nodes.
+GRAPH_MAX = {"series": 300, "scenario": 60, "event": 50}
+GRAPH_EVENT_WEIGHT = {"high": 1.0, "medium": 0.5}
+
+
+def macro_graph(c: sqlite3.Connection) -> dict:
+    """Node/link view of the macro system from stored data only: regime ->
+    pillars (signals/pillars.py) -> registry series (the pillar `parts`, plus
+    the ACTIVE registry series of the same block letter, which IS the pillar
+    letter) ; instruments.yaml assets ; open playbooks ; next-7d calendar.
+    No asset->pillar mapping exists in config/code, so assets link to the
+    regime core. Block H series and non-registry pillar parts are skipped."""
+    from .config import _load_yaml
+    from .queries import latest_observation
+    from .signals.pillars import PILLAR_WEIGHTS
+
+    now, today = datetime.now(UTC), datetime.now(UTC).date()
+    nodes: list[dict] = []
+    links: list[dict] = []
+
+    def node(nid, kind, label, group, value=None, status="n/a", weight=0.5, **meta):
+        nodes.append(
+            {
+                "id": nid,
+                "kind": kind,
+                "label": label,
+                "group": group,
+                "value": value,
+                "status": status,
+                "weight": weight,
+                "meta": meta,
+            }
+        )
+
+    def link(source, target, kind, weight):
+        links.append({"source": source, "target": target, "kind": kind, "weight": weight})
+
+    snap = get_regime_snapshot(c)
+    node(
+        "regime",
+        "regime",
+        snap["label"],
+        "core",
+        snap["regime_score"],
+        "live",
+        1.0,
+        quadrant=snap["quadrant"],
+        dollar_smile=snap["dollar_smile"],
+    )
+    top = max(PILLAR_WEIGHTS.values())
+    feeds: dict[str, str] = {}  # series_id -> pillar letter (pillar parts)
+    for k, p in sorted(snap["pillars"].items()):
+        z = p["z_score"]
+        node(
+            f"pillar:{k}",
+            "pillar",
+            p["label"],
+            k,
+            z,
+            "n/a" if z is None else "live",
+            PILLAR_WEIGHTS.get(k, 0) / top,
+            state=p["state"],
+            detail=p["detail"],
+        )
+        link(f"pillar:{k}", "regime", "pillar_of", PILLAR_WEIGHTS.get(k, 0))
+        for sid in p["parts"] or []:
+            feeds.setdefault(sid, k)
+
+    marks = ",".join("?" * len(feeds)) or "NULL"
+    blocks = sorted(snap["pillars"])
+    reg = _rows(
+        c,
+        "SELECT series_id, name, block, freq FROM series_registry"
+        f" WHERE series_id IN ({marks}) OR (active = 1 AND block IN ({','.join('?' * len(blocks))}))",
+        [*feeds, *blocks],
+    )
+    reg.sort(key=lambda r: (r["series_id"] not in feeds, r["series_id"]))  # parts first
+    fresh = {r["series_id"]: r["status"] for r in data_freshness(c)}
+    for r in reg[: GRAPH_MAX["series"]]:
+        sid = r["series_id"]
+        last = latest_observation(c, sid)
+        status = fresh.get(sid) or _freshness(last and last[0], r["freq"], today)["status"]
+        pillar = feeds.get(sid, r["block"])
+        node(
+            f"series:{sid}",
+            "series",
+            r["name"],
+            r["block"],
+            last and last[1],
+            status,
+            1.0 if sid in feeds else 0.3,
+            last_ts=last and last[0],
+            freq=r["freq"],
+            block=r["block"],
+        )
+        link(f"series:{sid}", f"pillar:{pillar}", "series_in", 1.0 if sid in feeds else 0.3)
+
+    for inst in _load_yaml("instruments.yaml")["instruments"]:
+        sym = inst["symbol"]
+        last = c.execute(
+            "SELECT ts, close FROM instrument_prices WHERE symbol = ? ORDER BY ts DESC LIMIT 1",
+            (sym,),
+        ).fetchone()
+        node(
+            f"asset:{sym}",
+            "asset",
+            sym,
+            "asset",
+            last and last[1],
+            _freshness(last and last[0], "D", today)["status"],
+            0.5,
+            symbol=sym,
+            last_ts=last and last[0],
+        )
+        link(f"asset:{sym}", "regime", "trades", 0.1)
+    assets = {n["id"] for n in nodes if n["kind"] == "asset"}
+
+    open_pb = _rows(
+        c,
+        "SELECT scenario_uid, symbol, title, direction, horizon, state, trigger_price,"
+        " risk_reward_ratio FROM playbook_scenarios WHERE state IN (?, ?)"
+        " ORDER BY created_at_utc DESC, scenario_uid LIMIT ?",
+        [*CANCELLABLE_STATES, GRAPH_MAX["scenario"]],
+    )
+    for s in open_pb:
+        target = f"asset:{s['symbol']}"
+        node(
+            f"scenario:{s['scenario_uid']}",
+            "scenario",
+            s["title"],
+            s["symbol"],
+            s["trigger_price"],
+            "live" if s["state"] == "ACTIVE" else "pending",
+            0.6,
+            symbol=s["symbol"],
+            direction=s["direction"],
+            horizon=s["horizon"],
+            rr=s["risk_reward_ratio"],
+        )
+        link(
+            f"scenario:{s['scenario_uid']}", target if target in assets else "regime", "trades", 0.6
+        )
+
+    fmt = "%Y-%m-%dT%H:%M:%S"  # events.ts_utc is naive UTC
+    for e in _rows(
+        c,
+        "SELECT event_uid, ts_utc, country, name, importance, consensus FROM events"
+        " WHERE ts_utc >= ? AND ts_utc < ? AND importance IN ('high', 'medium')"
+        " ORDER BY ts_utc, event_uid LIMIT ?",
+        [now.strftime(fmt), (now + timedelta(days=7)).strftime(fmt), GRAPH_MAX["event"]],
+    ):
+        w = GRAPH_EVENT_WEIGHT[e["importance"]]
+        node(
+            f"event:{e['event_uid']}",
+            "event",
+            e["name"],
+            e["country"],
+            e["consensus"],
+            "pending",
+            w,
+            ts_utc=e["ts_utc"],
+            importance=e["importance"],
+        )
+        link(f"event:{e['event_uid']}", "regime", "scheduled", w)
+
+    counts = {
+        k: sum(n["kind"] == k for n in nodes)
+        for k in ("regime", "pillar", "series", "asset", "scenario", "event")
+    }
+    return {
+        "generated_at": _now(),
+        "counts": {**counts, "nodes": len(nodes), "links": len(links)},
+        "nodes": nodes,
+        "links": links,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Write layer (REST server). Each call is one BEGIN IMMEDIATE transaction
+# that also appends an audit_log row; repeating an applied change is a no-op
+# ({"changed": False}) and is not audited again.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _write_tx(c: sqlite3.Connection) -> Generator[None, None, None]:
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        c.execute("COMMIT")
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _audit(c: sqlite3.Connection, actor: str, action: str, target: str, detail: dict) -> None:
+    c.execute(
+        "INSERT INTO audit_log(ts, actor, action, target, detail_json) VALUES (?,?,?,?,?)",
+        (_now(), actor, action, target, json.dumps(detail)),
+    )
+
+
+def cancel_playbook(
+    c: sqlite3.Connection, uid: str, *, actor: str, note: str, exit_price: float | None = None
+) -> dict:
+    """PENDING_TRIGGER/ACTIVE -> CANCELLED_MANUAL. An ACTIVE scenario holds a
+    position, so it needs the realized exit_price (pnl/R are computed)."""
+    with _write_tx(c):
+        rows = _rows(
+            c,
+            "SELECT state, direction, entry_price, invalidation_level FROM playbook_scenarios"
+            " WHERE scenario_uid = ?",
+            (uid,),
+        )
+        if not rows:
+            raise ApiNotFound(f"playbook scenario '{uid}' not found")
+        row, changed = rows[0], False
+        if row["state"] != "CANCELLED_MANUAL":
+            if row["state"] not in CANCELLABLE_STATES:
+                raise ApiConflict(f"state {row['state']} cannot be cancelled")
+            pnl = r_mult = 0.0
+            if row["state"] == "ACTIVE":
+                if exit_price is None:
+                    raise ApiConflict("cancelling an ACTIVE scenario requires exit_price")
+                entry = row["entry_price"]
+                sign = {"LONG": 1.0, "SHORT": -1.0}.get(row["direction"], 0.0)
+                if entry is not None:
+                    pnl = sign * (exit_price - entry)
+                    risk = abs(entry - row["invalidation_level"])
+                    r_mult = pnl / risk if risk else 0.0
+            else:
+                exit_price = None  # never filled: nothing to exit
+            c.execute(
+                "UPDATE playbook_scenarios SET state = 'CANCELLED_MANUAL', resolved_at_utc = ?,"
+                " note = ?, exit_price = ?, pnl_points = ?, r_multiple = ?"
+                " WHERE scenario_uid = ?",
+                (_now(), note, exit_price, round(pnl, 4), round(r_mult, 4), uid),
+            )
+            _audit(
+                c,
+                actor,
+                "playbook.cancel",
+                uid,
+                {"from_state": row["state"], "note": note, "exit_price": exit_price},
+            )
+            changed = True
+    return {"changed": changed, "scenario": playbook_detail(c, uid)}
+
+
+def retry_outbox(c: sqlite3.Connection, outbox_id: int, *, actor: str) -> dict:
+    """failed -> pending (attempt counter reset so the sender picks it up)."""
+    with _write_tx(c):
+        rows = _rows(c, "SELECT status FROM brief_deliveries WHERE id = ?", (outbox_id,))
+        if not rows:
+            raise ApiNotFound(f"outbox row {outbox_id} not found")
+        status, changed = rows[0]["status"], False
+        if status != "pending":
+            if status != "failed":
+                raise ApiConflict(f"only failed rows can be retried (status={status})")
+            c.execute(
+                "UPDATE brief_deliveries SET status = 'pending', attempts = 0,"
+                " last_error = NULL, claimed_at = NULL WHERE id = ?",
+                (outbox_id,),
+            )
+            _audit(c, actor, "outbox.retry", str(outbox_id), {"from_status": status})
+            changed = True
+    return {"changed": changed, "item": outbox_item(c, outbox_id)}
+
+
+def set_series_active(c: sqlite3.Connection, series_id: str, active: bool, *, actor: str) -> dict:
+    """Updates series_registry.active only and sets locked_by_ui so the next
+    YAML sync (qa/backfill.sync_registry) keeps it. YAML stays the source of
+    truth for every other column; the harvest selects series from the YAML."""
+    with _write_tx(c):
+        rows = _rows(
+            c,
+            "SELECT active, locked_by_ui FROM series_registry WHERE series_id = ?",
+            (series_id,),
+        )
+        if not rows:
+            raise ApiNotFound(f"series '{series_id}' not found")
+        row, changed = rows[0], False
+        if not (bool(row["active"]) == active and row["locked_by_ui"]):
+            c.execute(
+                "UPDATE series_registry SET active = ?, locked_by_ui = 1 WHERE series_id = ?",
+                (int(active), series_id),
+            )
+            _audit(
+                c,
+                actor,
+                "series.set_active",
+                series_id,
+                {"from": bool(row["active"]), "to": active},
+            )
+            changed = True
+    return {"changed": changed, "series": series_detail(c, series_id)}
+
+
+def enqueue_job(c: sqlite3.Connection, kind: str, *, actor: str) -> dict:
+    """Queue an allowlisted job for the daemon (qa/jobs_runner). A queued or
+    running job of the same kind is returned instead of a duplicate."""
+    from .qa.jobs_runner import JOB_KINDS
+
+    if kind not in JOB_KINDS:
+        raise ApiBadRequest(f"job kind '{kind}' is not allowlisted")
+    with _write_tx(c):
+        existing = c.execute(
+            "SELECT id FROM jobs WHERE kind = ? AND status IN ('queued', 'running')"
+            " ORDER BY id DESC LIMIT 1",
+            (kind,),
+        ).fetchone()
+        if existing:
+            job_id, changed = existing[0], False
+        else:
+            # lastrowid is only None before any INSERT on this cursor
+            job_id = cast(
+                int,
+                c.execute(
+                    "INSERT INTO jobs(kind, params_json, status, requested_by, created_at)"
+                    " VALUES (?, '{}', 'queued', ?, ?)",
+                    (kind, actor, _now()),
+                ).lastrowid,
+            )
+            _audit(c, actor, "job.enqueue", str(job_id), {"kind": kind})
+            changed = True
+    return {"changed": changed, "job": job_detail(c, job_id)}

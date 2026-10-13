@@ -8,7 +8,8 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -16,9 +17,12 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .. import db as _db
+from ..config import PLAN_LIMIT_STATUSES, PlanLimited, missing_env
+from ..db import default_db_path
 from ..gdelt_storage import compress_record
 from . import gdelt_archive
 from .fetch_log import log_collection
+from .harvest import _redact
 
 SESSION = requests.Session()
 SESSION.mount(
@@ -35,19 +39,6 @@ SESSION.mount(
             respect_retry_after_header=True,
         )
     ),
-)
-TOPICS = (
-    "fed",
-    "inflation",
-    "oil",
-    "bitcoin",
-    "ethereum",
-    "war",
-    "tariff",
-    "yield",
-    "treasury",
-    "jobs",
-    "china",
 )
 MAX_GDELT_WINDOWS_PER_FEED = 16
 INITIAL_GDELT_CATCHUP_WINDOWS = 96
@@ -191,6 +182,8 @@ def _canonical_url(url: str | None) -> str | None:
     if not url:
         return None
     parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        return None  # third-party feeds: a javascript:/data: link must never reach a dashboard
     query = urlencode(
         [(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")]
     )
@@ -199,25 +192,40 @@ def _canonical_url(url: str | None) -> str | None:
     )
 
 
-def _cluster(conn, title: str) -> tuple[str, float]:
+def _recent_titles(conn) -> list[tuple[set, str]]:
+    """Tokenized titles of the last 48 h, loaded once per run (the per-item reload re-tokenized
+    up to 1000 titles for each of a few hundred items). The cutoff is an ISO string like the
+    stored stamps: datetime('now', ...) has a space and compared wrong against the 'T'."""
+    cutoff = (datetime.now(UTC) - timedelta(hours=48)).isoformat(timespec="seconds")
+    return [
+        (_tokens(t), cid)
+        for t, cid in conn.execute(
+            "SELECT title, cluster_id FROM market_news WHERE published_at_utc >= ?"
+            " ORDER BY published_at_utc DESC LIMIT 1000",
+            (cutoff,),
+        )
+    ]
+
+
+def _cluster(conn, title: str, recent: list[tuple[set, str]] | None = None) -> tuple[str, float]:
     tokens = _tokens(title)
     best = None
     best_score = 0.0
-    for old_title, cluster_id in conn.execute(
-        "SELECT title,cluster_id FROM market_news WHERE published_at_utc >= datetime('now','-48 hours') ORDER BY published_at_utc DESC LIMIT 1000"
-    ):
-        other = _tokens(old_title)
+    if recent is None:
+        recent = _recent_titles(conn)
+    for other, cluster_id in recent:
         score = len(tokens & other) / max(1, len(tokens | other))
         if score > best_score:
             best, best_score = cluster_id, score
     cluster_id = (
-        best
+        cast(str, best)  # set whenever best_score > 0
         if best_score >= 0.70
         else hashlib.sha256(" ".join(sorted(tokens)).encode()).hexdigest()[:20]
     )
     count = conn.execute(
         "SELECT COUNT(*) FROM market_news WHERE cluster_id=?", (cluster_id,)
     ).fetchone()[0]
+    recent.insert(0, (tokens, cluster_id))  # later items of this run cluster with this one
     return cluster_id, 1.0 / (count + 1)
 
 
@@ -225,11 +233,18 @@ def _fmp() -> list[dict]:
     key = os.environ.get("FMP_API_KEY", "")
     if not key:
         return []
-    r = SESSION.get(
-        "https://financialmodelingprep.com/stable/news/general-latest",
-        params={"apikey": key},
-        timeout=(10, 45),
-    )
+    try:
+        r = SESSION.get(
+            "https://financialmodelingprep.com/stable/news/general-latest",
+            params={"apikey": key},
+            timeout=(10, 45),
+        )
+    except requests.exceptions.RetryError as ex:  # the shared adapter retried until it gave up
+        if "429" not in str(ex):
+            raise  # an exhausted 5xx is an outage (ERROR), not the plan's quota
+        raise PlanLimited("plan-limited: FMP quota (HTTP 429)") from ex
+    if r.status_code in PLAN_LIMIT_STATUSES:
+        raise PlanLimited("plan-limited: FMP news/general-latest")
     r.raise_for_status()
     return [
         {
@@ -346,7 +361,7 @@ def _collect_gdelt_feed(conn, archive, transform, sql: str) -> tuple[int, int]:
 
 
 def _gdelt_fields(row: list[str], names: tuple[str, ...]) -> dict:
-    result = dict(zip(names, row[: len(names)], strict=False))
+    result: dict = dict(zip(names, row[: len(names)], strict=False))
     if len(row) > len(names):
         result["_extra_columns"] = row[len(names) :]
     return result
@@ -453,6 +468,7 @@ def _gdelt_gkg(rows: list[list[str]]) -> list[tuple]:
 def run(db_path: str) -> dict[str, int]:
     conn = _db.get_conn(db_path, allow_init=True)
     out: dict[str, int] = {}
+    from ..fetchers.argus import fetch_news as fetch_argus_news
     from ..fetchers.cryptopanic import fetch_cryptopanic_posts
     from ..fetchers.rss_news import fetch_all_rss_feeds
     from ..fetchers.tree_news import fetch_tree_news
@@ -463,17 +479,35 @@ def run(db_path: str) -> dict[str, int]:
         ("TREE_NEWS", fetch_tree_news),
         ("RSS_FEEDS", fetch_all_rss_feeds),
         ("CRYPTOPANIC", fetch_cryptopanic_posts),
+        ("ARGUS", fetch_argus_news),
     )
+    needs_env = {
+        "EODHD": "EODHD_API_TOKEN",
+        "CRYPTOPANIC": "CRYPTOPANIC_API_KEY",
+        "ARGUS": "ARGUS_TOKEN",
+    }
+    recent = _recent_titles(conn)
     for name, fetch in sources:
+        reason = missing_env(needs_env[name]) if name in needs_env else None
+        if reason:
+            log_collection(conn, "market_news", name, None, 0, err=reason, status="SKIPPED")
+            continue
         try:
             rows = fetch()
             now = datetime.now(UTC).isoformat(timespec="seconds")
             values = []
             payloads = []
+            bad_time = 0
             for row in rows:
+                try:
+                    published = _time(row.get("published"))
+                except ValueError:
+                    # one bad stamp used to drop the whole source batch; now = what the
+                    # other news fetchers already fall back to
+                    published, bad_time = now, bad_time + 1
                 title = str(row["title"]).strip()
                 url = _canonical_url(row.get("url"))
-                cluster, novelty = _cluster(conn, title)
+                cluster, novelty = _cluster(conn, title, recent)
                 uid = hashlib.sha256(f"{row['source']}|{url}|{title}".encode()).hexdigest()
                 relevance = (
                     1.0
@@ -502,7 +536,7 @@ def run(db_path: str) -> dict[str, int]:
                 values.append(
                     (
                         uid,
-                        _time(row.get("published")),
+                        published,
                         row["source"],
                         title,
                         url,
@@ -530,11 +564,22 @@ def run(db_path: str) -> dict[str, int]:
             )
             out[name] = len(values)
             log_collection(
-                conn, "market_news", name, rows[0] if rows else None, len(values), status="OK"
+                conn,
+                "market_news",
+                name,
+                rows[0] if rows else None,
+                len(values),
+                err=f"{bad_time} rows with an invalid published time stamped now"
+                if bad_time
+                else None,
+                status="OK",
             )
+        except PlanLimited as ex:
+            out[name] = 0
+            log_collection(conn, "market_news", name, None, 0, err=str(ex), status="SKIPPED")
         except Exception as ex:
             out[name] = -1
-            print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
+            print(f"{name}: {type(ex).__name__}: {_redact(str(ex))[:160]}")
             log_collection(conn, "market_news", name, None, 0, err=str(ex))
     gdelt_feeds = (
         (
@@ -559,14 +604,28 @@ def run(db_path: str) -> dict[str, int]:
             "GDELT:GKG",
         ),
     )
-    try:
-        archives = _gdelt_updates()
-    except Exception as ex:
+    archives: dict = {}
+    if os.environ.get("GDELT_ENABLED", "1") == "0":
+        # raw archive nothing consumes (~1.5 GB/day): opt out without touching the network
         for name, _, _, _, log_name in gdelt_feeds:
-            out[name] = -1
-            print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
-            log_collection(conn, "market_news", log_name, None, 0, err=str(ex))
-        archives = {}
+            out[name] = 0
+            log_collection(
+                conn,
+                "market_news",
+                log_name,
+                None,
+                0,
+                err="disabled: GDELT_ENABLED=0",
+                status="SKIPPED",
+            )
+    else:
+        try:
+            archives = _gdelt_updates()
+        except Exception as ex:
+            for name, _, _, _, log_name in gdelt_feeds:
+                out[name] = -1
+                print(f"{name}: {type(ex).__name__}: {str(ex)[:160]}")
+                log_collection(conn, "market_news", log_name, None, 0, err=str(ex))
     for name, feed, transform, sql, log_name in gdelt_feeds:
         if feed not in archives:
             continue
@@ -591,7 +650,7 @@ def main(argv=None):
 
     load_dotenv()
     p = argparse.ArgumentParser(prog="arkwatch market-news")
-    p.add_argument("--db", default="data/arkwatch.db")
+    p.add_argument("--db", default=str(default_db_path()))
     result = run(p.parse_args(argv).db)
     print(result)
     return _exit_code(result)

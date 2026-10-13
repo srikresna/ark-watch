@@ -6,7 +6,13 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-from .pillars import PILLAR_WEIGHTS, REGIME_RISK_OFF, REGIME_RISK_ON, compute_pillars
+from .pillars import (
+    PILLAR_WEIGHTS,
+    REGIME_RISK_OFF,
+    REGIME_RISK_ON,
+    compute_pillars,
+    regime_label,
+)
 
 # COT z-score parameters come from config (params_signals.yaml) — the same file
 # the watcher and the brief read, so the crowded flag is one definition everywhere.
@@ -40,14 +46,16 @@ COT_Z_CONTRACTS = (
 def _cot_zscore(conn: sqlite3.Connection, contract_code: str) -> float | None:
     """3y z-score — auto-selects the right category (mm for metals, lev for financials)."""
     # try 'mm' (Disaggregated) first; fall back to 'lev' (TFF) for financials
+    # only the newest window is ever used: the watcher calls this every 60 s, so read just
+    # that tail (max(): the MIN gate below must see the same row count as a full read)
     for cat in ("mm", "lev"):
         rows = conn.execute(
             "SELECT report_date, long, short FROM cot_raw "
             "WHERE contract_code=? AND category=? AND long IS NOT NULL AND long > 0 "
             "AND report_type NOT LIKE '%_c' "  # futures-only (not combined)
-            "ORDER BY report_date",
-            (contract_code, cat),
-        ).fetchall()
+            "ORDER BY report_date DESC LIMIT ?",
+            (contract_code, cat, max(COT_Z_WINDOW_WEEKS, COT_Z_MIN_WEEKS)),
+        ).fetchall()[::-1]
         if len(rows) >= COT_Z_MIN_WEEKS:
             break
     else:
@@ -123,7 +131,7 @@ def _price_oi_quadrant(conn: sqlite3.Connection, symbol: str, source: str) -> st
     # weekly price change
     prices = conn.execute(
         "SELECT ts, close FROM instrument_prices WHERE symbol=? AND source=? "
-        "AND close IS NOT NULL ORDER BY ts DESC LIMIT 10",
+        "AND close IS NOT NULL AND ts < date('now') ORDER BY ts DESC LIMIT 10",
         (symbol, source),
     ).fetchall()
     if len(prices) < 6:
@@ -210,32 +218,32 @@ def _cross_contract_aggregate(conn: sqlite3.Connection) -> dict | None:
         return None
     # financial subset: EUR + JPY + GBP + DXY + SPX + NQ + BTC
     financial_codes = ("099741", "097741", "096742", "098662", "13874+", "209742", "133741")
-    nets = []
-    # Count contracts that actually contributed rows on the latest date — a
-    # hardcoded total would overstate coverage when a contract has no rows
-    # that day.
-    contributing = 0
+    # Each contract's net (mm+lev+am) is scaled by its own open interest before averaging
+    # (decided 2026-10-13, audit L5): summing raw contract counts let the contract with the
+    # biggest count set the sign (SPX e-mini lots vs BTC lots are not the same exposure).
+    ratios: list[float] = []
+    total = 0
     for code in financial_codes:
         rows = conn.execute(
-            "SELECT category, long, short FROM cot_raw "
+            "SELECT category, long, short, open_interest_all FROM cot_raw "
             "WHERE contract_code=? AND report_date=? "
             "AND report_type NOT LIKE '%_c' "
             "AND category IN ('mm','lev','am')",
             (code, latest),
         ).fetchall()
-        n_before = len(nets)
-        for _cat, lng, sht in rows:
-            if lng is not None:
-                nets.append(lng - (sht or 0))
-        if len(nets) > n_before:
-            contributing += 1
-    if not nets:
+        net = sum(lng - (sht or 0) for _c, lng, sht, _oi in rows if lng is not None)
+        oi = max((r[3] for r in rows if r[3]), default=None)
+        if rows and oi:
+            ratios.append(net / oi)
+            total += net
+    if not ratios:
         return None
-    total = sum(nets)
+    mean_ratio = sum(ratios) / len(ratios)
     return {
         "total_net": total,
-        "n_contracts": contributing,
-        "signal": "RISK-ON" if total > 0 else "RISK-OFF",
+        "mean_net_oi": round(mean_ratio, 4),  # average net as a share of each contract's OI
+        "n_contracts": len(ratios),
+        "signal": "RISK-ON" if mean_ratio > 0 else "RISK-OFF",
     }
 
 
@@ -279,15 +287,21 @@ def _fx_turning_point(conn: sqlite3.Connection, contract_code: str) -> str | Non
 def _silver_52wk_gate(conn: sqlite3.Connection) -> bool:
     """Silver 52wk-high × Commercial Δ — the only metal signal that survived
     the skeptical Laubsch 2025 study."""
-    # check XAGUSD price against the 52-week high
-    prices = conn.execute(
-        "SELECT close FROM instrument_prices WHERE symbol='XAGUSD' "
-        "AND source='EODHD' AND close IS NOT NULL "
-        "AND (SELECT MAX(ts) FROM instrument_prices WHERE symbol='XAGUSD' "
-        "AND source='EODHD' AND close IS NOT NULL) >= date('now','-4 day') "
-        "ORDER BY ts DESC LIMIT 260"
-    ).fetchall()
-    if len(prices) < 52:
+    # silver against its 52-week high: XAGUSD spot (EODHD, off since 2026-10-10) or COMEX SI1;
+    # completed days only. The old floor of 52 ROWS was 52 days, not weeks.
+    prices: list = []
+    for sym, src in (("XAGUSD", "EODHD"), ("SI1", "YAHOO")):
+        prices = conn.execute(
+            "SELECT close FROM instrument_prices WHERE symbol=? AND source=? "
+            "AND close IS NOT NULL AND ts < date('now') "
+            "AND (SELECT MAX(ts) FROM instrument_prices WHERE symbol=? "
+            "AND source=? AND close IS NOT NULL) >= date('now','-4 day') "
+            "ORDER BY ts DESC LIMIT 260",
+            (sym, src, sym, src),
+        ).fetchall()
+        if len(prices) >= 240:
+            break
+    if len(prices) < 240:  # ~48 weeks of sessions
         return False
     cur = prices[0][0]
     high_52w = max(p[0] for p in prices)
@@ -320,7 +334,7 @@ def _price_positioning_divergence(
     # price: new 20-week high/low?
     prices = conn.execute(
         "SELECT close FROM instrument_prices WHERE symbol=? AND source=? "
-        "AND close IS NOT NULL ORDER BY ts DESC LIMIT 100",
+        "AND close IS NOT NULL AND ts < date('now') ORDER BY ts DESC LIMIT 100",
         (symbol, source),
     ).fetchall()
     if len(prices) < 60:
@@ -434,7 +448,7 @@ def store_cot_signals(conn: sqlite3.Connection, score: float) -> int:
         "regime_score",
         today,
         round(score, 4),
-        "RISK-ON" if score > REGIME_RISK_ON else ("RISK-OFF" if score < REGIME_RISK_OFF else "NEUTRAL"),
+        regime_label(score, pillars),  # the brief's label: INSUFFICIENT DATA below 4 pillars
         {"weights": PILLAR_WEIGHTS},
     )
     for blk, p in pillars.items():
@@ -548,11 +562,12 @@ def store_cot_signals(conn: sqlite3.Connection, score: float) -> int:
                 {"n_contracts": agg.get("n_contracts"), "signal": "#9"},
             )
         # silver 52wk gate
+        silver_fired = _silver_52wk_gate(conn)
         _add(
             "cot_silver_52wk_gate",
             latest,
-            1.0 if _silver_52wk_gate(conn) else 0.0,
-            "FIRED" if _silver_52wk_gate(conn) else "QUIET",
+            1.0 if silver_fired else 0.0,
+            "FIRED" if silver_fired else "QUIET",
             {"signal": "#10"},
         )
         # spread-share conviction (Gold)

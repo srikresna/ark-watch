@@ -31,6 +31,7 @@ the Sep-2026 SEP).
 
 from __future__ import annotations
 
+import functools
 import html as _html
 import re
 from datetime import UTC, datetime
@@ -114,13 +115,16 @@ def _parse_fed_funds_median(text: str) -> dict[str, float]:
     # format. If a future SEP ever carries a genuine longer column, that
     # dash alignment breaks FIRST — treat any 'longer' emission as a
     # parse-drift signal, verify against the page before trusting it.
+    if not years or len(vals) < len(years):
+        # a layout change that loses the header or cells must fail loudly, not misalign years
+        raise SepError(f"SEP: {len(years)} header years vs {len(vals)} median cells")
     out: dict[str, float] = {}
     for yr, v in zip(years, vals[: len(years)], strict=False):
         if v is not None:
             out[yr] = v
     # legacy longer-run inference — see the note above (inert on live format)
-    if len(vals) > len(years) and vals[len(years)] is not None:
-        out["longer"] = vals[len(years)]
+    if len(vals) > len(years) and (longer := vals[len(years)]) is not None:
+        out["longer"] = longer
     return out
 
 
@@ -133,8 +137,12 @@ def parse_sep(date_iso: str) -> dict[str, float]:
     return result
 
 
+@functools.lru_cache(maxsize=1)
 def sep_dates() -> list[str]:
-    """All SEP release dates from the FOMC calendar page (newest first)."""
+    """All SEP release dates from the FOMC calendar page (newest first).
+
+    Cached per process: verify/harvest route every CAL:FOMC_DOT_* series
+    here, and the calendar only changes 4x/year (jobs run as subprocesses)."""
     r = requests.get(CALENDAR_URL, timeout=(10, 60))
     if r.status_code != 200:
         raise SepError(f"FOMC calendar: HTTP {r.status_code}")
@@ -150,17 +158,24 @@ def series_rows() -> list[dict]:
     series_suffix: the target year ('2026', '2027', ...) or 'LONGER'.
     ts = the SEP release date (the vintage — revisions live in the date key).
     """
-    out: list[dict] = []
-    for d in sep_dates():
-        try:
-            parsed = parse_sep(d)
-        except Exception as ex:
-            print(f"  ⚠ SEP {d}: {str(ex)[:70]}")
-            continue
-        for key, v in parsed.items():
-            suffix = "LONGER" if key == "longer" else key
-            out.append({"ts": d, "series_suffix": suffix, "value": v})
-    return out
+    dates = sep_dates()
+    return [r for i, d in enumerate(dates) for r in _vintage_rows(d, strict=i == 0)]
+
+
+def _vintage_rows(d: str, strict: bool = False) -> list[dict]:
+    """strict (the newest SEP): a parse failure raises. Swallowing it let fetch_latest fall back
+    to the previous vintage with its old date and an OK status."""
+    try:
+        parsed = parse_sep(d)
+    except Exception as ex:
+        if strict:
+            raise
+        print(f"  ⚠ SEP {d}: {str(ex)[:70]}")
+        return []
+    return [
+        {"ts": d, "series_suffix": "LONGER" if k == "longer" else k, "value": v}
+        for k, v in parsed.items()
+    ]
 
 
 # CAL: routing interface (fetch_latest / fetch_window)
@@ -168,9 +183,7 @@ def _dot_rows(series_id: str) -> list[dict]:
     """series_rows filtered to the REQUESTED projection year — the bare
     version mixed all years into every series (CAL:FOMC_DOT_2026's latest
     could have been the 2028 median; audit 2026-09-20)."""
-    if not series_id.startswith("CAL:FOMC_DOT"):
-        raise SepError(f"sep: unrouted {series_id}")
-    want = series_id.rsplit("_", 1)[-1] if "_" in series_id[4:] else None
+    want = _want(series_id)
     rows = series_rows()
     if want is not None:
         rows = [r for r in rows if r["series_suffix"] == want]
@@ -179,12 +192,22 @@ def _dot_rows(series_id: str) -> list[dict]:
     return rows
 
 
+def _want(series_id: str) -> str | None:
+    if not series_id.startswith("CAL:FOMC_DOT"):
+        raise SepError(f"sep: unrouted {series_id}")
+    return series_id.rsplit("_", 1)[-1] if "_" in series_id[4:] else None
+
+
 def fetch_latest(series_id: str) -> dict:
-    # series_rows walks sep_dates() NEWEST-FIRST, so [-1] was the OLDEST
-    # vintage (live-caught: CAL:FOMC_DOT_2026 returned the 2023-09 SEP).
-    # max-by-ts is order-immune.
-    r = max(_dot_rows(series_id), key=lambda x: x["ts"])
-    return {"ts": r["ts"], "value": r["value"]}
+    # sep_dates() is sorted NEWEST-FIRST (live-caught once: [-1] of the full
+    # walk was the 2023-09 SEP), so the first vintage carrying the year IS the
+    # latest — parse only up to it instead of all ~22 pages (p95 was 8 s).
+    want = _want(series_id)
+    for d in sep_dates():
+        for r in _vintage_rows(d):
+            if want is None or r["series_suffix"] == want:
+                return {"ts": d, "value": r["value"]}
+    raise SepError(f"sep: no rows for {series_id}")
 
 
 def fetch_window(series_id: str, days: int = 10) -> list[dict]:
@@ -204,12 +227,13 @@ def save_dot_series(conn) -> int:
     from .. import db as _db
 
     registered = {
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT series_id FROM series_registry WHERE series_id LIKE 'CAL:FOMC_DOT_%'"
         ).fetchall()
     }
     if not registered:
-        print("  ⚠ dot plot: no CAL:FOMC_DOT_* series registered — run registry sync first")
+        print("  ⚠ dot plot: no CAL:FOMC_DOT_* series registered, run registry sync first")
         return 0
     rows = series_rows()
     payload = []
@@ -220,6 +244,8 @@ def save_dot_series(conn) -> int:
     if not payload:
         return 0
     n = _db.insert_observations(conn, payload)
-    print(f"  dot plot: {n} obs across {len(set(p[0] for p in payload))} target-years"
-          f" ({len(set(p[1] for p in payload))} vintages)")
+    print(
+        f"  dot plot: {n} obs across {len(set(p[0] for p in payload))} target-years"
+        f" ({len(set(p[1] for p in payload))} vintages)"
+    )
     return n

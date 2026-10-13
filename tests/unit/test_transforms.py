@@ -3,6 +3,8 @@
 Each test verifies a transform against hand-computed numbers or values
 known from the literature/publications."""
 
+import pytest
+
 from arkwatch.transforms.core import (
     momentum,
     percentile_rank,
@@ -168,23 +170,27 @@ class TestFedWatch:
         With anchor_date passed, the just-held meeting re-runs first and the
         running rate bootstraps the post-hike level from the strip itself.
 
-        SOAK 2026-09-18: Oct-28 (n_post=4 ≤ 7) now reads the NEXT-month
+        SOAK 2026-09-18: Oct-28 (n_post=3 < 7) now reads the NEXT-month
         contract per the CME last-week convention — implied = NOV = 3.98,
         not the old day-weighted 4.0775."""
         from datetime import date
 
         # live strip td=2026-09-15 (server cme_settlements, product 305)
         settlements = {
-            "SEP 26": 96.2625, "OCT 26": 96.125, "NOV 26": 96.02, "DEC 26": 95.895,
+            "SEP 26": 96.2625,
+            "OCT 26": 96.125,
+            "NOV 26": 96.02,
+            "DEC 26": 95.895,
         }
         probs = compute(settlements, 3.63, anchor_date=date(2026, 9, 15))
         # the passed meeting is bootstrap machinery — never returned
         assert all(p.meeting_date > date(2026, 9, 16) for p in probs)
         oct_row = next(p for p in probs if p.meeting_date == date(2026, 10, 28))
-        # bootstrap: (3.7375·30 − 3.63·15)/15 = 3.845 running → Oct post =
-        # NOV implied 3.98 — sane, NOT the 5.529 the stale anchor produced
+        # bootstrap: the Sep-16 decision day still prints the old rate (CME: 16 pre, 14 post
+        # days) -> (3.7375·30 − 3.63·16)/14 = 3.8604 running → Oct post = NOV implied 3.98 —
+        # sane, NOT the 5.529 the stale anchor produced
         assert abs(oct_row.implied_rate - 3.98) < 0.01
-        assert oct_row.prob_hike > 0.5  # ≈ +13.5bp priced for Oct
+        assert oct_row.prob_hike == pytest.approx((3.98 - 3.860357) / 0.25, abs=1e-3)  # +12bp
 
     def test_stale_anchor_without_date_now_sane(self):
         """SOAK 2026-09-18: without anchor_date, the Sep bootstrap + the
@@ -194,14 +200,15 @@ class TestFedWatch:
         from datetime import date
 
         settlements = {
-            "SEP 26": 96.2625, "OCT 26": 96.125, "NOV 26": 96.02, "DEC 26": 95.895,
+            "SEP 26": 96.2625,
+            "OCT 26": 96.125,
+            "NOV 26": 96.02,
+            "DEC 26": 95.895,
         }
         probs = compute(settlements, 3.63)  # no anchor_date → bootstrap + convention
         assert all(abs(p.expected_moves) <= 4.0 for p in probs)
         # the Oct row is now SANE (post = NOV implied 3.98) and therefore kept
-        oct_row = next(
-            (p for p in probs if p.meeting_date == date(2026, 10, 28)), None
-        )
+        oct_row = next((p for p in probs if p.meeting_date == date(2026, 10, 28)), None)
         assert oct_row is not None and 3.5 < oct_row.implied_rate < 4.5
 
 
@@ -228,7 +235,7 @@ class TestXccyFormula:
         """Find the next IMM quarterly month >=60 days out (guaranteed quarterly)."""
         import datetime as _dt
 
-        today = _dt.date.today()
+        today = _dt.datetime.now(_dt.UTC).date()  # xccy dates with the UTC clock
         quarters = [3, 6, 9, 12]  # MAR, JUN, SEP, DEC
         names = {3: "MAR", 6: "JUN", 9: "SEP", 12: "DEC"}
         for y in (today.year, today.year + 1):
@@ -243,7 +250,7 @@ class TestXccyFormula:
         from arkwatch.transforms.xccy import compute_xccy
 
         conn = db.get_conn(tmp_path / "t.db", allow_init=True)
-        td = __import__("datetime").date.today().isoformat()
+        td = __import__("datetime").datetime.now(__import__("datetime").UTC).date().isoformat()
         month = self._quarterly_month_out()
         rows = []
         for pid, settle in ((8462, 95.91), (10247, 97.36), (58, 1.1628)):
@@ -270,7 +277,7 @@ class TestXccyFormula:
         from arkwatch.transforms.xccy import compute_xccy
 
         conn = db.get_conn(tmp_path / "t.db", allow_init=True)
-        td = __import__("datetime").date.today().isoformat()
+        td = __import__("datetime").datetime.now(__import__("datetime").UTC).date().isoformat()
         month = self._quarterly_month_out()
         rows = [(td, 8462, month, 95.91), (td, 10247, month, 97.36), (td, 58, month, 1.1580)]
         conn.executemany(

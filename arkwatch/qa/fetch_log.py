@@ -11,11 +11,23 @@ import hashlib
 import sqlite3
 from datetime import UTC, datetime
 
+from .redact import _redact
+
+
+def exit_code(ok: int, fail: int) -> int:
+    """A multi-source job's exit code. 1 pages the owner (daemon job_failed), so it means a
+    broad outage: no success at all, or at least as many failures as successes. A partial
+    degradation stays 0 - every failed target already has its ERROR row in fetch_log, shown
+    by /v1/health/fetchers and the brief's data-quality line."""
+    return 1 if fail and (ok == 0 or fail >= ok) else 0
+
 
 def schema_fp(first_obj: dict | None) -> str | None:
     if not isinstance(first_obj, dict) or not first_obj:
         return None
-    return hashlib.sha1("|".join(sorted(first_obj.keys())).encode()).hexdigest()[:16]
+    return hashlib.sha1(
+        "|".join(sorted(first_obj.keys())).encode(), usedforsecurity=False
+    ).hexdigest()[:16]
 
 
 def log(
@@ -28,6 +40,9 @@ def log(
     fp: str | None = None,
     duration_ms: int | None = None,
 ) -> None:
+    """One fetch_log row; `err` is redacted here so no caller can persist a key it echoed."""
+    if err:
+        err = _redact(err)
     conn.execute(
         "INSERT INTO fetch_log(ts,fetcher,target,status,error,duration_ms,rows,schema_fp)"
         " VALUES (?,?,?,?,?,?,?,?)",
@@ -63,8 +78,6 @@ def log_collection(
     HEALTHY no-news day (fedsurvey 'all sources unchanged', ~95% of days) pass
     status='OK' explicitly — the EMPTY badge is reserved for fetches that
     returned zero OBSERVATIONS (the suspicious case)."""
-    from .harvest import _redact
-
     if err:
         err = _redact(err)
     fp = schema_fp(first_obj)

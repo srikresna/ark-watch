@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import functools
 import os
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -13,12 +16,49 @@ CONFIG_DIR = Path(
 
 REGISTRY_FILES = ["series_registry.yaml", "series_registry_blocks_d-f.yaml"]
 
+# Optional paid/credentialed providers by registry prefix: unset env = SKIPPED
+# (unconfigured), never ERROR. Set-but-failing stays ERROR.
+PROVIDER_ENV = {"EODHD:": ("EODHD_API_TOKEN",), "FMP:": ("FMP_API_KEY",)}
 
-def _load_yaml(name: str) -> dict | list:
+
+def missing_env(*names: str) -> str | None:
+    """'unconfigured: A, B' for unset/blank env vars, None when all are set."""
+    miss = [n for n in names if not os.environ.get(n, "").strip()]
+    return f"unconfigured: {', '.join(miss)}" if miss else None
+
+
+# any one of these selects an NLP provider (see fetchers/nlp._config)
+NLP_KEYS = ("NLP_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+
+
+def nlp_missing() -> str | None:
+    """'unconfigured: NLP_API_KEY' only when NO provider key is set."""
+    if any(os.environ.get(k, "").strip() for k in NLP_KEYS):
+        return None
+    return "unconfigured: NLP_API_KEY"
+
+
+# FMP free plan: 402 = endpoint outside the plan, 429 ("Limit Reach") = the daily quota is spent
+PLAN_LIMIT_STATUSES = (402, 429)
+
+
+class PlanLimited(RuntimeError):
+    """HTTP 402/429 from a plan-limited provider -> SKIPPED, not ERROR."""
+
+
+def _load_yaml(name: str) -> Any:  # dict or list; each caller knows its file's shape
+    # a deep copy per call: callers may mutate what they get, the cached parse must not change
+    return copy.deepcopy(_parse_yaml(name))
+
+
+@functools.cache
+def _parse_yaml(name: str) -> Any:
+    """Parsed once per process (the registry alone took ~200 ms per load with the pure-Python
+    loader, several loads per job); the C loader when libyaml is present."""
     # An empty or comment-only file safe_loads to None → an opaque
     # AttributeError in the caller; fail loudly with the file name instead
     with open(CONFIG_DIR / name, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
     if data is None:
         raise ValueError(f"{name}: empty or comments only")
     return data
@@ -68,6 +108,17 @@ def load_params_block_c() -> dict:
 
 def load_params_signals() -> dict:
     return _load_yaml("params_signals.yaml")
+
+
+def load_params_playbook() -> dict:
+    return _load_yaml("params_playbook.yaml")
+
+
+def params_version(name: str) -> str:
+    """sha256 (first 12 hex) of a config file: which parameter vintage produced a record."""
+    import hashlib
+
+    return hashlib.sha256((CONFIG_DIR / name).read_bytes()).hexdigest()[:12]
 
 
 def load_cot_contracts() -> list[dict]:

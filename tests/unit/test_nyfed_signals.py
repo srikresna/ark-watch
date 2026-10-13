@@ -17,9 +17,8 @@ NOT EXISTS, so these tests run both before and after the migration lands in
 db.py. All money in the SOMA/agency tables is raw USD, pd_positions is
 $millions; every signal/output is $B (boundary conversion).
 
-Telegram safety: _fire attempts a real send when the host env carries
-TELEGRAM_* vars — the conn fixture blanks them so fired alerts only ever
-land in alert_deliveries (pending).
+Telegram safety: _fire only queues (no fast-path send since 2026-10-10); the conn
+fixture still blanks TELEGRAM_* so fired alerts only ever land in alert_deliveries (pending).
 """
 
 from __future__ import annotations
@@ -105,9 +104,8 @@ PREV = _wednesday(1)
 
 @pytest.fixture()
 def conn(tmp_path, monkeypatch):
-    # Blank the Telegram env even on hosts that carry the production values:
-    # _fire's fast-path send must raise (caught → stays 'pending') instead of
-    # delivering test alerts to the real channel.
+    # Blank the Telegram env even on hosts that carry the production values: belt and
+    # braces now that _fire only queues 'pending' rows for the outbox.
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
     c = db.get_conn(tmp_path / "t.db", allow_init=True)
@@ -133,8 +131,7 @@ def _seed_summary_pair(
         (CUR, cur_total, weekly_change, rolling_off_7d),
     )
     conn.execute(
-        "INSERT OR REPLACE INTO soma_summary(as_of_date, total_par, n_cusips) "
-        "VALUES (?,?,5)",
+        "INSERT OR REPLACE INTO soma_summary(as_of_date, total_par, n_cusips) VALUES (?,?,5)",
         (PREV, prev_total),
     )
     conn.commit()
@@ -233,24 +230,167 @@ def _seed_pd(conn, keyid, values_b, break_after=None, new_break="SBN2024", old_b
 # declining tail 468→464→460→444→436 — the last four weeks print −$32B/−6.8%
 # (460→444→436 was the live 3-week slide; 468 is the 4w-ago base).
 UST_VALUES = [
-    458, 442, 455, 445, 458, 442, 456, 444, 457, 443,
-    458, 442, 455, 445, 456, 444, 458, 442, 457, 443,
-    455, 445, 458, 442, 456, 468, 464, 460, 444, 436,
+    458,
+    442,
+    455,
+    445,
+    458,
+    442,
+    456,
+    444,
+    457,
+    443,
+    458,
+    442,
+    455,
+    445,
+    456,
+    444,
+    458,
+    442,
+    457,
+    443,
+    455,
+    445,
+    458,
+    442,
+    456,
+    468,
+    464,
+    460,
+    444,
+    436,
 ]
 
 # Small-wiggle series for the non-headline keyids ($B).
-_MBS_VALUES = [113, 119, 114, 118, 115, 117, 114, 118, 116, 115,
-               117, 113, 118, 114, 116, 117, 115, 119, 113, 116,
-               118, 114, 117, 115, 116, 116, 115, 117, 116, 116]
-_CORP_VALUES = [86, 90, 85, 89, 87, 88, 86, 90, 88, 87,
-                89, 85, 90, 86, 88, 87, 89, 85, 88, 86,
-                90, 87, 88, 86, 89, 88, 87, 89, 88, 88]
-_AGENCY_VALUES = [54, 58, 55, 57, 56, 56, 54, 58, 56, 55,
-                  57, 55, 58, 54, 56, 57, 55, 58, 54, 56,
-                  57, 55, 56, 58, 54, 56, 55, 57, 56, 56]
-_MUNI_VALUES = [8, 10, 8, 9, 9, 10, 8, 9, 9, 10,
-                8, 9, 10, 8, 9, 9, 10, 8, 9, 9,
-                10, 8, 9, 9, 10, 9, 8, 10, 9, 9]
+_MBS_VALUES = [
+    113,
+    119,
+    114,
+    118,
+    115,
+    117,
+    114,
+    118,
+    116,
+    115,
+    117,
+    113,
+    118,
+    114,
+    116,
+    117,
+    115,
+    119,
+    113,
+    116,
+    118,
+    114,
+    117,
+    115,
+    116,
+    116,
+    115,
+    117,
+    116,
+    116,
+]
+_CORP_VALUES = [
+    86,
+    90,
+    85,
+    89,
+    87,
+    88,
+    86,
+    90,
+    88,
+    87,
+    89,
+    85,
+    90,
+    86,
+    88,
+    87,
+    89,
+    85,
+    88,
+    86,
+    90,
+    87,
+    88,
+    86,
+    89,
+    88,
+    87,
+    89,
+    88,
+    88,
+]
+_AGENCY_VALUES = [
+    54,
+    58,
+    55,
+    57,
+    56,
+    56,
+    54,
+    58,
+    56,
+    55,
+    57,
+    55,
+    58,
+    54,
+    56,
+    57,
+    55,
+    58,
+    54,
+    56,
+    57,
+    55,
+    56,
+    58,
+    54,
+    56,
+    55,
+    57,
+    56,
+    56,
+]
+_MUNI_VALUES = [
+    8,
+    10,
+    8,
+    9,
+    9,
+    10,
+    8,
+    9,
+    9,
+    10,
+    8,
+    9,
+    10,
+    8,
+    9,
+    9,
+    10,
+    8,
+    9,
+    9,
+    10,
+    8,
+    9,
+    9,
+    10,
+    9,
+    8,
+    10,
+    9,
+    9,
+]
 
 
 def _seed_pd_all(conn):
@@ -347,9 +487,7 @@ def test_brief_line_v2_render(conn):
     out = soma_brief_line(conn)
     assert "ΔSOMA +$4B/wk (buy +$42B · matured $38B · via 3 tsy-P ops)" in out
     assert "roll 7d $61B" in out
-    assert (
-        "Net Liq: -$38B/wk (SOMA +$4B, MBS -$19B, other +$0.0B, RRP +$0B, TGA -$23B)" in out
-    )
+    assert "Net Liq: -$38B/wk (SOMA +$4B, MBS -$19B, other +$0.0B, RRP +$0B, TGA -$23B)" in out
 
 
 def test_brief_line_v2_absent_keeps_combined_residual(conn):
@@ -483,9 +621,7 @@ def test_brief_buy_detail_renders_on_holiday_span(conn):
     _seed_summary_pair(conn, cur_total=162e9, prev_total=158e9, weekly_change=42e9)
     _seed_liq_live_shape(conn)
     holiday_prev = (date.fromisoformat(CUR) - timedelta(days=8)).isoformat()
-    conn.execute(
-        "DELETE FROM soma_summary WHERE as_of_date=?", (PREV,)
-    )
+    conn.execute("DELETE FROM soma_summary WHERE as_of_date=?", (PREV,))
     conn.execute(
         "INSERT OR REPLACE INTO soma_summary(as_of_date, total_par, tips, n_cusips) "
         "VALUES (?,?,?,5)",
@@ -493,7 +629,9 @@ def test_brief_buy_detail_renders_on_holiday_span(conn):
     )
     conn.commit()
     out = soma_brief_line(conn)
-    assert "buy +$42B" in out and "matured $38B" in out and "/wk" in out  # span 8 → normal week label
+    assert (
+        "buy +$42B" in out and "matured $38B" in out and "/wk" in out
+    )  # span 8 → normal week label
 
 
 # --- dealer positioning ------------------------------------------------------------
@@ -546,8 +684,9 @@ def test_dealer_break_does_not_mix(conn):
 def test_dealer_min_obs_guard(conn):
     """A young current break (< 26 obs) → z=None (honest), value/Δ still
     reported; a young single-break series also stays z=None."""
-    _seed_pd(conn, UST_KEYID, [450 + (i % 5) for i in range(30)] + [420] * 5,
-             break_after=_wednesday(5))
+    _seed_pd(
+        conn, UST_KEYID, [450 + (i % 5) for i in range(30)] + [420] * 5, break_after=_wednesday(5)
+    )
     ust = dealers_snapshot(conn)[UST_KEYID]
     assert ust["n_obs"] == 5
     assert ust["z"] is None
@@ -580,7 +719,13 @@ def test_dealers_brief_line_render(conn):
     assert line is not None
     assert line.startswith("DLR: ")
     # curated display order, value in $B ($M → $B at the boundary)
-    assert line.index("UST") < line.index("MBS") < line.index("Corp") < line.index("Agency") < line.index("Muni")
+    assert (
+        line.index("UST")
+        < line.index("MBS")
+        < line.index("Corp")
+        < line.index("Agency")
+        < line.index("Muni")
+    )
     assert "UST $436B z-" in line
     assert "⚠" in line  # |z| ≥ dealer_stress_z on the UST leg
     assert "MBS $116B z+0." in line
@@ -745,8 +890,7 @@ def test_dealer_stress_fires_and_cooldowns_per_snapshot(conn):
 
     assert check_all(conn) == ["dealer_stress"]
     row = conn.execute(
-        "SELECT cooldown_key, priority FROM alert_deliveries "
-        "WHERE alert_type='dealer_stress'"
+        "SELECT cooldown_key, priority FROM alert_deliveries WHERE alert_type='dealer_stress'"
     ).fetchone()
     assert row[0] == f"dealer_stress@{CUR}"  # permanent per-survey-week key
     assert row[1] == "normal"
@@ -789,8 +933,7 @@ def test_fed_ops_resume_first_sale_after_purchases(conn):
 
     assert check_all(conn) == ["fed_ops_resume"]
     row = conn.execute(
-        "SELECT cooldown_key, message FROM alert_deliveries "
-        "WHERE alert_type='fed_ops_resume'"
+        "SELECT cooldown_key, message FROM alert_deliveries WHERE alert_type='fed_ops_resume'"
     ).fetchone()
     assert row[0] == f"fed_ops_resume@{_day(2)}"
     assert "resumes sales" in row[1]

@@ -7,15 +7,15 @@ import json
 import sqlite3
 import sys
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 from .. import db
-from ..config import load_cot_contracts
+from ..config import PlanLimited, load_cot_contracts
+from ..db import default_db_path
 from ..fetchers import bybit, cot, spdr
 from ..transforms import xccy
 from .fetch_log import log_collection as _log_collection
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 
 
 def harvest_cot(conn, weeks: int = 156) -> dict[str, int]:
@@ -68,9 +68,10 @@ def harvest_cot(conn, weeks: int = 156) -> dict[str, int]:
                 "SELECT MAX(report_date) FROM cot_raw WHERE contract_code=?",
                 (str(c["legacy_code"]),),
             ).fetchone()[0]
-            retired = ceiling is not None and ceiling < (
-                datetime.now(UTC).date() - timedelta(days=365 * 5)
-            ).isoformat()
+            retired = (
+                ceiling is not None
+                and ceiling < (datetime.now(UTC).date() - timedelta(days=365 * 5)).isoformat()
+            )
             if retired:
                 out[f"{name}|legacy"] = 0  # retired series — skip fetch
             else:
@@ -176,7 +177,9 @@ def harvest_flows(conn) -> dict[str, float | None]:
         out["stablecoin_usd"] = None
         sc_err = f"stablecoin: {str(ex)[:120]}"
     log_collection(
-        conn, "f2", "LLAMA:STABLECOIN",
+        conn,
+        "f2",
+        "LLAMA:STABLECOIN",
         {"stablecoin_usd": out.get("stablecoin_usd")},
         7 if out.get("stablecoin_usd") is not None else 0,
         err=sc_err,
@@ -282,9 +285,7 @@ def _harvest_cnn_fg(conn) -> None:
         # an older one means the endpoint is serving a frozen cache
         if period < (datetime.now(UTC).date() - timedelta(days=4)).isoformat():
             cnn_err = f"stale report date {period}"
-        log_collection(
-            conn, "f2", "CNN:FG", {"ts": period, "score": fg["score"]}, 1, err=cnn_err
-        )
+        log_collection(conn, "f2", "CNN:FG", {"ts": period, "score": fg["score"]}, 1, err=cnn_err)
     except Exception as ex:
         print(f"  ⚠ CNN F&G: {str(ex)[:70]}")
         log_collection(conn, "f2", "CNN:FG", None, 0, err=str(ex)[:140])
@@ -343,12 +344,11 @@ def _harvest_flows_extra(conn) -> None:
                 )
             conn.commit()
             flow_txt = (
-                f"{latest['net_flow_musd']:+.1f}M$" if latest["net_flow_musd"] is not None
+                f"{latest['net_flow_musd']:+.1f}M$"
+                if latest["net_flow_musd"] is not None
                 else "(partial)"
             )
-            print(
-                f"  {label}: {flow_txt} ({latest['date_iso']}) + {n - 1} window rows"
-            )
+            print(f"  {label}: {flow_txt} ({latest['date_iso']}) + {n - 1} window rows")
             # stale gate: the table always shows yesterday-or-newer US flows;
             # anything older than 3 business days = frozen page (D-021)
             err = None
@@ -402,7 +402,11 @@ def _harvest_flows_extra(conn) -> None:
                 },
             )
         log_collection(
-            conn, "f2", "SAFE:RESERVES", r["latest"], len(r["months"]),
+            conn,
+            "f2",
+            "SAFE:RESERVES",
+            r["latest"],
+            len(r["months"]),
             err=_monthly_gate(r["ts"]),
         )
     except Exception as ex:
@@ -432,7 +436,11 @@ def _harvest_flows_extra(conn) -> None:
                 {"source": "LBMA london vault data", "unit_out": "tonne"},
             )
         log_collection(
-            conn, "f2", "LBMA:VAULT", r["latest"], len(r["months"]),
+            conn,
+            "f2",
+            "LBMA:VAULT",
+            r["latest"],
+            len(r["months"]),
             err=_monthly_gate(r["ts"]),
         )
     except Exception as ex:
@@ -451,7 +459,11 @@ def _harvest_flows_extra(conn) -> None:
                 {"source": "Treasury TIC SLT table5 (ticdata.treasury.gov)"},
             )
         log_collection(
-            conn, "f2", "TIC:SLT5", {"ts": r["ts"], **r["values"]}, len(r["values"]),
+            conn,
+            "f2",
+            "TIC:SLT5",
+            {"ts": r["ts"], **r["values"]},
+            len(r["values"]),
             err=_monthly_gate(r["ts"], max_days=80),
         )
     except Exception as ex:
@@ -490,7 +502,9 @@ def compute_fedwatch(conn) -> list[dict]:
 
     effr_row = latest_observation(conn, "FRED:DFF")
     if not effr_row or effr_row[1] is None:
-        print("  ⚠ FedWatch-DIY skipped: FRED:DFF empty (without an EFFR anchor the probabilities are misleading)")
+        print(
+            "  ⚠ FedWatch-DIY skipped: FRED:DFF empty (without an EFFR anchor the probabilities are misleading)"
+        )
         return []
     effr = effr_row[1]
     # The anchor's OBSERVATION date matters as much as its value: DFF prints
@@ -527,6 +541,21 @@ def compute_fedwatch(conn) -> list[dict]:
 
     probs = fw.compute(settlements, effr, anchor_date=anchor_date)
 
+    # Official cross-check (gray-zone → degradable: a fetch failure is silent,
+    # DIY remains primary). Flow: GET TreasuryWatch + a menu POST to the form
+    # action carrying insid/qsid; the view shows the nearest meeting plus the
+    # target-rate distribution. Fetched BEFORE the write transaction: the GET+POST
+    # can take ~80s and BEGIN IMMEDIATE would stall every other writer meanwhile.
+    official, qs_err = None, None
+    try:
+        from ..fetchers.quikstrike import fetch_fedwatch_official
+
+        official = fetch_fedwatch_official()
+        if not official:  # non-200, layout change or no rows: None, no exception
+            qs_err = "official FedWatch view returned no rows (blocked page or layout change)"
+    except Exception as ex:
+        qs_err = str(ex)[:140]
+
     conn.execute("BEGIN IMMEDIATE")
     for p in probs:
         conn.execute(
@@ -544,16 +573,8 @@ def compute_fedwatch(conn) -> list[dict]:
             ),
         )
 
-    # Official cross-check (gray-zone → degradable: a fetch failure is silent,
-    # DIY remains primary). Flow: GET TreasuryWatch + a menu POST to the form
-    # action carrying insid/qsid; the view shows the nearest meeting plus the
-    # target-rate distribution.
     official_rows = []
-    qs_err = None
     try:
-        from ..fetchers.quikstrike import fetch_fedwatch_official
-
-        official = fetch_fedwatch_official()
         for o in official or []:
             md = datetime.strptime(o["meeting_date"], "%d %b %Y").date().isoformat()
             implied = None
@@ -569,9 +590,9 @@ def compute_fedwatch(conn) -> list[dict]:
                     "official",
                     # Official parser reports percent 0-100; the table
                     # convention is a 0-1 fraction (matching DIY)
-                    o.get("ease") / 100 if o.get("ease") is not None else None,
-                    o.get("hold") / 100 if o.get("hold") is not None else None,
-                    o.get("hike") / 100 if o.get("hike") is not None else None,
+                    o["ease"] / 100 if o.get("ease") is not None else None,
+                    o["hold"] / 100 if o.get("hold") is not None else None,
+                    o["hike"] / 100 if o.get("hike") is not None else None,
                     implied,
                 ),
             )
@@ -622,7 +643,11 @@ def compute_fedwatch(conn) -> list[dict]:
                 from .fetch_log import log_collection as _lc_gate
 
                 _lc_gate(
-                    conn, "f2", "FEDWATCH:XVAL", None, 0,
+                    conn,
+                    "f2",
+                    "FEDWATCH:XVAL",
+                    None,
+                    0,
                     err=f"{len(breaches)} breach(es): " + "; ".join(breaches[:3])[:150],
                 )
         except Exception as ex:
@@ -682,15 +707,19 @@ def compute_ecbwatch(conn) -> list[dict]:
             "INSERT OR IGNORE INTO raw_observations"
             "(series_id,ts,release_ts,value,vintage_ts,source,fetched_at)"
             " VALUES ('ECB:ESTR',?,'na',?,'realtime','ECB',?)",
-            [(r["ts"], r["value"], datetime.now(UTC).isoformat(timespec="seconds"))
-             for r in fix_rows],
+            [
+                (r["ts"], r["value"], datetime.now(UTC).isoformat(timespec="seconds"))
+                for r in fix_rows
+            ],
         )
         conn.commit()
     except sqlite3.IntegrityError as ex:
         # fresh DB before the 06:00 registry harvest has no ECB:ESTR row
         # yet (review P2) — name the fix instead of a bare FK error
-        print(f"  ⚠ ECB:ESTR not in series_registry yet — run harvest/backfill"
-              f" sync first ({str(ex)[:50]})")
+        print(
+            f"  ⚠ ECB:ESTR not in series_registry yet, run harvest/backfill"
+            f" sync first ({str(ex)[:50]})"
+        )
     except Exception as ex:
         print(f"  ⚠ ECB €STR fixings fetch: {str(ex)[:80]}")
 
@@ -699,7 +728,7 @@ def compute_ecbwatch(conn) -> list[dict]:
         " AND vintage_ts='realtime' ORDER BY ts DESC LIMIT 1"
     ).fetchone()
     if a is None:
-        print("  ⚠ ECBWatch: no ECB:ESTR anchor — snapshot skipped")
+        print("  ⚠ ECBWatch: no ECB:ESTR anchor, snapshot skipped")
         return []
     estr, estr_asof = a[1], date.fromisoformat(a[0])
 
@@ -716,18 +745,26 @@ def compute_ecbwatch(conn) -> list[dict]:
     ).fetchone()
     dfr = dfr_row[0] if dfr_row else None
 
-    rows, diag = ecbwatch.compute(strip, estr=estr, estr_asof=estr_asof,
-                                  fixings=fixings, dfr=dfr)
+    rows, diag = ecbwatch.compute(strip, estr=estr, estr_asof=estr_asof, fixings=fixings, dfr=dfr)
     if not rows:
         print(f"  ⚠ ECBWatch: degenerate ({diag.get('flags')})")
         return []
     if strip_stale:
         diag["flags"].append("strip_stale")
     meta = json.dumps(
-        {"diag": diag,
-         "rows": [{"impl": r.impl_date.isoformat(), "delta_bp": r.delta_bp,
-                   "exact": r.exact, "noise_amp": r.noise_amp,
-                   "sizes": r.sizes} for r in rows]},
+        {
+            "diag": diag,
+            "rows": [
+                {
+                    "impl": r.impl_date.isoformat(),
+                    "delta_bp": r.delta_bp,
+                    "exact": r.exact,
+                    "noise_amp": r.noise_amp,
+                    "sizes": r.sizes,
+                }
+                for r in rows
+            ],
+        },
         default=str,
     )
     conn.execute("BEGIN IMMEDIATE")
@@ -746,8 +783,16 @@ def compute_ecbwatch(conn) -> list[dict]:
                 "INSERT OR REPLACE INTO fedwatch_snapshots"
                 "(date,meeting_date,source,prob_ease,prob_hold,prob_hike,"
                 "implied_rate,raw_json) VALUES (?,?,?,?,?,?,?,?)",
-                (strip_td, r.meeting_date.isoformat(), "diy_ecb",
-                 r.prob_ease, r.prob_hold, r.prob_hike, r.implied_rate, meta),
+                (
+                    strip_td,
+                    r.meeting_date.isoformat(),
+                    "diy_ecb",
+                    r.prob_ease,
+                    r.prob_hold,
+                    r.prob_hike,
+                    r.implied_rate,
+                    meta,
+                ),
             )
         conn.execute("COMMIT")
     except Exception:
@@ -755,8 +800,15 @@ def compute_ecbwatch(conn) -> list[dict]:
         raise
     brief_line = ecbwatch.format_brief(rows, diag, asof=strip_td)
     print(f"  ECBWatch: {brief_line} (rms {diag.get('rms_bp')}bp, K={diag.get('k_solved')})")
-    return [{"meeting": r.meeting_date.isoformat(), "hike": r.prob_hike,
-             "hold": r.prob_hold, "ease": r.prob_ease} for r in rows]
+    return [
+        {
+            "meeting": r.meeting_date.isoformat(),
+            "hike": r.prob_hike,
+            "hold": r.prob_hold,
+            "ease": r.prob_ease,
+        }
+        for r in rows
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -779,6 +831,11 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError:
         pass
     conn = db.get_conn(a.db, allow_init=True)
+    from .backfill import sync_registry
+
+    # FK target for LME:CA_STOCKS: a fresh DB (or a series added since the last
+    # 06:00 harvest) failed 'FOREIGN KEY constraint failed' (VPS 2026-10-09)
+    sync_registry(conn)
 
     if not a.skip_cot:
         print("=== COT (13 contracts × 2 reports) ===")
@@ -787,7 +844,11 @@ def main(argv: list[str] | None = None) -> int:
             ok = sum(1 for v in cot_result.values() if v > 0)
             failures = sum(1 for v in cot_result.values() if v < 0)
             _log_collection(
-                conn, "f2", "COT:HARVEST", None, sum(v for v in cot_result.values() if v > 0),
+                conn,
+                "f2",
+                "COT:HARVEST",
+                None,
+                sum(v for v in cot_result.values() if v > 0),
                 err=f"{failures} contract-report fetches failed" if failures else None,
                 status="ERROR" if failures else None,
             )
@@ -836,8 +897,10 @@ def main(argv: list[str] | None = None) -> int:
         n = harvest_earnings(conn)
         print(f"  calendar: {n} rows (42d window)")
         for w in compute_earnings_weeks(conn):
-            print(f"    wk {w['week']}: SPX {w['spx_pp']}pp · NDX {w['ndx_pp']}pp"
-                  f" ({w['n_heavy']} heavy)")
+            print(
+                f"    wk {w['week']}: SPX {w['spx_pp']}pp · NDX {w['ndx_pp']}pp"
+                f" ({w['n_heavy']} heavy)"
+            )
     except Exception as ex:
         print(f"  ⚠ earnings: {str(ex)[:90]}")
 
@@ -898,9 +961,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  GLD: purged {purged} post-frontier phantom row(s)")
         gld = spdr.fetch_gld_tonnes(arch=arch)
         approx_mark = " (approx)" if gld.get("approx") else ""
-        print(
-            f"  GLD: {gld['tonnes']}t{approx_mark} ({gld['ts']}) + {n_gld}d archive window"
-        )
+        print(f"  GLD: {gld['tonnes']}t{approx_mark} ({gld['ts']}) + {n_gld}d archive window")
         today = datetime.now(UTC).date().isoformat()
         conn.execute(
             "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value)"
@@ -936,6 +997,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         conn.commit()
         _lc_gld(conn, "f2", "FMP:SLV", {"shares": slv["shares"]}, 1)
+    except PlanLimited as ex:  # HTTP 402: outside the plan, not a failure
+        print(f"  SLV: skipped ({ex})")
+        _lc_gld(conn, "f2", "FMP:SLV", None, 0, err=str(ex), status="SKIPPED")
     except Exception as ex:
         print(f"  ⚠ SLV: {str(ex)[:90]}")
         _lc_gld(conn, "f2", "FMP:SLV", None, 0, err=str(ex)[:140])
@@ -966,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_new = _db.insert_observations(conn, payload)
                 total_new += n_new
                 print(
-                    f"  {y}-{m:02d}: {len(rows)} rows ({n_new} new) — "
+                    f"  {y}-{m:02d}: {len(rows)} rows ({n_new} new), "
                     f"latest {rows[-1]['ts']} = {rows[-1]['copper_tonnes']:,.0f}t"
                 )
             else:
@@ -1036,8 +1100,11 @@ def main(argv: list[str] | None = None) -> int:
     # cookie death must surface as a named fetch_log ERROR, never silence.
     n_owsr = 0
     owsr_err: str | None = None
+    from ..config import missing_env
+
+    owsr_skip = missing_env("LME_COOKIE")  # unset = SKIPPED; a dead cookie stays ERROR
     try:
-        for m in flows_extra.fetch_lme_owsr_daily(session=_lme_sess):
+        for m in [] if owsr_skip else flows_extra.fetch_lme_owsr_daily(session=_lme_sess):
             conn.execute(
                 "INSERT INTO flows_periodic(period,kind,value_raw,unit_raw,factor,value,meta_json)"
                 " VALUES (?,'lme_owsr_cu',?, 'tonne',1,?,?)"
@@ -1067,7 +1134,15 @@ def main(argv: list[str] | None = None) -> int:
 
     log_collection(conn, "f2", "LME:CA_STOCKS", None, total_new, err=lme_err)
     log_collection(conn, "f2", "LME:OFFWARRANT", None, n_ow)
-    log_collection(conn, "f2", "LME:OWSR", None, n_owsr, err=owsr_err)
+    log_collection(
+        conn,
+        "f2",
+        "LME:OWSR",
+        None,
+        n_owsr,
+        err=owsr_err or owsr_skip,
+        status="SKIPPED" if owsr_skip else None,
+    )
 
     # COT parser gate (vendor-api audit #2): FMP's independent parse of the
     # same CFTC filings vs ours — OI + nonreportable must match EXACTLY.
@@ -1080,7 +1155,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as ex:
             from .fetch_log import log_collection as _lc
 
-            _lc(conn, "f2", "FMP:COT-GATE", None, 0, err=str(ex)[:140])
+            # a spent FMP quota is SKIPPED: the gate is a vendor cross-check, not our data
+            status = "SKIPPED" if isinstance(ex, PlanLimited) else None
+            _lc(conn, "f2", "FMP:COT-GATE", None, 0, err=str(ex)[:140], status=status)
             print(f"  ⚠ cot-gate: {str(ex)[:90]}")
 
     conn.close()

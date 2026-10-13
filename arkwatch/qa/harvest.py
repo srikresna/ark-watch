@@ -11,13 +11,23 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import cast
+
+import requests
 
 from .. import db
-from ..config import load_registry
+from ..config import PROVIDER_ENV, PlanLimited, load_registry, missing_env
+from ..db import default_db_path
+from ..fetchers.caldist import NoDataYet
 from ..qa.verify_sources import ROUTES
+from . import fetch_log
+from .redact import _redact  # noqa: F401  (re-export for older importers)
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+BREAKER_AFTER = 3
+RUN_BUDGET_S = 20 * 60  # the daemon hard-kills a job at 30 min
+NETWORK_ERRORS = (requests.ConnectionError, requests.Timeout, TimeoutError, ConnectionError)
+
+DEFAULT_DB = default_db_path()
 
 # Any FRED series can be revised in place (GDPNOW ±8×/quarter; ICSA/CPI/PAYEMS
 # revised monthly; WALCL seasonally adjusted): a dedup-only skip would freeze
@@ -26,24 +36,9 @@ DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.
 # changes. Implemented in the harvest loop below.
 
 
-_SECRET_RE = None
-
-
-def _redact(text: str) -> str:
-    """ROUND-4 (security): fetch exceptions echo the failing URL — keys ride
-    query params (api_key=…&api_token=…). One 4xx away from a key persisting
-    into fetch_log; scrub centrally at both writers."""
-    global _SECRET_RE
-    if _SECRET_RE is None:
-        import re as _re
-
-        _SECRET_RE = _re.compile(
-            r"(api_key|api_token|apikey|token|key)=[^&\s]+", _re.IGNORECASE
-        )
-    return _SECRET_RE.sub(r"\1=REDACTED", text)
-
-
-def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dict | None, str | None]:
+def _window_or_latest(
+    mod, sid_full: str, prefix: str
+) -> tuple[list[tuple], dict | None, str | None]:
     """GAP-HEAL (audit P1-1, 2026-09-13): fetchers exposing fetch_window land
     EVERY observation in the window — a shutdown night that missed a
     publication day heals on the next run (the latest-only contract froze
@@ -60,7 +55,7 @@ def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dic
     window_err = None
     if callable(fw):
         try:
-            pts = fw(sid_full, days=10)
+            pts = cast(list[dict] | None, fw(sid_full, days=10))
         except Exception as ex:
             # review ronde-2 (P2): the fallback itself is correct, but a
             # PERSISTENTLY dead window path would silently re-freeze holes
@@ -70,12 +65,8 @@ def _window_or_latest(mod, sid_full: str, prefix: str) -> tuple[list[tuple], dic
             window_err = f"WINDOW_FALLBACK {str(ex)[:60]}"
     src = getattr(mod, "SOURCE", None) or prefix.rstrip(":")
     if pts:
-        rows = [
-            (sid_full, p["ts"], p["value"], src)
-            for p in pts
-            if p.get("value") is not None
-        ]
-        first_obj = rows and {"ts": rows[-1][1], "value": rows[-1][2]} or None
+        rows = [(sid_full, p["ts"], p["value"], src) for p in pts if p.get("value") is not None]
+        first_obj = {"ts": rows[-1][1], "value": rows[-1][2]} if rows else None
         return rows, first_obj, None
     cur = mod.fetch_latest(sid_full)
     rows = [(sid_full, cur["ts"], cur["value"], src)]
@@ -104,13 +95,32 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
         fields, so the drift check below raises an alarm."""
         if not isinstance(obj, dict) or not obj:
             return None
-        return hashlib.sha1("|".join(sorted(obj.keys())).encode()).hexdigest()[:16]
+        return hashlib.sha1(
+            "|".join(sorted(obj.keys())).encode(), usedforsecurity=False
+        ).hexdigest()[:16]
 
     ok = fail = rows_new = 0
     now = datetime.now(UTC).isoformat(timespec="seconds")
+    skipped: dict[str, str] = {}  # prefix -> reason: ONE fetch_log row per run
+    run_start = _t.monotonic()
+    net_errors: dict[str, int] = {}  # consecutive network failures per source prefix
     for e in reg:
         sid_full = e["series_id"]
         prefix = next(p for p in ROUTES if sid_full.startswith(p))
+        reason = missing_env(*PROVIDER_ENV.get(prefix, ()))
+        # A tarpitting source (FRED from a datacenter IP: ~60 s per series with retries) must
+        # not eat the daemon's 30-min kill: after BREAKER_AFTER consecutive network errors the
+        # rest of that source is skipped, and past the run budget everything left is. Both
+        # count as failures, so a source that is down still pages (exit_code).
+        if not reason and net_errors.get(prefix, 0) >= BREAKER_AFTER:
+            reason = f"breaker: {BREAKER_AFTER} consecutive network errors"
+        if not reason and _t.monotonic() - run_start > RUN_BUDGET_S:
+            reason = f"budget: harvest past {RUN_BUDGET_S // 60} min"
+        if reason:
+            if not reason.startswith("unconfigured"):
+                fail += 1
+            skipped[prefix] = reason
+            continue
         mod = ROUTES[prefix]
         t0 = _t.monotonic()
         status, n, err = "OK", 0, None
@@ -183,13 +193,22 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
             # P0 2026-09-21: without the revision path the month's first
             # PARTIAL print froze forever): realtime holds the LATEST value;
             # the revision history lives in vintage rows.
-            if prefix in ("FRED:", "NYFED:", "FRB:", "CAL:"):
+            # GEO (FAO indices revise prior months), ATL (WGT) and PHILLY (ADS is a
+            # "most current vintage" file) restate history too
+            if prefix in ("FRED:", "NYFED:", "FRB:", "CAL:", "GEO:", "ATL:", "PHILLY:"):
                 n += db.apply_realtime_revisions(conn, rows)
             ok += 1
             rows_new += n
+            net_errors[prefix] = 0
+        except NoDataYet:
+            status, err = "EMPTY", "no data yet"
+        except PlanLimited as ex:  # HTTP 402: outside the plan, not a failure
+            status, err = "SKIPPED", str(ex)
         except Exception as ex:
             status, err = "ERROR", _redact(str(ex))[:150]
             fail += 1
+            if isinstance(ex, NETWORK_ERRORS):
+                net_errors[prefix] = net_errors.get(prefix, 0) + 1
         # quota_used = 1 call for PAID sources (FMP/EODHD), 0 for free
         # institutional ones; approximates the daily call count
         quota = 1 if prefix in ("FMP:", "EODHD:") else 0
@@ -215,6 +234,13 @@ def harvest(db_path: str = str(DEFAULT_DB), *, block: str | None = None) -> tupl
         )
         if status == "ERROR":
             print(f"  ✗ {sid_full}: {err}")
+    for prefix, reason in skipped.items():
+        conn.execute(
+            "INSERT INTO fetch_log(ts,fetcher,target,status,error,rows,quota_used)"
+            " VALUES (?,?,?,'SKIPPED',?,0,0)",
+            (now, prefix.rstrip(":").lower(), prefix, reason),
+        )
+        print(f"  · {prefix}* skipped ({reason})")
     conn.close()
     return ok, fail, rows_new
 
@@ -227,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     ok, fail, rows = harvest(a.db, block=a.block)
     ts = datetime.now(UTC).isoformat(timespec="seconds")
     print(f"=== harvest {ts}: {ok} OK · {fail} ERROR · {rows:,} new rows ===")
-    return 1 if fail else 0
+    return fetch_log.exit_code(ok, fail)
 
 
 if __name__ == "__main__":

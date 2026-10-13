@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import requests
 
+from ..net import proxies_for
+
 BASE = "https://publicreporting.cftc.gov/resource"
 DATASETS = {
     "legacy": "6dca-aqww",
@@ -104,7 +106,10 @@ def fetch_cot(dataset: str, contract_code: str, limit: int = 156) -> list[dict]:
         "$order": "report_date_as_yyyy_mm_dd DESC",
         "$limit": limit,
     }
-    r = requests.get(f"{BASE}/{ds}.json", params=params, timeout=(10, 60))
+    # CFTC 403s the VPS datacenter IP for every UA; 200 via the WARP proxy
+    r = requests.get(
+        f"{BASE}/{ds}.json", params=params, timeout=(10, 60), proxies=proxies_for(BASE)
+    )
     if r.status_code != 200:
         raise CotError(f"COT {dataset}/{contract_code}: HTTP {r.status_code}")
     rows = r.json()
@@ -154,6 +159,7 @@ def fetch_cot(dataset: str, contract_code: str, limit: int = 156) -> list[dict]:
                 continue
 
             spr = _first(_i(_pick("positions_spread")), _i(_pick("positions_spread_all")))
+
             # REGRESSION-CAUGHT (P0, review ronde-2): positions fields are
             # PREFIX-first ('m_money_positions_long_all', 'swap__positions_…')
             # but pct/traders/change are METRIC-first

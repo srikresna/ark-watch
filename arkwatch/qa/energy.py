@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import cast
 
 from .. import db
+from ..db import default_db_path
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "arkwatch.db"
+DEFAULT_DB = default_db_path()
 
 MONTH_CODES = "FGHJKMNQUVXZ"
 MONTH_NAMES = {
@@ -117,7 +118,7 @@ def _curve_legs(front: str, second: str) -> dict[str, dict]:
             continue
         dates = {leg["ts"] for leg in legs.values() if leg is not None}
         if len(dates) == 1:
-            return legs
+            return cast(dict[str, dict], legs)  # no None leg past the any() check
     raise EnergyError("no complete same-date curve from EODHD or Yahoo")
 
 
@@ -194,6 +195,23 @@ def main(argv: list[str] | None = None) -> int:
 
     load_dotenv()
     conn = db.get_conn(args.db, allow_init=True)
+    # fresh volume: the FRED spot legs land with the 06:00 harvest; until then
+    # there is nothing to compute (a fetch failure with rows present still raises)
+    waiting = [
+        sid
+        for sid in ("FRED:DCOILBRENTEU", "FRED:DCOILWTICO")
+        if not conn.execute(
+            "SELECT 1 FROM raw_observations WHERE series_id=? LIMIT 1", (sid,)
+        ).fetchone()
+    ]
+    if waiting:
+        from .fetch_log import log
+
+        msg = f"waiting for FRED spot (harvest has not run yet): {', '.join(waiting)}"
+        log(conn, "energy", "ENERGY:CURVE", "SKIPPED", 0, err=msg)
+        print(f"  {msg}")
+        conn.close()
+        return 0
     out = compute(conn)
     now = datetime.now(UTC).isoformat(timespec="seconds")
     for sid, rec in out.items():

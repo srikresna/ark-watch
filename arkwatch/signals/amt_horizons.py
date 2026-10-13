@@ -28,17 +28,22 @@ def compute_horizon_amt(
     start_str = start_utc.isoformat(timespec="seconds")
     end_str = end_utc.isoformat(timespec="seconds")
 
-    rows = conn.execute(
+    raw = conn.execute(
         """
         SELECT bar_ts_utc, open, high, low, close, COALESCE(volume, 0.0)
         FROM intraday_bars
-        WHERE symbol = ?
+        WHERE symbol = ? AND interval = '5m'
           AND bar_ts_utc >= ?
           AND bar_ts_utc < ?
-        ORDER BY bar_ts_utc ASC
+        ORDER BY bar_ts_utc ASC, source ASC
         """,
         (sym, start_str, end_str),
     ).fetchall()
+    # Several providers can store the same bar: keep one row per timestamp
+    dedup: dict[str, tuple] = {}
+    for r in raw:
+        dedup.setdefault(r[0], r)
+    rows = list(dedup.values())
 
     if not rows:
         return None

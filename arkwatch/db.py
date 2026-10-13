@@ -12,11 +12,12 @@ a DB whose schema version is older than the code (except with allow_init).
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import UTC
 from pathlib import Path
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 36
 
 SCHEMA_V1 = """
 CREATE TABLE series_registry (
@@ -616,19 +617,190 @@ CREATE INDEX IF NOT EXISTS idx_playbook_symbol_state ON playbook_scenarios(symbo
 CREATE INDEX IF NOT EXISTS idx_playbook_created ON playbook_scenarios(created_at_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_playbook_session ON playbook_scenarios(session_id);
 """,
+    33: """-- v33: API server foundation. Hot-path indexes for the read API, an
+-- async on-demand job queue (the daemon executes queued jobs; the API only
+-- enqueues), an audit trail for every API write, a UI lock so the YAML
+-- registry sync does not revert an operator's active toggle, and the
+-- CANCELLED_MANUAL playbook state (a CHECK change = table rebuild).
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_utc);
+CREATE INDEX IF NOT EXISTS idx_brief_deliveries_status ON brief_deliveries(status);
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_status ON alert_deliveries(status);
+ALTER TABLE series_registry ADD COLUMN locked_by_ui INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  params_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued', 'running', 'done', 'failed')),
+  requested_by TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  result_json TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target TEXT,
+  detail_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+CREATE TABLE playbook_scenarios_v33 (
+  scenario_uid TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  horizon TEXT NOT NULL CHECK(horizon IN ('INTRADAY', 'SWING')),
+  direction TEXT NOT NULL CHECK(direction IN ('LONG', 'SHORT', 'NEUTRAL_RANGE')),
+  scenario_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  trigger_condition TEXT NOT NULL,
+  trigger_price REAL,
+  target_profit REAL NOT NULL,
+  invalidation_level REAL NOT NULL,
+  risk_reward_ratio REAL NOT NULL,
+  created_at_utc TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('PENDING_TRIGGER', 'ACTIVE', 'HIT_TARGET_WIN',
+    'HIT_STOP_LOSS', 'CANCELLED_EXPIRED', 'CANCELLED_MANUAL')),
+  triggered_at_utc TEXT,
+  resolved_at_utc TEXT,
+  entry_price REAL,
+  exit_price REAL,
+  mfe_points REAL DEFAULT 0.0,
+  mae_points REAL DEFAULT 0.0,
+  pnl_points REAL DEFAULT 0.0,
+  r_multiple REAL DEFAULT 0.0,
+  cfd_basis_offset REAL DEFAULT 0.0,
+  payload_json TEXT NOT NULL,
+  note TEXT
+);
+INSERT INTO playbook_scenarios_v33 SELECT *, NULL FROM playbook_scenarios;
+DROP TABLE playbook_scenarios;
+ALTER TABLE playbook_scenarios_v33 RENAME TO playbook_scenarios;
+CREATE INDEX IF NOT EXISTS idx_playbook_symbol_state ON playbook_scenarios(symbol, state);
+CREATE INDEX IF NOT EXISTS idx_playbook_created ON playbook_scenarios(created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_playbook_session ON playbook_scenarios(session_id);
+CREATE INDEX IF NOT EXISTS idx_playbook_state_created
+  ON playbook_scenarios(state, created_at_utc);
+""",
+    34: """-- v34: read-path indexes (EXPLAIN-checked on a prod copy).
+-- fetch_log had none: the freshness/brief per-target lookups and the 180-day
+-- prune all full-scanned it. intraday_bars readers always pin interval, which
+-- the PK (symbol, bar_ts_utc, ...) cannot seek on; the old (symbol, ts) index
+-- was a strict prefix of that PK. raw_observations is WITHOUT ROWID with PK
+-- (series_id, ts, ...), so idx_raw_series_ts only duplicated it.
+CREATE INDEX IF NOT EXISTS idx_fetch_log_target_id ON fetch_log(target, id DESC);
+CREATE INDEX IF NOT EXISTS idx_fetch_log_ts ON fetch_log(ts);
+CREATE INDEX IF NOT EXISTS idx_intraday_sym_int_ts
+  ON intraday_bars(symbol, interval, bar_ts_utc DESC, source);
+DROP INDEX IF EXISTS idx_intraday_symbol_ts;
+DROP INDEX IF EXISTS idx_raw_series_ts;
+""",
+    35: """-- v35: per-series freshness ceiling for sources that publish slower than
+-- their observation frequency suggests (daily data released weekly, annual
+-- data a year late, the monthly LME file). NULL = the per-freq default.
+ALTER TABLE series_registry ADD COLUMN max_age_days INTEGER;
+-- the advance goods release arrives as '... ADV' (alias added in qa/calendar.py);
+-- upserts never rewrite indicator_key, so relabel the rows already stored
+UPDATE events SET indicator_key = 'GOODS TRADE BALANCE'
+  WHERE indicator_key = 'GOODS TRADE BALANCE ADV';
+""",
+    36: """-- v36: indexes for the per-minute watcher and the uncached API reads that full-scanned
+-- (2026-10-12 audit): alerts newest-first and the spam tripwire, Fed ops by status/date,
+-- scenario fill/close events, news clustering, per-instrument liquidations, ESI by release,
+-- fetcher health, COT history by contract.
+CREATE INDEX IF NOT EXISTS idx_alert_triggered ON alert_deliveries(triggered_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_fedops_status_date
+  ON fed_operations(status, operation_date, family, direction);
+CREATE INDEX IF NOT EXISTS idx_playbook_trig ON playbook_scenarios(triggered_at_utc)
+  WHERE entry_price IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_playbook_res ON playbook_scenarios(resolved_at_utc)
+  WHERE entry_price IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_market_news_cluster ON market_news(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_liq_inst_ts ON crypto_liquidations(instrument, ts_utc);
+CREATE INDEX IF NOT EXISTS idx_events_release ON events(release_ts);
+CREATE INDEX IF NOT EXISTS idx_fetch_log_fetcher ON fetch_log(fetcher, ts, status);
+CREATE INDEX IF NOT EXISTS idx_cot_contract_date ON cot_raw(contract_code, report_date DESC);
+""",
 }
 
 
-def get_conn(path: str | Path, *, allow_init: bool = False) -> sqlite3.Connection:
-    """Connection with the standard PRAGMA pack. isolation_level=None → writes use explicit BEGIN IMMEDIATE."""
+REPO_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def data_dir() -> Path:
+    """Runtime data dir (DB/state/logs): env ARKWATCH_DATA_DIR, else repo data/."""
+    return Path(os.environ.get("ARKWATCH_DATA_DIR") or REPO_DATA_DIR)
+
+
+def default_db_path() -> Path:
+    """env ARKWATCH_DB, else <data_dir>/arkwatch.db — resolved at call time."""
+    return Path(os.environ.get("ARKWATCH_DB") or data_dir() / "arkwatch.db")
+
+
+def _cache_pragmas(conn: sqlite3.Connection) -> None:
+    # sorts/temp B-trees (GROUP BY, ORDER BY) stay in RAM; 16 MB page cache
+    # (default 2 MB) holds the hot indexes. No mmap: WAL + several processes.
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-16384")
+
+
+def _open_read_only(path: Path) -> sqlite3.Connection:
+    """URI mode=ro + query_only: can neither create, migrate nor write the DB.
+    Rows come back as sqlite3.Row (index AND name access)."""
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist (read-only connections never create)")
+    conn = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=5.0,
+        isolation_level=None,
+        check_same_thread=False,  # FastAPI may run a dependency and its endpoint on 2 threads
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA query_only=ON")
+    _cache_pragmas(conn)
+    current = _schema_version(conn)
+    if current != SCHEMA_VERSION:
+        conn.close()
+        raise RuntimeError(
+            f"{path}: schema v{current} != code v{SCHEMA_VERSION}, a read-only "
+            "connection never migrates; run any CLI job (writer) first."
+        )
+    return conn
+
+
+def get_conn(
+    path: str | Path, *, read_only: bool = False, allow_init: bool = False
+) -> sqlite3.Connection:
+    """Connection with the standard PRAGMA pack. isolation_level=None → writes use explicit BEGIN IMMEDIATE.
+
+    read_only=True: URI mode=ro + PRAGMA query_only=ON + busy_timeout=5000;
+    never creates or migrates (FileNotFoundError / RuntimeError instead)."""
     path = Path(path)
+    if read_only:
+        return _open_read_only(path)
     fresh = not path.exists()
     if fresh or allow_init:
         path.parent.mkdir(parents=True, exist_ok=True)  # sqlite does not create parent dirs
-    conn = sqlite3.connect(str(path), timeout=10.0, isolation_level=None)
+    conn = sqlite3.connect(str(path), timeout=10.0, isolation_level=None, check_same_thread=False)
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # cap the WAL file left behind after a checkpoint (it is reused, never
+    # shrunk, without a limit) and checkpoint every ~16 MB of 4 KB pages
+    # instead of the 1000-page default — fewer stalls for batch writers
+    conn.execute("PRAGMA journal_size_limit=67108864")
+    conn.execute("PRAGMA wal_autocheckpoint=4000")
+    _cache_pragmas(conn)
     # ROUND-7: a DB restored from a VACUUM INTO backup permanently carries
     # journal_mode=delete (the backup file has no WAL) — every connection
     # re-asserts WAL so the restore path cannot silently lose the invariant
@@ -652,7 +824,7 @@ def get_conn(path: str | Path, *, allow_init: bool = False) -> sqlite3.Connectio
         # loudly when initializing over an existing file
         if not fresh:
             print(
-                f"⚠⚠ WARNING: initializing a NEW file at {path} — make sure the path is correct (not a typo?)."
+                f"⚠⚠ WARNING: initializing a NEW file at {path}, make sure the path is correct (not a typo?)."
             )
         _apply_migrations(conn)
     elif current < SCHEMA_VERSION:
@@ -661,14 +833,14 @@ def get_conn(path: str | Path, *, allow_init: bool = False) -> sqlite3.Connectio
         else:
             conn.close()
             raise RuntimeError(
-                f"DB schema v{current} < code v{SCHEMA_VERSION} — run any CLI "
+                f"DB schema v{current} < code v{SCHEMA_VERSION}, run any CLI "
                 "job once (e.g. `python -m arkwatch harvest`) to auto-apply "
                 "pending migrations before continuing."
             )
     elif current > SCHEMA_VERSION:
         conn.close()
         raise RuntimeError(
-            f"DB schema v{current} > code v{SCHEMA_VERSION} — code downgrade is not supported."
+            f"DB schema v{current} > code v{SCHEMA_VERSION}, code downgrade is not supported."
         )
     return conn
 
@@ -700,7 +872,15 @@ def _apply_migrations(conn: sqlite3.Connection, from_version: int = 0) -> None:
             + f"\nINSERT INTO schema_migrations(version, applied_at) VALUES ({version}, '{ts}');\n"
             "COMMIT;"
         )
-        conn.executescript(script)
+        try:
+            conn.executescript(script)
+        except sqlite3.DatabaseError:
+            # two writers (daemon, okxws, api) can start on the same old version;
+            # the loser blocks at BEGIN IMMEDIATE, then trips on the winner's work
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            if (_schema_version(conn) or 0) < version:
+                raise
 
 
 def insert_observations(conn: sqlite3.Connection, rows: list[tuple]) -> int:
