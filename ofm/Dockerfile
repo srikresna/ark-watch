@@ -7,7 +7,7 @@ FROM scratch AS src
 ADD https://github.com/Ebony-Vinyl/dsh-our-free-model.git#befe36559e9f642ddac279e8b275558367f9f085 /src
 
 # node 22.23.3, digest-pinned (engines needs ^22.19)
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94
 WORKDIR /app
 COPY --from=src /src/packages /app/packages
 COPY --from=src /src/src /app/src
