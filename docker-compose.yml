@@ -143,7 +143,7 @@ services:
   # daemon (the proxy has no auth: api and okxws must not reach it), never published. Pinned by digest. No healthcheck: shell tooling in the image
   # is not guaranteed; a dead proxy surfaces as Yahoo errors in fetch_log.
   warp:
-    image: ghcr.io/mon-ius/docker-warp-socks@sha256:8715061d82fdbecff0c59b21c52fd83c84b4c64e2813344294cf98ea15fb1eab
+    image: ghcr.io/mon-ius/docker-warp-socks@sha256:3eed26aa1e5144c8a8e7d7744f0101de9e5587f54946f017c84bf19201f71db0
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
