@@ -6,7 +6,7 @@
 # sha256 was computed from the file whose SHA3-256 matched sqlite.org's
 # published 454e45f6...0338 for sqlite-autoconf-3530400.tar.gz.
 # bases pinned by digest (tag in front for humans); Dependabot (docker) proposes the bumps
-FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS sqlite
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS sqlite
 ARG SQLITE_TARBALL=2026/sqlite-autoconf-3530400.tar.gz
 ADD --checksum=sha256:0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c \
     https://sqlite.org/${SQLITE_TARBALL} /tmp/sqlite.tar.gz
@@ -26,7 +26,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
 # --- runtime
-FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 ARG GIT_SHA=unknown
 ENV PYTHONUTF8=1 \
     PYTHONUNBUFFERED=1 \
